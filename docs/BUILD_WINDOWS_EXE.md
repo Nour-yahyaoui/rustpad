@@ -22,7 +22,7 @@ git push origin main
 ```
 
 Then trigger it in **either** of two ways:
-1. **Attach `rustpad.exe` to your existing `v1.0.0` release**: Open **GitHub -> Actions -> Build & Publish RustPad Binaries (.exe + Linux) -> Run workflow**, leave `v1.0.0`, and click **Run workflow**. In ~2 minutes, `rustpad.exe`, `rustpad-v1.0.0-windows-x86_64.exe`, `rustpad-v1.0.0-linux-x86_64`, and `SHA256SUMS.txt` appear on `https://github.com/Nour-yahyaoui/word/releases/tag/v1.0.0`.
+1. **Attach `rustpad.exe` to your existing `v1.0.0` release**: Open **GitHub -> Actions -> Build & Publish RustPad Binaries (.exe + Linux) -> Run workflow**, leave `v1.0.0`, and click **Run workflow**. In ~2 minutes, `rustpad.exe`, `rustpad-v1.0.0-windows-x86_64.exe`, `rustpad-v1.0.0-linux-x86_64`, and `SHA256SUMS.txt` appear on `https://github.com/Nour-yahyaoui/rustpad/releases/tag/v1.0.0`.
 2. **Or push any new tag**:
    ```bash
    git tag v1.2.0
@@ -43,8 +43,8 @@ winget install GitHub.cli
 
 ### 2. Build & Upload in One Command
 ```powershell
-git clone https://github.com/Nour-yahyaoui/word.git
-cd word
+git clone https://github.com/Nour-yahyaoui/rustpad.git
+cd rustpad
 
 # Builds target\dist\rustpad.exe + SHA-256 and uploads directly to GitHub Release v1.0.0:
 gh auth login

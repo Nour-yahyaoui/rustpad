@@ -1,5 +1,5 @@
 //! RustPad (`rustpad`) — 100% Pure-Rust Native Word (`.docx`) & PDF (`.pdf`) Desktop Studio + CLI.
-//! Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/word
+//! Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
 
 pub mod commands;
 pub mod pdf_view;
@@ -83,7 +83,7 @@ fn print_help() {
     println!(
         "\
 RustPad v{ver} — Pure-Rust Native Word (.docx) & PDF (.pdf) Desktop Studio
-Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/word
+Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
 
 USAGE:
   rustpad [FILE]                        Launch the native desktop studio (optionally opening FILE)

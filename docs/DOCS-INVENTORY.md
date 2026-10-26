@@ -1,4 +1,4 @@
-# Documentation Inventory — RustPad (`Nour-yahyaoui/word`)
+# Documentation Inventory — RustPad (`Nour-yahyaoui/rustpad`)
 
 - **Project Type**: Dual surface — (1) Cross-platform Pure-Rust Native Desktop Application & CLI (`rustpad` v1.0.0) and (2) Root Vite Static Project Landing Page deployed on Vercel.
 - **Primary Audience**: Developers, technical writers, students, and privacy-conscious desktop users who want a fast, offline `3.3 MB` Word (`.docx`) and PDF (`.pdf`) desktop suite without WebView bloat or cloud lock-in.

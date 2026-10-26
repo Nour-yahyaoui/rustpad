@@ -1,6 +1,6 @@
 # UI Reformat & Landing Page Inventory — RustPad
 
-- **Project**: RustPad (`Nour-yahyaoui/word`)
+- **Project**: RustPad (`Nour-yahyaoui/rustpad`)
 - **Framework (Web Showcase / Landing Page)**: Root Vite 6 + TypeScript + Semantic CSS Variables (`index.html`, `src/`, `public/` — zero `vercel.json` per `VERCEL FORMAT README.md`)
 - **Native Desktop Application**: `app/` (`rustpad` binary crate, `crates/rustpad_render` + `crates/rustpad_window`, Paper & Daylight theme)
 - **Visual Direction**: `docs/STYLE.md` — Swiss Letterpress Proof Sheet × Technical Datasheet (domain-shifted R4, `--bg: #F7F6F2` light / `#111317` dark, `--accent: #B83A1B` oxidized iron-oxide registration ink)

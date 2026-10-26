@@ -419,7 +419,7 @@ fn paint_home_hub(
         hero.x + 106.0,
         hero.y + 95.0,
         DaylightTheme::RUST_ORANGE,
-        "By Nour Yahyaoui · github.com/Nour-yahyaoui/word · nourryahyaoui@gmail.com",
+        "By Nour Yahyaoui · github.com/Nour-yahyaoui/rustpad · nourryahyaoui@gmail.com",
     );
 
     // Quick Hero CTAs on right
@@ -1185,7 +1185,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, screen: Rect)
 
             let lines = [
                 "Author:   Nour Yahyaoui",
-                "GitHub:   https://github.com/Nour-yahyaoui/word",
+                "GitHub:   https://github.com/Nour-yahyaoui/rustpad",
                 "Email:    nourryahyaoui@gmail.com",
                 "Engine:   9 Pure-Rust Crates · Zero WebView · MIT License",
             ];
