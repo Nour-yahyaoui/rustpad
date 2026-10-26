@@ -7,7 +7,8 @@
 **Create, edit, sign, redact, and convert Microsoft Word (`.docx`) and vector PDF (`.pdf`) documents offline in a single `3.3 MB` pure-Rust desktop binary.**
 
 - **Author**: Nour Yahyaoui — [github.com/Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`
-- **Current Release**: [`v1.1.0`](https://github.com/Nour-yahyaoui/word/releases) (Desktop Core `v1.0.0` · MIT License)
+- **Live Project Landing Page**: [https://rustpad-studio.vercel.app](https://rustpad-studio.vercel.app)
+- **Current Release**: [`v1.1.1`](https://github.com/Nour-yahyaoui/word/releases) (Desktop Core `v1.0.0` · MIT License)
 - **Stack**: 100% Pure Rust (`14,280` LOC across 9 workspace crates, zero WebView, zero external `crates.io` runtime dependencies) + Root Vite TypeScript Project Showcase
 
 ![RustPad Word Studio editing an A4 OpenXML document with Document Outline and Live Metrics](docs/screenshots/word-studio.png)

@@ -2,6 +2,10 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [@Nour-yahyaoui](https://github.com/Nour-yahyaoui), `nourryahyaoui@gmail.com`) follow our continuous micro-release workflow (`Commit → Tag → GitHub Release`).
 
+## [v1.1.1] - 2026-10-26
+### Added
+- Deployed production **RustPad** landing page & live binary specimen showcase to Vercel at [`https://rustpad-studio.vercel.app`](https://rustpad-studio.vercel.app) and linked live URL in repository documentation.
+
 ## [v1.1.0] - 2026-10-26
 ### Added
 - **RustPad Project Landing Page & Live Specimen Showcase** (`index.html`, `src/`, `public/`): Swiss Typesetter's Proof Sheet × Technical Datasheet web showcase (`docs/STYLE.md`) featuring the 4-Mode Native Studio Switchboard, Live `.docx`/`.pdf` Binary Header & Hex Specimen Inspector with downloadable deliverables, searchable 9-Crate Pure-Rust Architecture Ledger, interactive CLI Command Builder, zero-FOUC Daylight/Darkroom theme toggle, 3-step Spotlight Tour, and full Open Graph / JSON-LD SEO metadata.
