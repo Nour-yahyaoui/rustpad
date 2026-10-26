@@ -220,7 +220,7 @@ pub fn paint_word_tab(
             },
         ));
 
-        surface.draw_page_shadow(sheet, 2.0, 12.0, 18);
+        surface.draw_paper_shadow(sheet, 2.0, 12.0, 18);
         surface.fill_rounded_rect(sheet, 2.0, DaylightTheme::PAPER);
         surface.stroke_rounded_rect(sheet, 2.0, 1.0, DaylightTheme::BORDER);
 

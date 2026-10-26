@@ -175,6 +175,30 @@ impl SpellChecker {
             .collect()
     }
 
+    /// Scans a single line or paragraph string and returns `(char_start, char_end, word)` spans.
+    pub fn check_paragraph(&self, text: &str) -> Vec<(usize, usize, String)> {
+        let mut out = Vec::new();
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            while i < chars.len() && !chars[i].is_alphabetic() {
+                i += 1;
+            }
+            let start = i;
+            while i < chars.len() && (chars[i].is_alphabetic() || chars[i] == '\'') {
+                i += 1;
+            }
+            if i > start {
+                let word: String = chars[start..i].iter().collect();
+                let cleaned = word.trim_matches('\'');
+                if !cleaned.is_empty() && !self.is_valid(cleaned) {
+                    out.push((start, i, cleaned.to_string()));
+                }
+            }
+        }
+        out
+    }
+
     /// Scans a `Document` and returns `(block_index, bad_word, suggestions)` entries.
     pub fn check_document(&self, doc: &Document) -> Vec<(usize, String, Vec<String>)> {
         let mut issues = Vec::new();
