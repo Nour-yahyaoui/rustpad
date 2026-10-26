@@ -2,10 +2,11 @@
 resolver = "2"
 members = [
     "crates/rustpad_zip",
+    "crates/doc_model",
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Nour Yahyaoui <nourryahyaoui@gmail.com>"]
 license = "MIT"

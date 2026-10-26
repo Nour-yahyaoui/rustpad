@@ -3,5 +3,9 @@
 version = 4
 
 [[package]]
+name = "doc_model"
+version = "0.3.0"
+
+[[package]]
 name = "rustpad_zip"
-version = "0.2.0"
+version = "0.3.0"
