@@ -602,8 +602,8 @@ fn wrap_paragraph_lines(
         .map(|s| s.style.font_family)
         .unwrap_or(FontFamily::Sans);
     let slot = match (fam, bold) {
-        (FontFamily::Mono, _) => FontSlot::Mono,
-        (FontFamily::Serif, _) => FontSlot::Serif,
+        (FontFamily::Mono, _) => FontSlot::MonoRegular,
+        (FontFamily::Serif, _) => FontSlot::SerifRegular,
         (FontFamily::Sans, true) => FontSlot::SansBold,
         (FontFamily::Sans, false) => FontSlot::SansRegular,
     };
@@ -1446,10 +1446,10 @@ fn paint_word_ribbon(
         } else {
             format!("{:.1}", cur_pt)
         };
-        let tw = fonts.measure_text(FontSlot::Mono, &sz_txt, 11.2 * s);
+        let tw = fonts.measure_text(FontSlot::MonoRegular, &sz_txt, 11.2 * s);
         surface.draw_text(
             fonts,
-            FontSlot::Mono,
+            FontSlot::MonoRegular,
             11.2 * s,
             r.x + (r.w - tw) * 0.5,
             r.y + bh * 0.66,
@@ -1465,7 +1465,7 @@ fn paint_word_ribbon(
 
     // 3. Inline Marks (`B`, `I`, `U`, `Ink`, `Mark`)
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "B", FontSlot::SansBold, is_bold, false, CommandId::ToggleBold);
-    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "I", FontSlot::Serif, is_italic, false, CommandId::ToggleItalic);
+    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "I", FontSlot::SerifRegular, is_italic, false, CommandId::ToggleItalic);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "U", FontSlot::SansRegular, is_under, false, CommandId::ToggleUnderline);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Ink", FontSlot::SansRegular, false, false, CommandId::CycleTextColor);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Mark", FontSlot::SansRegular, has_hl, false, CommandId::ToggleHighlight);
@@ -1951,10 +1951,10 @@ fn paint_outline_sidebar(
                 DaylightTheme::INK_MUTED,
                 k,
             );
-            let vw = fonts.measure_text(FontSlot::Mono, val, 11.2 * s);
+            let vw = fonts.measure_text(FontSlot::MonoRegular, val, 11.2 * s);
             surface.draw_text_clipped(
                 fonts,
-                FontSlot::Mono,
+                FontSlot::MonoRegular,
                 11.2 * s,
                 (sb.x + sb.w - 14.0 * s - vw).max(sb.x + 76.0 * s),
                 ry,

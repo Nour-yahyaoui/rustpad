@@ -323,7 +323,7 @@ pub fn paint_pdf_tab(
                     surface.fill_rect(rr, Color::rgb(20, 20, 18));
                     surface.draw_text(
                         fonts,
-                        FontSlot::Mono,
+                        FontSlot::MonoRegular,
                         (8.5 * scale).clamp(7.0, 11.0),
                         rr.x + 6.0,
                         rr.y + rr.h * 0.68,
