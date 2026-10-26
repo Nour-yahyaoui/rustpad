@@ -2,6 +2,10 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [@Nour-yahyaoui](https://github.com/Nour-yahyaoui), `nourryahyaoui@gmail.com`) follow our continuous micro-release workflow (`Commit → Tag → GitHub Release`).
 
+## [v0.6.0] - 2026-10-26
+### Added
+- `crates/pdf_engine`: Pure-Rust PDF 1.4–1.7 parser, visual page model, and full PDF Studio editing engine supporting inline text-block editing, adding text boxes, highlights, sticky notes (`SubType /Text`), stamps, smooth polyline ink Signatures, true underlying-text Redaction, page rotate/reorder/delete, multi-PDF Merge, page-range Split/Extract, Watermarks, and `/FlateDecode` PDF Compression.
+
 ## [v0.5.1] - 2026-10-26
 ### Fixed
 - `crates/pdf_create`: Encode WinAnsi bullet glyph (`0x95`) using standard PDF octal escape (`\225`) for clean compilation and PDF viewer fidelity.

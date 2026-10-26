@@ -1,0 +1,12 @@
+[package]
+name = "pdf_engine"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Pure-Rust PDF 1.7 parser, visual page model, inline text editor, merge/split/sign/redact/compress engine"
+
+[dependencies]
+rustpad_zip = { path = "../rustpad_zip" }
+doc_model = { path = "../doc_model" }
+pdf_create = { path = "../pdf_create" }

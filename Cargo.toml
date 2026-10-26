@@ -5,10 +5,11 @@ members = [
     "crates/doc_model",
     "crates/docx_io",
     "crates/pdf_create",
+    "crates/pdf_engine",
 ]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 authors = ["Nour Yahyaoui <nourryahyaoui@gmail.com>"]
 license = "MIT"
