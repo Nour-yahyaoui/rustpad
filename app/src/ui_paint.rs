@@ -1439,7 +1439,7 @@ fn paint_toolbar_dropdown(
             let my = (anchor_y as f32 + 4.0).min(win_h - mh - 12.0);
             let card = Rect::new(mx, my, mw, mh);
 
-            surface.draw_page_shadow(card, 6.0, 14.0, 24);
+            surface.draw_paper_shadow(card, 6.0, 14.0, 24);
             surface.fill_rounded_rect(card, 6.0, DaylightTheme::PAPER);
             surface.stroke_rounded_rect(card, 6.0, 1.0, DaylightTheme::BORDER_STRONG);
 
@@ -1481,7 +1481,7 @@ fn paint_toolbar_dropdown(
             let my = (anchor_y as f32 + 4.0).min(win_h - mh - 12.0);
             let card = Rect::new(mx, my, mw, mh);
 
-            surface.draw_page_shadow(card, 6.0, 14.0, 24);
+            surface.draw_paper_shadow(card, 6.0, 14.0, 24);
             surface.fill_rounded_rect(card, 6.0, DaylightTheme::PAPER);
             surface.stroke_rounded_rect(card, 6.0, 1.0, DaylightTheme::BORDER_STRONG);
 
@@ -1634,7 +1634,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let mh = (390.0 * s).min(screen.h - 48.0);
             let card = Rect::new((screen.w - mw) * 0.5, (72.0 * s).min(screen.h * 0.12), mw, mh);
 
-            surface.draw_page_shadow(card, 8.0, 18.0, 32);
+            surface.draw_paper_shadow(card, 8.0, 18.0, 32);
             surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
             surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
 
@@ -1742,7 +1742,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 *pad_rect = pad;
             }
 
-            surface.draw_page_shadow(card, 8.0, 18.0, 32);
+            surface.draw_paper_shadow(card, 8.0, 18.0, 32);
             surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
             surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
 
@@ -1808,7 +1808,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let mh = 340.0 * s;
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
 
-            surface.draw_page_shadow(card, 8.0, 18.0, 32);
+            surface.draw_paper_shadow(card, 8.0, 18.0, 32);
             surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
             surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
 
@@ -1890,7 +1890,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let mh = 256.0 * s;
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
 
-            surface.draw_page_shadow(card, 8.0, 18.0, 32);
+            surface.draw_paper_shadow(card, 8.0, 18.0, 32);
             surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
             surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
 
@@ -1990,7 +1990,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let entries = match app.tabs.get(app.active_tab) {
                 Some(StudioTab::Word(w)) => w
                     .snapshots
-                    .entries()
+                    .list()
                     .iter()
                     .rev()
                     .map(|e| (e.id, e.label.clone(), e.word_count, e.compressed_bytes.len()))
@@ -2001,7 +2001,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let mh = 340.0 * s;
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
 
-            surface.draw_page_shadow(card, 8.0, 18.0, 32);
+            surface.draw_paper_shadow(card, 8.0, 18.0, 32);
             surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
             surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
 
@@ -2075,7 +2075,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let mh = 264.0 * s;
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
 
-            surface.draw_page_shadow(card, 8.0, 18.0, 32);
+            surface.draw_paper_shadow(card, 8.0, 18.0, 32);
             surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
             surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
 
@@ -2149,7 +2149,7 @@ fn paint_single_input_modal(
     let mh = 214.0 * s;
     let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
 
-    surface.draw_page_shadow(card, 8.0, 18.0, 32);
+    surface.draw_paper_shadow(card, 8.0, 18.0, 32);
     surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
     surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
 

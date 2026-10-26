@@ -200,7 +200,7 @@ fn run_cli_ai(args: &[String]) -> Result<(), String> {
         if out_ext == "docx" {
             let mut doc = maybe_doc
                 .take()
-                .unwrap_or_else(|| power_tools::markdown_to_word(&context));
+                .unwrap_or_else(|| power_tools::markdown_to_word(&context, "AI Document"));
             doc.blocks.extend(parse_ai_output_to_blocks(&res.content));
             save_docx_file(&out, &doc).map_err(|e| e.0)?;
             eprintln!(

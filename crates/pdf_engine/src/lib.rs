@@ -284,6 +284,15 @@ impl PdfDocument {
             p.watermark = text.clone();
         }
     }
+
+    pub fn extract_all_text(&self) -> String {
+        self.pages
+            .iter()
+            .map(|p| p.plain_text())
+            .filter(|s| !s.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
 }
 
 pub fn parse_page_ranges(spec: &str, max_pages: usize) -> Result<Vec<usize>, String> {
