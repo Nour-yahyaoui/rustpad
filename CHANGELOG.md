@@ -2,6 +2,10 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [@Nour-yahyaoui](https://github.com/Nour-yahyaoui), `nourryahyaoui@gmail.com`) follow our continuous micro-release workflow (`Commit → Tag → GitHub Release`).
 
+## [v0.8.0] - 2026-10-26
+### Added
+- `crates/rustpad_render`: Pure-Rust TrueType (`.ttf`) SFNT font parser & 4×4 supersampled anti-aliased glyph atlas, **"Paper & Daylight" Light Theme** design tokens (`DaylightTheme`), SDF anti-aliased rounded rectangles, floating paper elevation shadows, embedded RustPad logo blitter, and lossless PNG encoder.
+
 ## [v0.7.0] - 2026-10-26
 ### Added
 - `crates/power_tools`: Bidirectional `Word (.docx) ↔ PDF (.pdf)` and `Markdown ↔ Word` converters, offline Levenshtein spellchecker (`SpellChecker`), offline OCR / PDF scan extractor, and compressed local Time-Machine version vault (`SnapshotVault`).

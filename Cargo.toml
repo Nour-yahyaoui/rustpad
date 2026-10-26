@@ -7,10 +7,11 @@ members = [
     "crates/pdf_create",
     "crates/pdf_engine",
     "crates/power_tools",
+    "crates/rustpad_render",
 ]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 authors = ["Nour Yahyaoui <nourryahyaoui@gmail.com>"]
 license = "MIT"

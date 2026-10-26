@@ -1,0 +1,11 @@
+[package]
+name = "rustpad_render"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Pure-Rust TrueType (.ttf) anti-aliased font engine, Paper & Daylight theme tokens, and 2D SDF UI painter"
+
+[dependencies]
+rustpad_zip = { path = "../rustpad_zip" }
+doc_model = { path = "../doc_model" }
