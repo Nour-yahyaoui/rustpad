@@ -6,7 +6,7 @@ pub mod png_codec;
 pub mod theme;
 pub mod ttf;
 
-pub use canvas::{Rect, Surface};
+pub use canvas::{Rect, Surface, UiIcon};
 pub use png_codec::encode_surface_png;
 pub use theme::{Color, DaylightTheme};
 pub use ttf::{FontBook, FontSlot};

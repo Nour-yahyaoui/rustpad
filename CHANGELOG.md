@@ -2,6 +2,16 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`) follow our continuous micro-release workflow (`Commit → Tag → GitHub Release`).
 
+## [v1.3.0] - 2026-10-26
+### Added
+- **Pluggable Local & Cloud AI Agent Bridge** (`crates/power_tools/src/ai_agent.rs`, `app/src/{state,ui_paint,main}.rs`): Pure-Rust `TcpStream` HTTP/1.1 client for local air-gapped servers (`nour-code`, `Ollama` with `/api/tags` auto-discovery, `LM Studio`, `llama.cpp`) plus OS TLS bridge for `OpenAI`, `Groq`, `OpenRouter`, and `Anthropic Claude`, running on a non-blocking `std::thread` + `mpsc` worker (`Ctrl+J` GUI dock + `rustpad ai` CLI subcommand).
+- **Interactive Multi-Line OpenXML Tables** (`crates/doc_model/src/lib.rs`, `app/src/{word_view,state,commands}.rs`): Word-wrapped multi-line table cells, in-cell blinking caret, contextual `TABLE` action sub-bar (`+Row Above/Below`, `+Col Left/Right`, `Header Bold`, `Shade`, `Delete`), on-canvas `+ Add Row` bar and `+` right column rail, draggable column dividers, and `Tab`/`Shift+Tab` cell traversal.
+- **Architectural Paper & Linen Desktop Redesign & Ergonomics** (`docs/STYLE.md`, `crates/rustpad_render/`, `crates/rustpad_window/`, `app/src/`): Warm Paper & Linen color system, vector toolbar icons, floating Style/Font dropdown menus, asymmetric editorial Home Launchpad, drag-resizable/collapsible sidebars & split view, dynamic OS cursors (`IBeam`, `Hand`, `ResizeEW`), automatic OS HiDPI detection + UI scale steppers, and native OS clipboard (`Ctrl+C`/`X`/`V`).
+- **Mobile-First Powerhouse Landing Page Redesign** (`index.html`, `src/styles/{tokens,main}.css`, `src/main.ts`, `src/data/projectData.ts`): Rebuilt from `320px` upward with a sticky top bar + animated drop-down Mobile Top Menu, zero horizontal overflow (`minmax(0, 1fr)`), interactive AI provider console, stacked mobile crate spec cards, and Carbon Obsidian / Architectural Paper dual theme.
+
+### Fixed
+- Fixed paragraph-start `Backspace` dropping text when merging into a zero-span paragraph (`#5`), dynamic `env!("CARGO_PKG_VERSION")` version sync across all 9 crates & About modal (`#6`), inverted `2,016 px` scroll jump & line-end caret click offset (`#10`), small HiDPI default font sizes (`#11`), table cell clipping (`#12`), and split-pane PDF clipping (`#13`).
+
 ## [v1.2.0] - 2026-10-26
 ### Added
 - Automated multi-platform GitHub Actions release pipeline publishing standalone stripped Windows x86_64 (`rustpad-v1.2.0-windows-x86_64.exe` / `rustpad.exe`, `3.16 MB`) and Linux x86_64 (`rustpad-v1.2.0-linux-x86_64`, `3.18 MB`) executables with `SHA256SUMS.txt` verification hashes under `Nour-yahyaoui/rustpad`.

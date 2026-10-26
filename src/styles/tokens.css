@@ -1,105 +1,103 @@
-/* ==========================================================================
-   RustPad — Design Tokens (Swiss Typesetter's Proof Sheet × Spec Manual)
-   Committed in docs/STYLE.md · Domain-shifted R4 · Zero generic #fff/#111827
-   ========================================================================== */
-
 :root,
-:root[data-theme='light'] {
-  color-scheme: light;
-
-  /* Surfaces & Proof Stock */
-  --bg: #f7f6f2;
-  --surface: #fdfcf9;
-  --surface-subtle: #efece6;
-  --surface-elevated: #fdfcf9;
-
-  /* Ink & Hierarchy (WCAG AA/AAA verified) */
-  --fg: #16181d;
-  --fg-secondary: #2e333d;
-  --muted: #525866;
-
-  /* Pica & Registration Rules */
-  --border: #dcd8ce;
-  --border-strong: #bdb7a8;
-
-  /* Single Primary Accent: Oxidized Iron-Oxide Registration Ink */
-  --accent: #b83a1b;
-  --accent-hover: #992e14;
-  --accent-fg: #faf8f5;
-  --accent-tint: rgba(184, 58, 27, 0.09);
-
-  /* Functional Format Markers */
-  --cobalt: #1e4db7;
-  --cobalt-tint: rgba(30, 77, 183, 0.09);
-  --ok: #17663c;
-  --ok-tint: rgba(23, 102, 60, 0.1);
-  --danger: #a62626;
-  --danger-tint: rgba(166, 38, 38, 0.09);
-
-  /* Restrained Physical Paper Shadow (used only on rendered studio frame & tour) */
-  --shadow-sheet: 0 14px 34px -14px rgba(22, 24, 29, 0.16), 0 2px 6px rgba(22, 24, 29, 0.06);
-  --backdrop: rgba(22, 24, 29, 0.48);
-
-  /* Typography */
-  --font-display: 'Instrument Serif', 'Newsreader', Georgia, 'Times New Roman', serif;
-  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', 'Cascadia Code', Consolas, monospace;
-
-  /* Fluid Type Scale (>= 1.6x modular progression) */
-  --text-xs: 0.75rem;
-  --text-sm: 0.875rem;
-  --text-base: 1rem;
-  --text-lg: clamp(1.0625rem, 1.4vw, 1.1875rem);
-  --text-xl: clamp(1.3rem, 2vw, 1.6rem);
-  --text-2xl: clamp(1.85rem, 3.4vw, 2.55rem);
-  --text-hero: clamp(2.4rem, 5.1vw, 4.1rem);
-
-  /* 4px Spatial Rhythm */
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.5rem;
-  --space-6: 2rem;
-  --space-7: 3rem;
-  --space-8: 4.5rem;
-
-  /* Drafted Radii */
-  --radius-xs: 2px;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-
-  /* Motion */
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-:root[data-theme='dark'] {
+[data-theme='dark'] {
   color-scheme: dark;
 
-  --bg: #111317;
-  --surface: #181b21;
-  --surface-subtle: #20242c;
-  --surface-elevated: #1e222b;
+  /* Carbon Obsidian Industrial Palette (Default Powerhouse Mode) */
+  --bg-canvas: #090a0d;
+  --bg-elevated: #111318;
+  --bg-surface: #161920;
+  --bg-subtle: #1c2029;
+  --bg-header: rgba(9, 10, 13, 0.86);
+  --bg-menu-sheet: #0e1015;
+  --bg-code: #0c0e13;
 
-  --fg: #eceae4;
-  --fg-secondary: #cfd3dc;
-  --muted: #9ca3b0;
+  --border-subtle: #222631;
+  --border-strong: #323846;
+  --border-accent: rgba(234, 88, 12, 0.55);
 
-  --border: #2a2f3a;
-  --border-strong: #3d4452;
+  --ink-primary: #f5f3ee;
+  --ink-secondary: #b4b8c2;
+  --ink-muted: #7d8392;
+  --ink-inverse: #090a0d;
 
-  --accent: #e86442;
-  --accent-hover: #f07a5b;
-  --accent-fg: #111317;
-  --accent-tint: rgba(232, 100, 66, 0.14);
+  --accent-rust: #f97316;
+  --accent-rust-strong: #ea580c;
+  --accent-rust-soft: rgba(249, 115, 22, 0.14);
 
-  --cobalt: #6b9bff;
-  --cobalt-tint: rgba(107, 155, 255, 0.14);
-  --ok: #4ec283;
-  --ok-tint: rgba(78, 194, 131, 0.14);
-  --danger: #f27474;
-  --danger-tint: rgba(242, 116, 116, 0.14);
+  --accent-word: #3b82f6;
+  --accent-word-soft: rgba(59, 130, 246, 0.14);
 
-  --shadow-sheet: 0 18px 42px -14px rgba(0, 0, 0, 0.65), 0 2px 8px rgba(0, 0, 0, 0.45);
-  --backdrop: rgba(6, 8, 11, 0.72);
+  --accent-ai: #22c55e;
+  --accent-ai-soft: rgba(34, 197, 94, 0.14);
+
+  --accent-pdf: #ef4444;
+  --accent-pdf-soft: rgba(239, 68, 68, 0.14);
+
+  --shadow-card: 0 18px 44px -16px rgba(0, 0, 0, 0.68);
+  --shadow-frame: 0 28px 70px -20px rgba(0, 0, 0, 0.82);
+  --grid-line: rgba(255, 255, 255, 0.032);
+  --hero-glow: radial-gradient(circle at 50% 0%, rgba(234, 88, 12, 0.16), rgba(59, 130, 246, 0.06) 42%, transparent 72%);
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+
+  /* Warm Architectural Paper & Linen Palette */
+  --bg-canvas: #f5f2eb;
+  --bg-elevated: #ffffff;
+  --bg-surface: #ede9df;
+  --bg-subtle: #e5e0d4;
+  --bg-header: rgba(245, 242, 235, 0.9);
+  --bg-menu-sheet: #fbf9f5;
+  --bg-code: #16171b;
+
+  --border-subtle: #dad4c6;
+  --border-strong: #beb6a4;
+  --border-accent: rgba(196, 69, 28, 0.45);
+
+  --ink-primary: #171614;
+  --ink-secondary: #4a4740;
+  --ink-muted: #767166;
+  --ink-inverse: #ffffff;
+
+  --accent-rust: #c4451c;
+  --accent-rust-strong: #a93814;
+  --accent-rust-soft: rgba(196, 69, 28, 0.1);
+
+  --accent-word: #1d4ed8;
+  --accent-word-soft: rgba(29, 78, 216, 0.1);
+
+  --accent-ai: #15803d;
+  --accent-ai-soft: rgba(21, 128, 61, 0.1);
+
+  --accent-pdf: #b91c1c;
+  --accent-pdf-soft: rgba(185, 28, 28, 0.1);
+
+  --shadow-card: 0 14px 34px -14px rgba(23, 22, 20, 0.12);
+  --shadow-frame: 0 26px 60px -18px rgba(23, 22, 20, 0.2);
+  --grid-line: rgba(23, 22, 20, 0.042);
+  --hero-glow: radial-gradient(circle at 50% 0%, rgba(196, 69, 28, 0.11), rgba(29, 78, 216, 0.05) 45%, transparent 72%);
+}
+
+:root {
+  --font-sans: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-serif: 'Instrument Serif', 'Newsreader', Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --header-h: 58px;
+  --container-max: 1220px;
+  --gutter: clamp(1rem, 4.5vw, 2.25rem);
+
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --header-h: 66px;
+  }
 }

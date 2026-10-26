@@ -121,22 +121,22 @@ fn build_welcome_guide() -> Document {
     table.rows[0] = vec![
         TableCell::header("Studio Pillar"),
         TableCell::header("Key Capabilities"),
-        TableCell::header("Quick Shortcut"),
+        TableCell::header("Shortcut"),
     ];
     table.rows[1] = vec![
         TableCell::plain("Word Studio (.docx)"),
-        TableCell::plain("Paginated A4/Letter sheets, styles, tables, headers & spellcheck"),
+        TableCell::plain("Paginated A4/Letter sheets, wrapped multi-line tables, styles & spellcheck"),
         TableCell::plain("Ctrl+N / Ctrl+S"),
     ];
     table.rows[2] = vec![
         TableCell::plain("PDF Studio (.pdf)"),
-        TableCell::plain("Create PDF, edit text blocks, highlight, sign, merge, split & redact"),
+        TableCell::plain("Vector PDF export, inline text edit, highlight, sign, merge, split & redact"),
         TableCell::plain("Ctrl+E / Ctrl+M"),
     ];
     table.rows[3] = vec![
-        TableCell::plain("Power Tools"),
-        TableCell::plain("DOCX <-> PDF converter, offline OCR, Split View & Time-Machine"),
-        TableCell::plain("Ctrl+K"),
+        TableCell::plain("AI Agent Dock"),
+        TableCell::plain("Local Ollama, nour-code, LM Studio, OpenAI & Claude writing assistant"),
+        TableCell::plain("Ctrl+J / Ctrl+K"),
     ];
 
     Document {
@@ -150,28 +150,28 @@ fn build_welcome_guide() -> Document {
             )),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Subtitle,
-                "Fast · Lightweight · 100% Native Rust · Designed by Nour Yahyaoui",
+                "Pure-Rust Native Desktop Suite · Zero WebView · Designed by Nour Yahyaoui",
             )),
             Block::Paragraph(intro),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Heading1,
                 "1. Core Capabilities at Your Fingertips",
             )),
-            bullet("Open, create, format, and save standards-compliant Microsoft Word (.docx) files."),
-            bullet("Export print-ready vector PDFs in one click or open any existing PDF to edit, merge, split, sign, or compress."),
-            bullet("Press Ctrl+K anywhere to launch the instant Command Palette across 35+ tools."),
+            bullet("Open, create, format, and save standards-compliant Microsoft Word (.docx) files with character-accurate caret placement."),
+            bullet("Click inside any table cell to wrap multi-line text, press Tab to add rows, or drag column borders to resize."),
+            bullet("Press Ctrl+J to open the resizable AI Agent Dock (local Ollama, nour-code, or cloud APIs) or Ctrl+K for 45+ instant tools."),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Heading2,
-                "2. Quick Feature Matrix",
+                "2. Studio Feature Matrix",
             )),
             Block::Table(table),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Heading2,
-                "3. Try Editing Right Now",
+                "3. Quick Hands-On Tour",
             )),
-            checklist("Click anywhere on this A4 sheet and start typing", true),
-            checklist("Use the top bar to switch styles, colors, lists, or insert a table", false),
-            checklist("Click 'Export PDF' in the top-right to generate a crisp vector PDF", false),
+            checklist("Click any word on this sheet or drag the sidebar splitter to resize", true),
+            checklist("Hover or click the table above to add rows (+ Row) and columns (+ Col)", false),
+            checklist("Open the AI Assistant dock (Ctrl+J) to proofread, summarize, or draft sections", false),
         ],
         comments: Vec::new(),
     }
