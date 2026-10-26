@@ -9,6 +9,9 @@
 /.vite/
 *.tsbuildinfo
 
+# Local generated social media video/gif previews
+/media-kit/
+
 # Local temp & OS files
 .DS_Store
 Thumbs.db
