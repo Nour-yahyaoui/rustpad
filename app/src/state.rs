@@ -695,7 +695,7 @@ impl RustPadApp {
                 self.execute_command(CommandId::ConvertPdfToWord);
                 self.apply_ai_output_to_document(false);
             }
-            StudioTab::HomeHub | None => {
+            Some(StudioTab::HomeHub) | None => {
                 let mut doc = markdown_to_word(&out, "AI Drafted Document");
                 doc.author = "Nour Yahyaoui".into();
                 self.tabs
@@ -1277,8 +1277,10 @@ impl RustPadApp {
     pub fn apply_paragraph_style(&mut self, style: ParagraphStyle) {
         if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
             let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
-            if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
+            if matches!(w.doc.blocks.get(idx), Some(Block::Paragraph(_))) {
                 w.history.record(&w.doc);
+            }
+            if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
                 w.dirty = true;
                 p.style = style;
                 let sz = style.default_font_size();
@@ -1315,8 +1317,10 @@ impl RustPadApp {
     pub fn apply_font_family(&mut self, fam: FontFamily) {
         if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
             let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
-            if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
+            if matches!(w.doc.blocks.get(idx), Some(Block::Paragraph(_))) {
                 w.history.record(&w.doc);
+            }
+            if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
                 w.dirty = true;
                 for s in &mut p.spans {
                     s.style.font_family = fam;
@@ -1781,8 +1785,10 @@ impl RustPadApp {
             UiAction::TableQuickAddRow { tab_idx, block_idx } => {
                 self.active_tab = tab_idx;
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
-                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(block_idx) {
+                    if matches!(w.doc.blocks.get(block_idx), Some(Block::Table(_))) {
                         w.history.record(&w.doc);
+                    }
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(block_idx) {
                         t.add_row();
                         let last_r = t.rows.len().saturating_sub(1);
                         w.cursor_block = block_idx;
@@ -1797,8 +1803,10 @@ impl RustPadApp {
             UiAction::TableQuickAddCol { tab_idx, block_idx } => {
                 self.active_tab = tab_idx;
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
-                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(block_idx) {
+                    if matches!(w.doc.blocks.get(block_idx), Some(Block::Table(_))) {
                         w.history.record(&w.doc);
+                    }
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(block_idx) {
                         t.add_column();
                         w.table_col_weights.retain(|(b, _)| *b != block_idx);
                         let last_c = t.cols.saturating_sub(1);
@@ -1821,7 +1829,8 @@ impl RustPadApp {
                     max_scroll,
                 } = drag
                 {
-                    self.apply_scrollbar_drag(tab_idx, track_y, track_h, max_scroll, self.mouse_y);
+                    let my = self.mouse_y;
+                    self.apply_scrollbar_drag(tab_idx, track_y, track_h, max_scroll, my);
                 }
             }
             UiAction::TogglePdfRightInspector => {
@@ -2727,12 +2736,14 @@ impl RustPadApp {
         }
         match self.tabs.get_mut(self.active_tab) {
             Some(StudioTab::Word(w)) => {
+                if cut {
+                    w.history.record(&w.doc);
+                }
                 if let Some((tb_idx, r, c)) = w.active_table_cell {
                     if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
                         if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
                             set_clipboard_text(&cell.text);
                             if cut {
-                                w.history.record(&w.doc);
                                 cell.text.clear();
                                 w.table_cursor_char = 0;
                                 w.dirty = true;
@@ -2748,7 +2759,6 @@ impl RustPadApp {
                     let txt = p.plain_text();
                     set_clipboard_text(&txt);
                     if cut {
-                        w.history.record(&w.doc);
                         let st = p.spans.first().map(|s| s.style.clone()).unwrap_or_default();
                         p.spans = vec![TextSpan::styled("", st)];
                         w.cursor_char = 0;

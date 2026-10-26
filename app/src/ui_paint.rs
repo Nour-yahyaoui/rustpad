@@ -43,16 +43,17 @@ pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
     };
     let work = Rect::new(full_work.x, full_work.y, (full_work.w - ai_w).max(120.0), full_work.h);
 
+    let active_idx = app.active_tab;
     if let Some(sec_idx) = app
         .split_secondary_tab
-        .filter(|&sec| sec < app.tabs.len() && sec != app.active_tab && work.w >= 560.0)
+        .filter(|&sec| sec < app.tabs.len() && sec != active_idx && work.w >= 560.0)
     {
         let ratio = app.split_ratio.clamp(0.24, 0.76);
         let left_w = ((work.w - 5.0) * ratio).floor();
         let left_rect = Rect::new(work.x, work.y, left_w, work.h);
         let right_rect = Rect::new(work.x + left_w + 5.0, work.y, work.w - left_w - 5.0, work.h);
 
-        paint_tab_pane(app, surface, app.active_tab, true, left_rect);
+        paint_tab_pane(app, surface, active_idx, true, left_rect);
         paint_tab_pane(app, surface, sec_idx, false, right_rect);
 
         // Draggable Split Workspace Divider
@@ -75,7 +76,7 @@ pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
             }),
         ));
     } else {
-        paint_tab_pane(app, surface, app.active_tab, true, work);
+        paint_tab_pane(app, surface, active_idx, true, work);
     }
 
     if show_ai_dock {
@@ -628,6 +629,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
     y += chip_h + 10.0 * s;
 
     // 2. Editable Endpoint URL, Model (+ Detect Local button), and API Key Fields
+    let ep_val = app.ai_dock.config.endpoint_url.clone();
     y = paint_ai_field(
         app,
         surface,
@@ -636,7 +638,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
         y,
         inner_w,
         "ENDPOINT URL",
-        &app.ai_dock.config.endpoint_url.clone(),
+        &ep_val,
         "http://127.0.0.1:11434/v1/chat/completions",
         AiInputField::EndpointUrl,
     );
@@ -1626,7 +1628,7 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
 fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, screen: Rect) {
     surface.fill_rect(screen, DaylightTheme::SCRIM);
 
-    let Some(modal_ref) = &app.modal else {
+    let Some(modal_ref) = &mut app.modal else {
         return;
     };
 
@@ -1734,6 +1736,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
         ActiveModal::SignaturePad {
             strokes,
             signer_name,
+            pad_rect,
             ..
         } => {
             let strokes_clone = strokes.clone();
@@ -1742,10 +1745,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let mh = 330.0 * s;
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
             let pad = Rect::new(card.x + 20.0 * s, card.y + 64.0 * s, card.w - 40.0 * s, 180.0 * s);
-
-            if let Some(ActiveModal::SignaturePad { pad_rect, .. }) = &mut app.modal {
-                *pad_rect = pad;
-            }
+            *pad_rect = pad;
 
             surface.draw_paper_shadow(card, 8.0, 18.0, 32);
             surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
