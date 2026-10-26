@@ -1,10 +1,11 @@
 {
   "name": "rustpad-studio-site",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "Official project specification and showcase for RustPad — 100% Pure-Rust Native Desktop Word (.docx) & Vector PDF (.pdf) Studio by Nour Yahyaoui.",
-  "author": "Nour Yahyaoui <nourryahyaoui@gmail.com> (https://github.com/Nour-yahyaoui)",
+  "author": "Nour Yahyaoui <nourryahyaoui@gmail.com> (https://www.linkedin.com/in/nour-yahyaoui-86987b36b)",
+  "repository": "https://github.com/Nour-yahyaoui/rustpad",
   "license": "MIT",
   "scripts": {
     "dev": "vite --host 0.0.0.0",

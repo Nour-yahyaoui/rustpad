@@ -1,6 +1,15 @@
 # Changelog — RustPad
 
-All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [@Nour-yahyaoui](https://github.com/Nour-yahyaoui), `nourryahyaoui@gmail.com`) follow our continuous micro-release workflow (`Commit → Tag → GitHub Release`).
+All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`) follow our continuous micro-release workflow (`Commit → Tag → GitHub Release`).
+
+## [v1.2.0] - 2026-10-26
+### Added
+- Automated multi-platform GitHub Actions release pipeline publishing standalone stripped Windows x86_64 (`rustpad-v1.2.0-windows-x86_64.exe` / `rustpad.exe`, `3.16 MB`) and Linux x86_64 (`rustpad-v1.2.0-linux-x86_64`, `3.18 MB`) executables with `SHA256SUMS.txt` verification hashes under `Nour-yahyaoui/rustpad`.
+- Updated the **RustPad Landing Page** (`https://rustpad-studio.vercel.app`) and project docs with direct 1-click `v1.2.0` prebuilt binary download links, `16 Releases` ledger metrics, and author LinkedIn + Portfolio links.
+
+## [v1.1.2] - 2026-10-26
+### Added
+- Windows `.exe` native PowerShell packaging (`scripts/build-windows-exe.ps1`), Linux MinGW-w64 cross-compile packaging (`scripts/build-windows-cross.sh`), and `docs/BUILD_WINDOWS_EXE.md`.
 
 ## [v1.1.1] - 2026-10-26
 ### Added
