@@ -366,7 +366,25 @@ fn render_paragraph_pdf(
             Alignment::Right => m_left + indent_pt + (avail_w - line_w).max(0.0),
         };
 
+        // Coalesce adjacent same-style tokens on the line so PDF streams emit clean full-line runs
+        let mut coalesced: Vec<WordToken> = Vec::with_capacity(line.len());
         for tok in line {
+            if let Some(prev) = coalesced.last_mut() {
+                if prev.style == tok.style {
+                    prev.text.push_str(&tok.text);
+                    prev.width_pt += tok.width_pt;
+                    continue;
+                }
+            }
+            coalesced.push(tok.clone());
+        }
+
+        for tok in &coalesced {
+            let clean_text = tok.text.trim_end_matches(' ');
+            if clean_text.is_empty() {
+                x += tok.width_pt;
+                continue;
+            }
             if let Some(hl) = tok.style.highlight {
                 let _ = writeln!(
                     s,
@@ -388,7 +406,7 @@ fn render_paragraph_pdf(
                 x,
                 baseline_y,
                 tok.style.color,
-                &tok.text,
+                clean_text,
             );
             if tok.style.underline {
                 let c = tok.style.color;
@@ -419,7 +437,7 @@ fn render_paragraph_pdf(
                     sy
                 );
             }
-            x += tok.width_pt;
+            x += tok.width_pt * 1.08;
         }
 
         *cursor_y -= line_h - base_size;

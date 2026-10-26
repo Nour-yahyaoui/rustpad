@@ -2,6 +2,10 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [@Nour-yahyaoui](https://github.com/Nour-yahyaoui), `nourryahyaoui@gmail.com`) follow our continuous micro-release workflow (`Commit → Tag → GitHub Release`).
 
+## [v0.9.5] - 2026-10-26
+### Added
+- `app` (`rustpad`): Complete interactive native desktop studio & CLI integrating Home Hub (6 starter templates + recent workspace documents), paginated Word (`.docx`) Studio, vector PDF (`.pdf`) Studio (inline text block editing, highlights, sticky notes, stamps, freehand ink signature pad, true redaction, rotate/merge/split/compress), Side-by-Side Split Workspace (`Ctrl+\`), `Ctrl+K` fuzzy Command Palette across 49 actions, Time-Machine Snapshot drawer, CLI subcommands (`convert`, `inspect`, `ocr`, `merge`, `demo-files`, `--render-preview`), and full-line PDF text-stream coalescing.
+
 ## [v0.9.0] - 2026-10-26
 ### Added
 - `crates/rustpad_window`: Zero-dependency cross-platform native desktop windowing & OS file dialog backend supporting Linux (`libX11.so.6` dynamic loader with `_NET_WM_ICON` 64×64 RustPad taskbar icon), Windows (`Win32` HiDPI `StretchDIBits` + Explorer Open/Save dialogs), keyboard shortcuts, scroll wheel, and mouse events.

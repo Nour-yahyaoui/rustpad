@@ -1,0 +1,21 @@
+[package]
+name = "rustpad"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "RustPad — 100% Pure-Rust Native Word (.docx) & PDF (.pdf) Desktop Studio"
+
+[[bin]]
+name = "rustpad"
+path = "src/main.rs"
+
+[dependencies]
+rustpad_zip = { path = "../crates/rustpad_zip" }
+doc_model = { path = "../crates/doc_model" }
+docx_io = { path = "../crates/docx_io" }
+pdf_create = { path = "../crates/pdf_create" }
+pdf_engine = { path = "../crates/pdf_engine" }
+power_tools = { path = "../crates/power_tools" }
+rustpad_render = { path = "../crates/rustpad_render" }
+rustpad_window = { path = "../crates/rustpad_window" }
