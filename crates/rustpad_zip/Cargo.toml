@@ -1,0 +1,7 @@
+[package]
+name = "rustpad_zip"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Pure-Rust CRC32, Adler32, RFC 1951/1950 DEFLATE/Zlib, and PKZIP engine for RustPad (.docx & .pdf)"
