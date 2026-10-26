@@ -341,7 +341,7 @@ fn render_paragraph_pdf(
 
         if line_idx == 0 {
             let marker = match p.list_kind {
-                ListKind::Bullet => Some("\x95".to_string()), // WinAnsi bullet •
+                ListKind::Bullet => Some("\\225".to_string()), // WinAnsi bullet • (0x95 = octal 225)
                 ListKind::Numbered(n) => Some(format!("{n}.")),
                 ListKind::Checklist(done) => Some(if done { "[x]" } else { "[ ]" }.to_string()),
                 ListKind::None => None,
