@@ -1,7 +1,46 @@
 //! Warm Architectural "Paper & Linen" Studio Theme Tokens.
 //! Derived from fine cotton drafting paper, stone linen board, carbon ink, and terracotta wax.
 
-pub use crate::canvas::Color;
+use doc_model::RgbColor;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
+
+impl Color {
+    pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
+        Self { r, g, b, a }
+    }
+
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b, a: 255 }
+    }
+
+    pub const fn from_doc(c: RgbColor) -> Self {
+        Self::rgb(c.r, c.g, c.b)
+    }
+
+    pub const fn with_alpha(self, a: u8) -> Self {
+        Self {
+            r: self.r,
+            g: self.g,
+            b: self.b,
+            a,
+        }
+    }
+
+    #[inline]
+    pub const fn pack_argb(self) -> u32 {
+        ((self.a as u32) << 24)
+            | ((self.r as u32) << 16)
+            | ((self.g as u32) << 8)
+            | (self.b as u32)
+    }
+}
 
 pub struct DaylightTheme;
 
@@ -48,6 +87,7 @@ impl DaylightTheme {
 
     /// Emerald status & checklist completion (`#1D6F4A`)
     pub const SUCCESS: Color = Color::rgb(29, 111, 74);
+    pub const SUCCESS_SOFT: Color = Color::rgb(234, 243, 238);
     /// Warm amber notice (`#B45309`)
     pub const WARNING: Color = Color::rgb(180, 83, 9);
     /// Calm modal backdrop scrim

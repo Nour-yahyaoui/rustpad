@@ -88,7 +88,7 @@ impl DesktopAppHandler for NativeAppRunner {
     }
 
     fn desired_cursor(&self) -> CursorShape {
-        self.app.active_cursor
+        self.app.desired_cursor
     }
 }
 

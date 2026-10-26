@@ -691,7 +691,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
     if !disc.is_empty() {
         let mut mx = dock.x + pad;
         for m in disc.iter().take(3) {
-            let tw = app.fonts.measure_text(FontSlot::Mono, m, 9.8 * s);
+            let tw = app.fonts.measure_text(FontSlot::MonoRegular, m, 9.8 * s);
             let mw = (tw + 12.0 * s).min(inner_w);
             if mx + mw > dock.x + pad + inner_w {
                 break;
@@ -700,7 +700,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
             surface.fill_rounded_rect(mr, 3.0, DaylightTheme::AI_SOFT);
             surface.draw_text_clipped(
                 &mut app.fonts,
-                FontSlot::Mono,
+                FontSlot::MonoRegular,
                 9.8 * s,
                 mr.x + 6.0 * s,
                 mr.y + 14.0 * s,
@@ -1059,7 +1059,7 @@ fn paint_ai_field(
     };
     surface.draw_text_clipped(
         &mut app.fonts,
-        FontSlot::Mono,
+        FontSlot::MonoRegular,
         10.5 * s,
         box_r.x + 8.0 * s,
         box_r.y + bh * 0.67,
@@ -1097,7 +1097,7 @@ fn paint_home_hub(
     // Studio Masthead Rule
     surface.draw_text(
         fonts,
-        FontSlot::Mono,
+        FontSlot::MonoRegular,
         10.8 * s,
         ox,
         y,
@@ -1131,7 +1131,7 @@ fn paint_home_hub(
     // Left Column: Editorial Headline + Primary Actions + Recent Workspace Ledger
     surface.draw_text(
         fonts,
-        FontSlot::Serif,
+        FontSlot::SerifRegular,
         28.0 * s,
         ox,
         y,
@@ -1150,7 +1150,7 @@ fn paint_home_hub(
     );
     surface.draw_text_clipped(
         fonts,
-        FontSlot::Mono,
+        FontSlot::MonoRegular,
         10.8 * s,
         ox,
         y + 46.0 * s,
@@ -1269,7 +1269,7 @@ fn paint_home_hub(
             );
             surface.draw_text(
                 fonts,
-                FontSlot::Mono,
+                FontSlot::MonoRegular,
                 9.5 * s,
                 tag_r.x + 5.0 * s,
                 tag_r.y + 12.2 * s,
@@ -1392,7 +1392,7 @@ fn paint_home_hub(
         );
         surface.draw_text(
             fonts,
-            FontSlot::Mono,
+            FontSlot::MonoRegular,
             10.2 * s,
             tx,
             card.y + card.h - 16.0 * s,
@@ -1453,7 +1453,7 @@ fn paint_toolbar_dropdown(
                 let slot = if st.is_bold_by_default() {
                     FontSlot::SansBold
                 } else if *st == ParagraphStyle::Quote {
-                    FontSlot::Serif
+                    FontSlot::SerifRegular
                 } else {
                     FontSlot::SansRegular
                 };
@@ -1473,8 +1473,8 @@ fn paint_toolbar_dropdown(
         ToolbarDropdown::FontFamily { anchor_x, anchor_y } => {
             let items = [
                 (FontFamily::Sans, "Inter / Sans-Serif", FontSlot::SansRegular),
-                (FontFamily::Serif, "Georgia / Editorial Serif", FontSlot::Serif),
-                (FontFamily::Mono, "JetBrains / Monospace", FontSlot::Mono),
+                (FontFamily::Serif, "Georgia / Editorial Serif", FontSlot::SerifRegular),
+                (FontFamily::Mono, "JetBrains / Monospace", FontSlot::MonoRegular),
             ];
             let mw = 214.0 * s;
             let row_h = (34.0 * s).round();
@@ -1557,10 +1557,10 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         let r = Rect::new(rx, by, w_px.round(), bh);
         surface.fill_rounded_rect(r, 4.0, DaylightTheme::PAPER);
         surface.stroke_rounded_rect(r, 4.0, 1.0, DaylightTheme::BORDER);
-        let tw = app.fonts.measure_text(FontSlot::Mono, lbl, 10.0 * s);
+        let tw = app.fonts.measure_text(FontSlot::MonoRegular, lbl, 10.0 * s);
         surface.draw_text(
             &mut app.fonts,
-            FontSlot::Mono,
+            FontSlot::MonoRegular,
             10.0 * s,
             r.x + (r.w - tw) * 0.5,
             r.y + bh * 0.68,
@@ -1583,10 +1583,10 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         let r = Rect::new(rx, by, w_px.round(), bh);
         surface.fill_rounded_rect(r, 4.0, DaylightTheme::PAPER);
         surface.stroke_rounded_rect(r, 4.0, 1.0, DaylightTheme::BORDER);
-        let tw = app.fonts.measure_text(FontSlot::Mono, lbl, 10.4 * s);
+        let tw = app.fonts.measure_text(FontSlot::MonoRegular, lbl, 10.4 * s);
         surface.draw_text(
             &mut app.fonts,
-            FontSlot::Mono,
+            FontSlot::MonoRegular,
             10.4 * s,
             r.x + (r.w - tw) * 0.5,
             r.y + bh * 0.68,
@@ -1696,7 +1696,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 };
                 surface.draw_text(
                     &mut app.fonts,
-                    FontSlot::Mono,
+                    FontSlot::MonoRegular,
                     10.2 * s,
                     row.x + 10.0 * s,
                     row.y + row.h * 0.66,
@@ -1714,10 +1714,10 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     cmd.title,
                 );
                 if !cmd.shortcut.is_empty() {
-                    let sw = app.fonts.measure_text(FontSlot::Mono, cmd.shortcut, 10.5 * s);
+                    let sw = app.fonts.measure_text(FontSlot::MonoRegular, cmd.shortcut, 10.5 * s);
                     surface.draw_text(
                         &mut app.fonts,
-                        FontSlot::Mono,
+                        FontSlot::MonoRegular,
                         10.5 * s,
                         row.x + row.w - sw - 12.0 * s,
                         row.y + row.h * 0.66,
@@ -1838,7 +1838,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             surface.stroke_rounded_rect(box_r, 5.0, 1.5, DaylightTheme::WORD_ACCENT);
             surface.draw_text_clipped(
                 &mut app.fonts,
-                FontSlot::Mono,
+                FontSlot::MonoRegular,
                 12.2 * s,
                 box_r.x + 10.0 * s,
                 box_r.y + 23.0 * s,
@@ -2048,7 +2048,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     );
                     surface.draw_text(
                         &mut app.fonts,
-                        FontSlot::Mono,
+                        FontSlot::MonoRegular,
                         11.0 * s,
                         row.x + row.w - 86.0 * s,
                         row.y + 23.0 * s,
@@ -2114,7 +2114,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             for ln in lines {
                 surface.draw_text_clipped(
                     &mut app.fonts,
-                    FontSlot::Mono,
+                    FontSlot::MonoRegular,
                     11.0 * s,
                     card.x + 24.0 * s,
                     ly,
@@ -2182,7 +2182,7 @@ fn paint_single_input_modal(
     surface.stroke_rounded_rect(box_r, 5.0, 1.5, DaylightTheme::WORD_ACCENT);
     surface.draw_text_clipped(
         fonts,
-        FontSlot::Mono,
+        FontSlot::MonoRegular,
         12.5 * s,
         box_r.x + 10.0 * s,
         box_r.y + 24.0 * s,
