@@ -428,7 +428,7 @@ function initCliBenchAndCopy(): void {
   attachCopy(copyCliBtn, () => currentCmd);
   attachCopy(
     document.getElementById('hero-copy-btn') as HTMLButtonElement | null,
-    () => 'git clone https://github.com/Nour-yahyaoui/word.git && cd word && cargo run --release -p rustpad'
+    () => 'git clone https://github.com/Nour-yahyaoui/rustpad.git && cd rustpad && cargo run --release -p rustpad'
   );
 }
 

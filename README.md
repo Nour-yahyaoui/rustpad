@@ -8,7 +8,7 @@
 
 - **Author**: Nour Yahyaoui — [github.com/Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`
 - **Live Project Landing Page**: [https://rustpad-studio.vercel.app](https://rustpad-studio.vercel.app)
-- **Current Release**: [`v1.1.1`](https://github.com/Nour-yahyaoui/word/releases) (Desktop Core `v1.0.0` · MIT License)
+- **Current Release**: [`v1.1.1`](https://github.com/Nour-yahyaoui/rustpad/releases) (Desktop Core `v1.0.0` · MIT License)
 - **Stack**: 100% Pure Rust (`14,280` LOC across 9 workspace crates, zero WebView, zero external `crates.io` runtime dependencies) + Root Vite TypeScript Project Showcase
 
 ![RustPad Word Studio editing an A4 OpenXML document with Document Outline and Live Metrics](docs/screenshots/word-studio.png)
@@ -28,8 +28,8 @@ Desktop document editors routinely ship 150–400 MB Chromium wrappers or multi-
 Requires only a standard Rust toolchain (`rustc` + `cargo` 1.75+). Compiles offline with zero external network fetches:
 
 ```bash
-git clone https://github.com/Nour-yahyaoui/word.git
-cd word
+git clone https://github.com/Nour-yahyaoui/rustpad.git
+cd rustpad
 
 # Run all 13 workspace unit tests across all 9 crates
 cargo test --workspace

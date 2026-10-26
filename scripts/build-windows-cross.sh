@@ -41,7 +41,7 @@ cat "${OUT_DIR}/SHA256SUMS-windows.txt"
 if [[ "$UPLOAD_FLAG" == "--upload" ]]; then
   echo "==> Uploading to GitHub Release ${RELEASE_TAG}..."
   gh release upload "$RELEASE_TAG" "$DEST_EXE" "${OUT_DIR}/rustpad.exe" "${OUT_DIR}/SHA256SUMS-windows.txt" --clobber
-  echo "==> Uploaded to https://github.com/Nour-yahyaoui/word/releases/tag/${RELEASE_TAG}"
+  echo "==> Uploaded to https://github.com/Nour-yahyaoui/rustpad/releases/tag/${RELEASE_TAG}"
 else
   echo ""
   echo "To push this .exe to GitHub Releases, run:"

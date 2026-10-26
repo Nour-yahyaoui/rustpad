@@ -2,7 +2,7 @@
 .SYNOPSIS
     Builds the standalone pure-Rust Windows executable (rustpad.exe) and optionally uploads it to GitHub Releases.
 .DESCRIPTION
-    Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/word
+    Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
 .EXAMPLE
     .\scripts\build-windows-exe.ps1
     .\scripts\build-windows-exe.ps1 -ReleaseTag v1.0.0 -Upload
@@ -47,7 +47,7 @@ Write-Host "    SHA256 : $Hash"
 if ($Upload) {
     Write-Host "==> Uploading $VersionedExe to GitHub Release $ReleaseTag..." -ForegroundColor Cyan
     gh release upload $ReleaseTag $VersionedExe "$OutDir\rustpad.exe" $SumFile --clobber
-    Write-Host "==> Uploaded! Check https://github.com/Nour-yahyaoui/word/releases/tag/$ReleaseTag" -ForegroundColor Green
+    Write-Host "==> Uploaded! Check https://github.com/Nour-yahyaoui/rustpad/releases/tag/$ReleaseTag" -ForegroundColor Green
 } else {
     Write-Host ""
     Write-Host "Next step to publish on GitHub Releases:" -ForegroundColor Yellow
