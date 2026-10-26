@@ -638,65 +638,86 @@ impl RustPadApp {
             return;
         }
 
-        match self.tabs.get_mut(self.active_tab) {
-            Some(StudioTab::Word(w)) => {
-                w.history.record(&w.doc);
-                w.snapshots.capture(&w.doc, "Before AI Agent apply");
-                w.dirty = true;
+        enum ActiveKind {
+            Word,
+            Pdf,
+            HomeOrNone,
+        }
+        let kind = match self.tabs.get(self.active_tab) {
+            Some(StudioTab::Word(_)) => ActiveKind::Word,
+            Some(StudioTab::Pdf(_)) => ActiveKind::Pdf,
+            Some(StudioTab::HomeHub) | None => ActiveKind::HomeOrNone,
+        };
 
-                if replace_current {
-                    if let Some((tb_idx, r, c)) = w.active_table_cell {
-                        if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
-                            if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
-                                cell.text = out.replace('\n', " ");
-                                w.table_cursor_char = cell.text.chars().count();
-                                self.status_toast = "Replaced active table cell with AI output (Ctrl+Z to undo)".into();
+        match kind {
+            ActiveKind::Word => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    w.history.record(&w.doc);
+                    w.snapshots.capture(&w.doc, "Before AI Agent apply");
+                    w.dirty = true;
+
+                    if replace_current {
+                        if let Some((tb_idx, r, c)) = w.active_table_cell {
+                            if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                                if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c))
+                                {
+                                    cell.text = out.replace('\n', " ");
+                                    w.table_cursor_char = cell.text.chars().count();
+                                    self.status_toast =
+                                        "Replaced active table cell with AI output (Ctrl+Z to undo)"
+                                            .into();
+                                    return;
+                                }
+                            }
+                        }
+                        if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
+                            let first_line = out.lines().next().unwrap_or(&out);
+                            if out.lines().count() <= 1 {
+                                let st = p
+                                    .spans
+                                    .first()
+                                    .map(|s| s.style.clone())
+                                    .unwrap_or_default();
+                                p.spans = vec![TextSpan::styled(first_line, st)];
+                                w.cursor_char = first_line.chars().count();
+                                self.status_toast =
+                                    "Replaced paragraph with AI revision (Ctrl+Z to undo)".into();
                                 return;
                             }
                         }
-                    }
-                    if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
-                        let first_line = out.lines().next().unwrap_or(&out);
-                        if out.lines().count() <= 1 {
-                            let st = p.spans.first().map(|s| s.style.clone()).unwrap_or_default();
-                            p.spans = vec![TextSpan::styled(first_line, st)];
-                            w.cursor_char = first_line.chars().count();
+                        let new_blocks = parse_ai_output_to_blocks(&out);
+                        if !new_blocks.is_empty() {
+                            let at = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+                            w.doc.blocks.remove(at);
+                            for (offset, b) in new_blocks.into_iter().enumerate() {
+                                w.doc.blocks.insert(at + offset, b);
+                            }
                             self.status_toast =
-                                "Replaced paragraph with AI revision (Ctrl+Z to undo)".into();
-                            return;
+                                "Replaced section with AI output (Ctrl+Z to undo)".into();
                         }
-                    }
-                    let new_blocks = parse_ai_output_to_blocks(&out);
-                    if !new_blocks.is_empty() {
-                        let at = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
-                        w.doc.blocks.remove(at);
+                    } else {
+                        let new_blocks = parse_ai_output_to_blocks(&out);
+                        let count = new_blocks.len();
+                        let insert_at = (w.cursor_block + 1).min(w.doc.blocks.len());
                         for (offset, b) in new_blocks.into_iter().enumerate() {
-                            w.doc.blocks.insert(at + offset, b);
+                            w.doc.blocks.insert(insert_at + offset, b);
                         }
-                        self.status_toast = "Replaced section with AI output (Ctrl+Z to undo)".into();
+                        w.cursor_block = (insert_at + count.saturating_sub(1))
+                            .min(w.doc.blocks.len().saturating_sub(1));
+                        w.cursor_char = 0;
+                        w.active_table_cell = None;
+                        w.scroll_to_caret = true;
+                        self.status_toast =
+                            format!("Inserted {count} AI-drafted block(s) (Ctrl+Z to undo)");
                     }
-                } else {
-                    let new_blocks = parse_ai_output_to_blocks(&out);
-                    let count = new_blocks.len();
-                    let insert_at = (w.cursor_block + 1).min(w.doc.blocks.len());
-                    for (offset, b) in new_blocks.into_iter().enumerate() {
-                        w.doc.blocks.insert(insert_at + offset, b);
-                    }
-                    w.cursor_block = (insert_at + count.saturating_sub(1))
-                        .min(w.doc.blocks.len().saturating_sub(1));
-                    w.cursor_char = 0;
-                    w.active_table_cell = None;
-                    w.scroll_to_caret = true;
-                    self.status_toast =
-                        format!("Inserted {count} AI-drafted block(s) (Ctrl+Z to undo)");
                 }
             }
-            Some(StudioTab::Pdf(_)) => {
+            ActiveKind::Pdf => {
                 // Convert active PDF + AI blocks into a fresh editable Word Studio tab
                 self.execute_command(CommandId::ConvertPdfToWord);
                 self.apply_ai_output_to_document(false);
             }
-            Some(StudioTab::HomeHub) | None => {
+            ActiveKind::HomeOrNone => {
                 let mut doc = markdown_to_word(&out, "AI Drafted Document");
                 doc.author = "Nour Yahyaoui".into();
                 self.tabs
@@ -857,21 +878,22 @@ impl RustPadApp {
                 } else {
                     path.with_extension("pdf")
                 };
-                if let Some(StudioTab::Word(w)) = self.tabs.get(self.active_tab) {
-                    match export_document_to_pdf_file(
+                let export_res = match self.tabs.get(self.active_tab) {
+                    Some(StudioTab::Word(w)) => Some(export_document_to_pdf_file(
                         &pdf_path,
                         &w.doc,
                         &PdfCreateOptions::default(),
-                    ) {
-                        Ok(()) => {
-                            let _ = self.open_path(&pdf_path);
-                            self.status_toast = format!(
-                                "Exported & opened vector PDF '{}'",
-                                pdf_path.display()
-                            );
-                        }
-                        Err(e) => self.status_toast = format!("PDF export error: {e}"),
+                    )),
+                    _ => None,
+                };
+                match export_res {
+                    Some(Ok(())) => {
+                        let _ = self.open_path(&pdf_path);
+                        self.status_toast =
+                            format!("Exported & opened vector PDF '{}'", pdf_path.display());
                     }
+                    Some(Err(e)) => self.status_toast = format!("PDF export error: {e}"),
+                    None => {}
                 }
             }
             FileModalKind::MergePdf => match load_pdf_file(&path) {
@@ -941,34 +963,44 @@ impl RustPadApp {
                 self.prompt_or_open_modal(FileModalKind::SaveActive, &def);
             }
             CommandId::ExportWordToPdf => {
-                if let Some(StudioTab::Word(w)) = self.tabs.get(self.active_tab) {
-                    let def = format!("{}.pdf", sanitize_filename(&w.doc.title));
+                let def_opt = match self.tabs.get(self.active_tab) {
+                    Some(StudioTab::Word(w)) => {
+                        Some(format!("{}.pdf", sanitize_filename(&w.doc.title)))
+                    }
+                    _ => None,
+                };
+                if let Some(def) = def_opt {
                     self.prompt_or_open_modal(FileModalKind::ExportPdf, &def);
                 } else {
                     self.status_toast = "Switch to a Word (.docx) tab to export PDF".into();
                 }
             }
             CommandId::ConvertPdfToWord => {
-                let converted = if let Some(StudioTab::Pdf(p)) = self.tabs.get(self.active_tab) {
-                    Some(pdf_to_word(&p.pdf))
+                let converted_doc = match self.tabs.get(self.active_tab) {
+                    Some(StudioTab::Pdf(p)) => Some(pdf_to_word(&p.pdf)),
+                    _ => None,
+                };
+                let converted_pdf = if converted_doc.is_none() {
+                    match self.tabs.get(self.active_tab) {
+                        Some(StudioTab::Word(w)) => word_to_pdf_document(&w.doc).ok(),
+                        _ => None,
+                    }
                 } else {
                     None
                 };
-                if let Some(mut doc) = converted {
+                if let Some(mut doc) = converted_doc {
                     doc.title = format!("{}_Editable", doc.title);
                     self.tabs
                         .push(StudioTab::Word(WordTabState::from_doc(doc, None)));
                     self.active_tab = self.tabs.len() - 1;
                     self.status_toast =
                         "Converted PDF into an editable Word (.docx) tab".into();
-                } else if let Some(StudioTab::Word(w)) = self.tabs.get(self.active_tab) {
-                    if let Ok(pdf) = word_to_pdf_document(&w.doc) {
-                        self.tabs
-                            .push(StudioTab::Pdf(PdfTabState::from_pdf(pdf, None)));
-                        self.active_tab = self.tabs.len() - 1;
-                        self.status_toast =
-                            "Opened Word document directly inside PDF Studio".into();
-                    }
+                } else if let Some(pdf) = converted_pdf {
+                    self.tabs
+                        .push(StudioTab::Pdf(PdfTabState::from_pdf(pdf, None)));
+                    self.active_tab = self.tabs.len() - 1;
+                    self.status_toast =
+                        "Opened Word document directly inside PDF Studio".into();
                 }
             }
             CommandId::Undo => {
@@ -2041,8 +2073,11 @@ impl RustPadApp {
                 self.execute_command(cmd);
             }
             UiAction::FileCandidatePick(path) => {
-                if let Some(ActiveModal::FilePrompt { kind, .. }) = self.modal {
-                    let k = kind;
+                let maybe_kind = match &self.modal {
+                    Some(ActiveModal::FilePrompt { kind, .. }) => Some(*kind),
+                    _ => None,
+                };
+                if let Some(k) = maybe_kind {
                     self.modal = None;
                     self.apply_file_modal_choice(k, path);
                 }
@@ -3024,6 +3059,7 @@ fn word_backspace(w: &mut WordTabState) {
         }
     }
 
+    let mut should_merge_prev = false;
     if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
         if w.cursor_char > 0 {
             let target = w.cursor_char - 1;
@@ -3046,41 +3082,52 @@ fn word_backspace(w: &mut WordTabState) {
             w.dirty = true;
             return;
         } else if w.cursor_block > 0 {
-            // Merge paragraph cleanly into previous block (even if previous paragraph had 0 spans!)
-            let cur_block = w.doc.blocks.remove(w.cursor_block);
-            w.cursor_block -= 1;
-            if let Block::Paragraph(cur_p) = cur_block {
-                let cur_text = cur_p.plain_text();
-                match w.doc.blocks.get_mut(w.cursor_block) {
-                    Some(Block::Paragraph(prev_p)) => {
-                        let prev_len = prev_p.plain_text().chars().count();
-                        if prev_p.spans.is_empty() {
-                            if cur_p.spans.is_empty() {
-                                prev_p.spans.push(TextSpan::plain(cur_text));
-                            } else {
-                                prev_p.spans = cur_p.spans;
-                            }
-                        } else if !cur_text.is_empty() {
-                            if let Some(last) = prev_p.spans.last_mut() {
-                                last.text.push_str(&cur_text);
-                            }
-                        }
-                        w.cursor_char = prev_len;
-                    }
-                    Some(Block::PageBreak | Block::HorizontalRule) => {
-                        w.doc.blocks[w.cursor_block] = Block::Paragraph(cur_p);
-                        w.cursor_char = 0;
-                    }
-                    _ => {
-                        w.doc
-                            .blocks
-                            .insert(w.cursor_block + 1, Block::Paragraph(cur_p));
-                    }
-                }
-            }
-            w.dirty = true;
-            w.scroll_to_caret = true;
+            should_merge_prev = true;
         }
+    }
+
+    if should_merge_prev {
+        // Merge paragraph cleanly into previous block (even if previous paragraph had 0 spans!)
+        let cur_block = w.doc.blocks.remove(w.cursor_block);
+        w.cursor_block -= 1;
+        if let Block::Paragraph(cur_p) = cur_block {
+            let cur_text = cur_p.plain_text();
+            let prev_is_para = matches!(
+                w.doc.blocks.get(w.cursor_block),
+                Some(Block::Paragraph(_))
+            );
+            let prev_is_break_or_rule = matches!(
+                w.doc.blocks.get(w.cursor_block),
+                Some(Block::PageBreak | Block::HorizontalRule)
+            );
+
+            if prev_is_para {
+                if let Some(Block::Paragraph(prev_p)) = w.doc.blocks.get_mut(w.cursor_block) {
+                    let prev_len = prev_p.plain_text().chars().count();
+                    if prev_p.spans.is_empty() {
+                        if cur_p.spans.is_empty() {
+                            prev_p.spans.push(TextSpan::plain(cur_text));
+                        } else {
+                            prev_p.spans = cur_p.spans;
+                        }
+                    } else if !cur_text.is_empty() {
+                        if let Some(last) = prev_p.spans.last_mut() {
+                            last.text.push_str(&cur_text);
+                        }
+                    }
+                    w.cursor_char = prev_len;
+                }
+            } else if prev_is_break_or_rule {
+                w.doc.blocks[w.cursor_block] = Block::Paragraph(cur_p);
+                w.cursor_char = 0;
+            } else {
+                w.doc
+                    .blocks
+                    .insert(w.cursor_block + 1, Block::Paragraph(cur_p));
+            }
+        }
+        w.dirty = true;
+        w.scroll_to_caret = true;
     }
 }
 
