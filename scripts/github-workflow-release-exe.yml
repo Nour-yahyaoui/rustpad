@@ -1,0 +1,94 @@
+# Copy this file to `.github/workflows/release.yml` on your machine (or via the GitHub Web UI -> Actions -> New workflow)
+# Whenever you push a tag like `v1.2.0` (or click "Run workflow" manually), GitHub automatically builds
+# `rustpad.exe` (Windows x64) + `rustpad-linux-x86_64` and attaches them to your GitHub Release!
+
+name: Build & Publish RustPad Binaries (.exe + Linux)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing or new release tag to attach binaries to (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-exe:
+    name: Build Windows x64 (.exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run Pure-Rust Workspace Tests
+        run: cargo test --workspace
+      - name: Build Stripped Release rustpad.exe
+        run: cargo build --release -p rustpad
+      - name: Stage Windows Artifacts & SHA-256
+        shell: pwsh
+        run: |
+          $Tag = if ("${{ github.event.inputs.tag }}" -ne "") { "${{ github.event.inputs.tag }}" } else { "${{ github.ref_name }}" }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target\release\rustpad.exe "dist\rustpad-$Tag-windows-x86_64.exe"
+          Copy-Item target\release\rustpad.exe "dist\rustpad.exe"
+          $h1 = (Get-FileHash -Algorithm SHA256 "dist\rustpad-$Tag-windows-x86_64.exe").Hash.ToLower()
+          $h2 = (Get-FileHash -Algorithm SHA256 "dist\rustpad.exe").Hash.ToLower()
+          @(
+            "$h1  rustpad-$Tag-windows-x86_64.exe",
+            "$h2  rustpad.exe"
+          ) | Set-Content -Path dist\SHA256SUMS-windows.txt -Encoding UTF8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/*
+
+  build-linux:
+    name: Build Linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run Pure-Rust Workspace Tests
+        run: cargo test --workspace
+      - name: Build Stripped Release Binary
+        run: cargo build --release -p rustpad
+      - name: Stage Linux Artifacts & SHA-256
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          mkdir -p dist
+          cp target/release/rustpad "dist/rustpad-${TAG}-linux-x86_64"
+          chmod +x "dist/rustpad-${TAG}-linux-x86_64"
+          (cd dist && sha256sum "rustpad-${TAG}-linux-x86_64" > SHA256SUMS-linux.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-bin
+          path: dist/*
+
+  publish-release:
+    name: Attach .exe & Binaries to GitHub Release
+    needs: [build-windows-exe, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Combine SHA256SUMS & Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          cd release-assets
+          cat SHA256SUMS-*.txt > SHA256SUMS.txt
+          rm -f SHA256SUMS-*.txt
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" * --repo "$REPO" --clobber
+          else
+            gh release create "$TAG" * --repo "$REPO" --title "$TAG — RustPad Desktop Binaries (.exe & Linux)" --generate-notes
+          fi
