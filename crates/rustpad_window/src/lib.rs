@@ -144,7 +144,7 @@ pub fn set_clipboard_text(text: &str) -> bool {
             || std::env::var_os("WAYLAND_DISPLAY").is_some();
         if has_display {
             for (bin, args) in [
-                ("wl-copy", &[][..]),
+                ("wl-copy", &([] as [&str; 0])[..]),
                 ("xclip", &["-selection", "clipboard"][..]),
                 ("xsel", &["--clipboard", "--input"][..]),
             ] {
