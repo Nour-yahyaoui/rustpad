@@ -2,6 +2,11 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [@Nour-yahyaoui](https://github.com/Nour-yahyaoui), `nourryahyaoui@gmail.com`) follow our continuous micro-release workflow (`Commit → Tag → GitHub Release`).
 
+## [v1.0.0] - 2026-10-26
+### Added
+- **RustPad v1.0.0 Production Milestone**: First complete 100% pure-Rust native desktop release uniting Microsoft Word (`.docx`) authoring, vector PDF (`.pdf`) creation & editing, bidirectional converters, offline OCR & spellcheck, Side-by-Side Split Workspace, and standalone CLI (`rustpad`).
+- Release packaging (`scripts/package-release.sh`) producing stripped standalone binary (`~3.3 MB`), compressed bundle, SHA-256 verification checksums, and showcase `.docx`/`.pdf` sample files.
+
 ## [v0.9.5] - 2026-10-26
 ### Added
 - `app` (`rustpad`): Complete interactive native desktop studio & CLI integrating Home Hub (6 starter templates + recent workspace documents), paginated Word (`.docx`) Studio, vector PDF (`.pdf`) Studio (inline text block editing, highlights, sticky notes, stamps, freehand ink signature pad, true redaction, rotate/merge/split/compress), Side-by-Side Split Workspace (`Ctrl+\`), `Ctrl+K` fuzzy Command Palette across 49 actions, Time-Machine Snapshot drawer, CLI subcommands (`convert`, `inspect`, `ocr`, `merge`, `demo-files`, `--render-preview`), and full-line PDF text-stream coalescing.
