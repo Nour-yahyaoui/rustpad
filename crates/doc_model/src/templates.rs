@@ -74,7 +74,7 @@ fn checklist(text: &str, done: bool) -> Block {
 fn build_welcome_guide() -> Document {
     let mut setup = PageSetup::default();
     setup.header_text = "RustPad — Pure-Rust Word & PDF Desktop Studio".into();
-    setup.footer_text = "Created by Nour Yahyaoui · github.com/Nour-yahyaoui/word".into();
+    setup.footer_text = "Created by Nour Yahyaoui · github.com/Nour-yahyaoui/rustpad".into();
 
     let mut intro = Paragraph::new(ParagraphStyle::Normal, "");
     intro.spans = vec![

@@ -6,9 +6,9 @@
 
 **Create, edit, sign, redact, and convert Microsoft Word (`.docx`) and vector PDF (`.pdf`) documents offline in a single `3.3 MB` pure-Rust desktop binary.**
 
-- **Author**: Nour Yahyaoui — [github.com/Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`
+- **Author**: Nour Yahyaoui — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [GitHub](https://github.com/Nour-yahyaoui) · [Portfolio](https://nour-yahyaoui.vercel.app) · `nourryahyaoui@gmail.com`
 - **Live Project Landing Page**: [https://rustpad-studio.vercel.app](https://rustpad-studio.vercel.app)
-- **Current Release**: [`v1.1.1`](https://github.com/Nour-yahyaoui/rustpad/releases) (Desktop Core `v1.0.0` · MIT License)
+- **Current Release (`v1.2.0`)**: [Windows x64 `.exe` (`3.16 MB`)](https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.2.0/rustpad-v1.2.0-windows-x86_64.exe) · [Linux x64 (`3.18 MB`)](https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.2.0/rustpad-v1.2.0-linux-x86_64) · [All Releases](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v1.2.0)
 - **Stack**: 100% Pure Rust (`14,280` LOC across 9 workspace crates, zero WebView, zero external `crates.io` runtime dependencies) + Root Vite TypeScript Project Showcase
 
 ![RustPad Word Studio editing an A4 OpenXML document with Document Outline and Live Metrics](docs/screenshots/word-studio.png)
@@ -23,7 +23,13 @@ Desktop document editors routinely ship 150–400 MB Chromium wrappers or multi-
 
 ## Quick Start
 
-### Option A — Build & Run from Source (Linux, Windows, macOS)
+### Option A — Download Prebuilt Binary (`v1.2.0`, Zero Install)
+
+- **Windows 10 / 11 (x86_64)**: Download [`rustpad-v1.2.0-windows-x86_64.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.2.0/rustpad-v1.2.0-windows-x86_64.exe) (`3.16 MB`) and double-click to launch.
+- **Linux (x86_64)**: Download [`rustpad-v1.2.0-linux-x86_64`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.2.0/rustpad-v1.2.0-linux-x86_64) (`3.18 MB`), run `chmod +x rustpad-v1.2.0-linux-x86_64 && ./rustpad-v1.2.0-linux-x86_64`.
+- **SHA-256 Checksums**: [`SHA256SUMS.txt`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.2.0/SHA256SUMS.txt)
+
+### Option B — Build & Run from Source (Linux, Windows, macOS)
 
 Requires only a standard Rust toolchain (`rustc` + `cargo` 1.75+). Compiles offline with zero external network fetches:
 
@@ -41,7 +47,7 @@ cargo build --release -p rustpad
 ./target/release/rustpad
 ```
 
-### Option B — Try Sample Deliverables & Headless CLI Immediately
+### Option C — Try Sample Deliverables & Headless CLI Immediately
 
 ```bash
 # Generate 6 sample .docx, .pdf, and .md documents in ./examples
@@ -143,7 +149,7 @@ Further architectural specs live in `docs/`:
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Data-flow pipelines across Word, PDF, and rendering crates.
 - [`docs/UI_UX_LIGHT_THEME.md`](docs/UI_UX_LIGHT_THEME.md) — Native desktop **Paper & Daylight** palette & layout rules.
 - [`docs/STYLE.md`](docs/STYLE.md) — Web Landing Page Swiss Proof-Sheet visual specification.
-- [`CHANGELOG.md`](CHANGELOG.md) — Complete micro-release history (`v0.1.0` -> `v1.1.0`).
+- [`CHANGELOG.md`](CHANGELOG.md) — Complete micro-release history (`v0.1.0` -> `v1.2.0`).
 
 ---
 
@@ -169,6 +175,8 @@ npm run build    # Production build into ./dist
 ## Author & License
 
 Created and maintained by **Nour Yahyaoui**
+- LinkedIn: [https://www.linkedin.com/in/nour-yahyaoui-86987b36b](https://www.linkedin.com/in/nour-yahyaoui-86987b36b)
 - GitHub: [https://github.com/Nour-yahyaoui](https://github.com/Nour-yahyaoui)
+- Portfolio: [https://nour-yahyaoui.vercel.app](https://nour-yahyaoui.vercel.app)
 - Email: [nourryahyaoui@gmail.com](mailto:nourryahyaoui@gmail.com)
 - License: [MIT](LICENSE)
