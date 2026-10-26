@@ -188,8 +188,13 @@ pub fn paint_pdf_tab(
             if let Some(fill) = rect_op.fill {
                 surface.fill_rect(r, Color::rgb(fill.r, fill.g, fill.b));
             }
-            if let Some(st) = rect_op.stroke {
-                surface.stroke_rounded_rect(r, 0.0, 1.0, Color::rgb(st.r, st.g, st.b));
+            if let Some((st, sw)) = rect_op.stroke {
+                surface.stroke_rounded_rect(
+                    r,
+                    0.0,
+                    (sw * scale).max(1.0),
+                    Color::rgb(st.r, st.g, st.b),
+                );
             }
         }
 
