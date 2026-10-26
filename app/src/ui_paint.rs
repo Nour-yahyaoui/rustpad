@@ -37,7 +37,9 @@ pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
 
     let show_ai_dock = app.ai_dock.open && full_work.w >= 620.0;
     let ai_w = if show_ai_dock {
-        (app.ai_dock.width * s).clamp(264.0, full_work.w * 0.46).round()
+        (app.ai_dock.width * s)
+            .clamp(264.0, (full_work.w * 0.46).max(264.0))
+            .round()
     } else {
         0.0
     };
@@ -1427,7 +1429,7 @@ fn paint_toolbar_dropdown(
 
     match dd {
         ToolbarDropdown::ParagraphStyle { anchor_x, anchor_y } => {
-            let items = [
+            let items: [(ParagraphStyle, &str, f32); 7] = [
                 (ParagraphStyle::Normal, "Body Text", 12.5),
                 (ParagraphStyle::Heading1, "Heading 1", 16.5),
                 (ParagraphStyle::Heading2, "Heading 2", 14.5),
@@ -1462,7 +1464,7 @@ fn paint_toolbar_dropdown(
                 surface.draw_text(
                     &mut app.fonts,
                     slot,
-                    fsz * s,
+                    (*fsz) * s,
                     r.x + 10.0 * s,
                     r.y + row_h * 0.68,
                     DaylightTheme::INK,
