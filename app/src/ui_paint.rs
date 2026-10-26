@@ -1048,10 +1048,12 @@ fn paint_ai_field(
             DaylightTheme::BORDER
         },
     );
-    let disp = if value.is_empty() {
+    let disp_owned: String;
+    let disp: &str = if value.is_empty() {
         placeholder
     } else if focused && app.cursor_blink_on {
-        &format!("{value}|")
+        disp_owned = format!("{value}|");
+        &disp_owned
     } else {
         value
     };
@@ -1543,10 +1545,13 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
     let by = (bar.y + (bar.h - bh) * 0.5).round();
     let mut rx = (bar.w - controls_w).max(160.0);
 
+    let ui_lbl = format!("{ui_pct}%");
+    let zoom_lbl = format!("{zoom_pct}%");
+
     // 1. UI Font Scale Stepper (`UI - 100% +`)
     for (lbl, w_px, cmd) in [
         ("UI-", 28.0 * s, CommandId::UiScaleDown),
-        (&format!("{ui_pct}%"), 44.0 * s, CommandId::UiScaleReset),
+        (ui_lbl.as_str(), 44.0 * s, CommandId::UiScaleReset),
         ("UI+", 28.0 * s, CommandId::UiScaleUp),
     ] {
         let r = Rect::new(rx, by, w_px.round(), bh);
@@ -1572,7 +1577,7 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
     // 2. Paper Zoom Stepper (`- 112% +`)
     for (lbl, w_px, cmd) in [
         ("-", 24.0 * s, CommandId::ZoomOut),
-        (&format!("{zoom_pct}%"), 48.0 * s, CommandId::ZoomReset),
+        (zoom_lbl.as_str(), 48.0 * s, CommandId::ZoomReset),
         ("+", 24.0 * s, CommandId::ZoomIn),
     ] {
         let r = Rect::new(rx, by, w_px.round(), bh);
