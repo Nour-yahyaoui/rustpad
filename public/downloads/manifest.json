@@ -1,0 +1,59 @@
+{
+  "generatedBy": "rustpad 1.0.0 demo-files",
+  "specimens": [
+    {
+      "id": "welcome-docx",
+      "fileName": "RustPad_Welcome_Guide.docx",
+      "url": "/downloads/RustPad_Welcome_Guide.docx",
+      "standard": "ECMA-376 OpenXML (.docx)",
+      "bytes": 5298,
+      "cratePipeline": "doc_model -> docx_io::writer -> rustpad_zip::ZipArchive",
+      "summary": "A4 paginated welcome guide containing styled headings, 3-column feature matrix table, interactive checklist items, and running header/footer XML parts."
+    },
+    {
+      "id": "welcome-pdf",
+      "fileName": "RustPad_Welcome_Guide.pdf",
+      "url": "/downloads/RustPad_Welcome_Guide.pdf",
+      "standard": "ISO 32000-1 PDF 1.7 (.pdf)",
+      "bytes": 3875,
+      "cratePipeline": "doc_model -> pdf_create -> rustpad_zip::zlib_compress (/FlateDecode)",
+      "summary": "Print-ready vector PDF 1.7 with coalesced full-line BT/ET runs, Type1 font dictionary (F1–F12), vector table borders, and FlateDecode stream compression."
+    },
+    {
+      "id": "resume-docx",
+      "fileName": "Nour_Yahyaoui_Modern_Resume.docx",
+      "url": "/downloads/Nour_Yahyaoui_Modern_Resume.docx",
+      "standard": "ECMA-376 OpenXML (.docx)",
+      "bytes": 4828,
+      "cratePipeline": "doc_model::templates::modern_resume -> docx_io::writer",
+      "summary": "Single-page engineering curriculum vitae formatted on A4 stock with hierarchy headings, bulleted experience blocks, and Dublin Core author metadata."
+    },
+    {
+      "id": "invoice-pdf",
+      "fileName": "Business_Invoice_Sample.pdf",
+      "url": "/downloads/Business_Invoice_Sample.pdf",
+      "standard": "ISO 32000-1 PDF 1.7 (.pdf)",
+      "bytes": 3071,
+      "cratePipeline": "doc_model::templates::business_invoice -> pdf_create",
+      "summary": "Itemized billing ledger rendered directly to vector PDF 1.7 with tabular line items, header tint fills, and compressed cross-reference object streams."
+    },
+    {
+      "id": "report-docx",
+      "fileName": "Technical_Architecture_Report.docx",
+      "url": "/downloads/Technical_Architecture_Report.docx",
+      "standard": "ECMA-376 OpenXML (.docx)",
+      "bytes": 4714,
+      "cratePipeline": "doc_model::templates::technical_report -> docx_io::writer",
+      "summary": "Structured engineering specification with abstract quote block, benchmark comparison table, and numbered section headings."
+    },
+    {
+      "id": "welcome-md",
+      "fileName": "RustPad_Welcome_Guide.md",
+      "url": "/downloads/RustPad_Welcome_Guide.md",
+      "standard": "CommonMark / GFM (.md)",
+      "bytes": 1275,
+      "cratePipeline": "doc_model -> power_tools::document_to_markdown",
+      "summary": "Plain-text Markdown export preserving heading levels, pipe tables, and GitHub-style task list checkboxes (- [x] / - [ ])."
+    }
+  ]
+}

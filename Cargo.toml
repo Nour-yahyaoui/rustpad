@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rustpad_zip",
+    "crates/doc_model",
+    "crates/docx_io",
+    "crates/pdf_create",
+    "crates/pdf_engine",
+    "crates/power_tools",
+    "crates/rustpad_render",
+    "crates/rustpad_window",
+    "app",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+authors = ["Nour Yahyaoui <nourryahyaoui@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/Nour-yahyaoui/word"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

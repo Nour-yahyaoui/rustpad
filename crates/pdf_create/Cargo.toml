@@ -1,0 +1,11 @@
+[package]
+name = "pdf_create"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Pure-Rust ISO 32000 Vector PDF 1.7 creator for RustPad"
+
+[dependencies]
+rustpad_zip = { path = "../rustpad_zip" }
+doc_model = { path = "../doc_model" }

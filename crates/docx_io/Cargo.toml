@@ -1,0 +1,11 @@
+[package]
+name = "docx_io"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Pure-Rust ECMA-376 OpenXML (.docx) reader and writer for RustPad"
+
+[dependencies]
+rustpad_zip = { path = "../rustpad_zip" }
+doc_model = { path = "../doc_model" }

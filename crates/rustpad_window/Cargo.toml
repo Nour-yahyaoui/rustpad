@@ -1,0 +1,10 @@
+[package]
+name = "rustpad_window"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Zero-dependency cross-platform native desktop windowing & OS file dialogs (Win32 / X11 / macOS)"
+
+[dependencies]
+rustpad_render = { path = "../rustpad_render" }

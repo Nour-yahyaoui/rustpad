@@ -1,0 +1,18 @@
+# Rust Cargo build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Vite / Web Landing Page build artifacts
+/node_modules/
+/dist/
+/.vite/
+*.tsbuildinfo
+
+# Local temp & OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.rustpad_snapshots_test/

@@ -1,0 +1,14 @@
+[package]
+name = "power_tools"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Bidirectional DOCX/PDF/Markdown converters, offline spellcheck, OCR bridge & Time-Machine snapshots"
+
+[dependencies]
+rustpad_zip = { path = "../rustpad_zip" }
+doc_model = { path = "../doc_model" }
+docx_io = { path = "../docx_io" }
+pdf_create = { path = "../pdf_create" }
+pdf_engine = { path = "../pdf_engine" }
