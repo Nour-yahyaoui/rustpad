@@ -862,9 +862,22 @@ mod tests {
 
         let server = thread::spawn(move || {
             let (mut sock, _) = listener.accept().unwrap();
-            let mut req_buf = [0u8; 4096];
-            let n = sock.read(&mut req_buf).unwrap();
-            let req_text = String::from_utf8_lossy(&req_buf[..n]);
+            let _ = sock.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut raw = Vec::new();
+            let mut chunk = [0u8; 2048];
+            loop {
+                match sock.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        raw.extend_from_slice(&chunk[..n]);
+                        if String::from_utf8_lossy(&raw).contains("</document_context>") {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let req_text = String::from_utf8_lossy(&raw);
             assert!(req_text.contains("<document_context>"));
 
             let json = r#"{"id":"chatcmpl-1","model":"nour-code-7b","choices":[{"index":0,"message":{"role":"assistant","content":"<think>analyzing grammar</think>## Executive Summary\n\n- Zero dependencies\n- Native speed"}}]}"#;
