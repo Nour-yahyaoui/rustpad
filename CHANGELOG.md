@@ -2,6 +2,10 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [@Nour-yahyaoui](https://github.com/Nour-yahyaoui), `nourryahyaoui@gmail.com`) follow our continuous micro-release workflow (`Commit → Tag → GitHub Release`).
 
+## [v0.9.0] - 2026-10-26
+### Added
+- `crates/rustpad_window`: Zero-dependency cross-platform native desktop windowing & OS file dialog backend supporting Linux (`libX11.so.6` dynamic loader with `_NET_WM_ICON` 64×64 RustPad taskbar icon), Windows (`Win32` HiDPI `StretchDIBits` + Explorer Open/Save dialogs), keyboard shortcuts, scroll wheel, and mouse events.
+
 ## [v0.8.0] - 2026-10-26
 ### Added
 - `crates/rustpad_render`: Pure-Rust TrueType (`.ttf`) SFNT font parser & 4×4 supersampled anti-aliased glyph atlas, **"Paper & Daylight" Light Theme** design tokens (`DaylightTheme`), SDF anti-aliased rounded rectangles, floating paper elevation shadows, embedded RustPad logo blitter, and lossless PNG encoder.
