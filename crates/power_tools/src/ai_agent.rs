@@ -595,22 +595,61 @@ fn http_request_tcp(
     }
     req.push_str("\r\n");
 
+    let mut wire = Vec::with_capacity(req.len() + payload.len());
+    wire.extend_from_slice(req.as_bytes());
+    wire.extend_from_slice(payload);
+
     stream
-        .write_all(req.as_bytes())
-        .and_then(|_| {
-            if !payload.is_empty() {
-                stream.write_all(payload)
-            } else {
-                Ok(())
-            }
-        })
+        .write_all(&wire)
         .and_then(|_| stream.flush())
         .map_err(|e| format!("Failed sending HTTP request: {e}"))?;
 
     let mut raw = Vec::with_capacity(8192);
-    stream
-        .read_to_end(&mut raw)
-        .map_err(|e| format!("Failed reading AI response (timeout or socket closed): {e}"))?;
+    let mut chunk = [0u8; 4096];
+    let mut expected_total: Option<usize> = None;
+    let mut is_chunked = false;
+
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                raw.extend_from_slice(&chunk[..n]);
+                if expected_total.is_none() {
+                    if let Some(sep) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&raw[..sep]);
+                        for line in head.lines() {
+                            let lower = line.to_ascii_lowercase();
+                            if let Some(rest) = lower.strip_prefix("content-length:") {
+                                if let Ok(cl) = rest.trim().parse::<usize>() {
+                                    expected_total = Some(sep + 4 + cl);
+                                }
+                            } else if lower.starts_with("transfer-encoding:")
+                                && lower.contains("chunked")
+                            {
+                                is_chunked = true;
+                            }
+                        }
+                    }
+                }
+                if let Some(total) = expected_total {
+                    if raw.len() >= total {
+                        break;
+                    }
+                } else if is_chunked && raw.ends_with(b"\r\n0\r\n\r\n") {
+                    break;
+                }
+            }
+            Err(e) => {
+                // If the server already sent a complete HTTP payload before resetting/closing, parse it cleanly.
+                if raw.windows(4).any(|w| w == b"\r\n\r\n") && !raw.is_empty() {
+                    break;
+                }
+                return Err(format!(
+                    "Failed reading AI response (timeout or socket closed): {e}"
+                ));
+            }
+        }
+    }
 
     parse_raw_http_response(&raw)
 }
@@ -862,16 +901,33 @@ mod tests {
 
         let server = thread::spawn(move || {
             let (mut sock, _) = listener.accept().unwrap();
-            let _ = sock.set_read_timeout(Some(Duration::from_secs(2)));
+            let _ = sock.set_read_timeout(Some(Duration::from_secs(3)));
             let mut raw = Vec::new();
             let mut chunk = [0u8; 2048];
+            let mut target_len: Option<usize> = None;
             loop {
                 match sock.read(&mut chunk) {
                     Ok(0) => break,
                     Ok(n) => {
                         raw.extend_from_slice(&chunk[..n]);
-                        if String::from_utf8_lossy(&raw).contains("</document_context>") {
-                            break;
+                        if target_len.is_none() {
+                            if let Some(sep) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                                let head = String::from_utf8_lossy(&raw[..sep]);
+                                let cl = head
+                                    .lines()
+                                    .find_map(|l| {
+                                        l.to_ascii_lowercase()
+                                            .strip_prefix("content-length:")
+                                            .and_then(|v| v.trim().parse::<usize>().ok())
+                                    })
+                                    .unwrap_or(0);
+                                target_len = Some(sep + 4 + cl);
+                            }
+                        }
+                        if let Some(total) = target_len {
+                            if raw.len() >= total {
+                                break;
+                            }
                         }
                     }
                     Err(_) => break,
@@ -879,6 +935,7 @@ mod tests {
             }
             let req_text = String::from_utf8_lossy(&raw);
             assert!(req_text.contains("<document_context>"));
+            assert!(req_text.contains("Draft specification text."));
 
             let json = r#"{"id":"chatcmpl-1","model":"nour-code-7b","choices":[{"index":0,"message":{"role":"assistant","content":"<think>analyzing grammar</think>## Executive Summary\n\n- Zero dependencies\n- Native speed"}}]}"#;
             let resp = format!(
@@ -887,6 +944,10 @@ mod tests {
                 json
             );
             sock.write_all(resp.as_bytes()).unwrap();
+            let _ = sock.flush();
+            let _ = sock.shutdown(std::net::Shutdown::Write);
+            let mut drain = [0u8; 64];
+            let _ = sock.read(&mut drain);
         });
 
         let cfg = AiAgentConfig {
