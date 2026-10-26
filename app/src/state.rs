@@ -1,9 +1,10 @@
-//! Application State, Multi-Tab Session Controller, Modals & Hit-Testing Actions.
+//! Application State, Multi-Tab Session Controller, Resizable Panels, Interactive Tables,
+//! Non-Blocking Pluggable AI Agent Dock, Clipboard & Hit-Testing Actions.
 
 use crate::commands::{filter_commands, CommandId};
 use doc_model::{
     Alignment, Block, Document, FontFamily, ListKind, PaperSize, Paragraph, ParagraphStyle,
-    RgbColor, TableBlock, TemplateKind, UndoHistory,
+    RgbColor, SpanStyle, TableBlock, TemplateKind, TextSpan, UndoHistory,
 };
 use docx_io::{load_docx_file, save_docx_file};
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
@@ -11,12 +12,18 @@ use pdf_engine::{
     compress_pdf_bytes, load_pdf_file, save_pdf_bytes, save_pdf_file, PdfAnnotation, PdfDocument,
 };
 use power_tools::{
-    markdown_to_word, pdf_to_word, word_to_markdown, word_to_pdf_document, SnapshotVault,
-    SpellChecker,
+    discover_local_ollama_models, markdown_to_word, parse_ai_output_to_blocks, pdf_to_word,
+    run_ai_task, word_to_markdown, word_to_pdf_document, AiAgentConfig, AiProviderPreset,
+    AiResponse, AiTask, SnapshotVault, SpellChecker,
 };
 use rustpad_render::{FontBook, Rect};
-use rustpad_window::{try_native_open_dialog, try_native_save_dialog, Key, Modifiers};
+use rustpad_window::{
+    detect_dpi_scale, get_clipboard_text, set_clipboard_text, try_native_open_dialog,
+    try_native_save_dialog, CursorShape, Key, Modifiers,
+};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PdfTool {
@@ -30,10 +37,10 @@ pub enum PdfTool {
 impl PdfTool {
     pub fn label(self) -> &'static str {
         match self {
-            Self::SelectEdit => "Select / Edit Text",
+            Self::SelectEdit => "Select / Edit",
             Self::AddText => "+ Text Box",
             Self::Highlight => "Highlight",
-            Self::StickyNote => "Sticky Note",
+            Self::StickyNote => "Note",
             Self::Redact => "Redact",
         }
     }
@@ -45,7 +52,11 @@ pub struct WordTabState {
     pub cursor_block: usize,
     pub cursor_char: usize,
     pub active_table_cell: Option<(usize, usize, usize)>, // (block_idx, row, col)
+    pub table_cursor_char: usize,
+    pub table_col_weights: Vec<(usize, Vec<f32>)>,
     pub scroll_y: f32,
+    pub max_scroll_y: f32,
+    pub scroll_to_caret: bool,
     pub zoom: f32,
     pub history: UndoHistory,
     pub snapshots: SnapshotVault,
@@ -71,12 +82,56 @@ impl WordTabState {
             cursor_block: 0,
             cursor_char,
             active_table_cell: None,
+            table_cursor_char: 0,
+            table_col_weights: Vec::new(),
             scroll_y: 0.0,
-            zoom: 1.0,
+            max_scroll_y: 0.0,
+            scroll_to_caret: false,
+            zoom: 1.12, // Comfortable 112% editorial default zoom
             history: UndoHistory::default(),
             snapshots,
             spellcheck: false,
             dirty: false,
+        }
+    }
+
+    pub fn normalized_col_weights(&self, block_idx: usize, cols: usize) -> Vec<f32> {
+        let c = cols.max(1);
+        if let Some((_, w)) = self.table_col_weights.iter().find(|(b, _)| *b == block_idx) {
+            if w.len() == c {
+                let sum: f32 = w.iter().copied().sum::<f32>().max(0.01);
+                return w.iter().map(|v| v / sum).collect();
+            }
+        }
+        vec![1.0 / (c as f32); c]
+    }
+
+    pub fn adjust_col_divider(
+        &mut self,
+        block_idx: usize,
+        cols: usize,
+        col_idx: usize,
+        delta_ratio: f32,
+    ) {
+        if cols < 2 || col_idx + 1 >= cols {
+            return;
+        }
+        let mut weights = self.normalized_col_weights(block_idx, cols);
+        let min_w = (0.10f32).min(0.65 / cols as f32);
+        let pair_sum = weights[col_idx] + weights[col_idx + 1];
+        let next_left = (weights[col_idx] + delta_ratio).clamp(min_w, (pair_sum - min_w).max(min_w));
+        let next_right = (pair_sum - next_left).max(min_w);
+        weights[col_idx] = next_left;
+        weights[col_idx + 1] = next_right;
+
+        if let Some((_, slot)) = self
+            .table_col_weights
+            .iter_mut()
+            .find(|(b, _)| *b == block_idx)
+        {
+            *slot = weights;
+        } else {
+            self.table_col_weights.push((block_idx, weights));
         }
     }
 }
@@ -88,6 +143,7 @@ pub struct PdfTabState {
     pub selected_text_id: Option<u32>,
     pub tool: PdfTool,
     pub scroll_y: f32,
+    pub max_scroll_y: f32,
     pub zoom: f32,
     pub dirty: bool,
 }
@@ -101,7 +157,8 @@ impl PdfTabState {
             selected_text_id: None,
             tool: PdfTool::SelectEdit,
             scroll_y: 0.0,
-            zoom: 1.0,
+            max_scroll_y: 0.0,
+            zoom: 1.08,
             dirty: false,
         }
     }
@@ -177,6 +234,88 @@ pub enum ActiveModal {
     About,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolbarDropdown {
+    ParagraphStyle { anchor_x: i32, anchor_y: i32 },
+    FontFamily { anchor_x: i32, anchor_y: i32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiInputField {
+    EndpointUrl,
+    Model,
+    ApiKey,
+    CustomPrompt,
+}
+
+pub struct AiDockState {
+    pub open: bool,
+    pub width: f32,
+    pub config: AiAgentConfig,
+    pub selected_task: AiTask,
+    pub focused_field: Option<AiInputField>,
+    pub custom_prompt: String,
+    pub output_text: String,
+    pub status_line: String,
+    pub is_error: bool,
+    pub last_latency_ms: Option<u128>,
+    pub discovered_models: Vec<String>,
+    pub output_scroll_y: f32,
+    pub worker_rx: Option<Receiver<Result<AiResponse, String>>>,
+    pub started_at: Option<Instant>,
+}
+
+impl Default for AiDockState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            width: 344.0,
+            config: AiAgentConfig::default(),
+            selected_task: AiTask::FixGrammar,
+            focused_field: None,
+            custom_prompt: String::new(),
+            output_text: String::new(),
+            status_line: "Ready · Local-first (Ollama / nour-code / Cloud)".into(),
+            is_error: false,
+            last_latency_ms: None,
+            discovered_models: Vec::new(),
+            output_scroll_y: 0.0,
+            worker_rx: None,
+            started_at: None,
+        }
+    }
+}
+
+impl AiDockState {
+    pub fn is_busy(&self) -> bool {
+        self.worker_rx.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DragInteraction {
+    None,
+    WordOutlineSplitter { pane_left: f32 },
+    AiDockSplitter { window_right: f32 },
+    PdfLeftSplitter { pane_left: f32 },
+    PdfRightSplitter { pane_right: f32 },
+    WorkspaceSplit { work_x: f32, work_w: f32 },
+    TableColumn {
+        tab_idx: usize,
+        block_idx: usize,
+        cols: usize,
+        col_idx: usize,
+        last_x: f32,
+        table_px_w: f32,
+    },
+    Scrollbar {
+        tab_idx: usize,
+        track_y: f32,
+        track_h: f32,
+        max_scroll: f32,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub enum UiAction {
     SwitchTab(usize),
@@ -184,6 +323,10 @@ pub enum UiAction {
     OpenHomeTab,
     OpenCommandPalette,
     ExecCommand(CommandId),
+    ToggleDropdown(ToolbarDropdown),
+    CloseDropdown,
+    SelectParagraphStyle(ParagraphStyle),
+    SelectFontFamily(FontFamily),
     CreateFromTemplate(TemplateKind),
     OpenRecentPath(PathBuf),
     JumpOutline {
@@ -205,7 +348,18 @@ pub enum UiAction {
         block_idx: usize,
         row: usize,
         col: usize,
+        char_idx: usize,
     },
+    TableQuickAddRow {
+        tab_idx: usize,
+        block_idx: usize,
+    },
+    TableQuickAddCol {
+        tab_idx: usize,
+        block_idx: usize,
+    },
+    BeginDrag(DragInteraction),
+    TogglePdfRightInspector,
     SelectPdfPage {
         tab_idx: usize,
         page_idx: usize,
@@ -230,6 +384,17 @@ pub enum UiAction {
         pdf_x: f32,
         pdf_y: f32,
     },
+    AiSelectProvider(AiProviderPreset),
+    AiSelectTask(AiTask),
+    AiFocusField(Option<AiInputField>),
+    AiDetectOllamaModels,
+    AiPickDiscoveredModel(String),
+    AiRunCurrentTask,
+    AiCancelTask,
+    AiApplyOutput {
+        replace_current: bool,
+    },
+    AiCopyOutput,
     RestoreSnapshot(u64),
     ModalClose,
     ModalConfirm,
@@ -244,6 +409,33 @@ pub enum UiAction {
 pub struct HitRegion {
     pub rect: Rect,
     pub action: UiAction,
+    pub cursor: CursorShape,
+}
+
+impl HitRegion {
+    pub fn button(rect: Rect, action: UiAction) -> Self {
+        Self {
+            rect,
+            action,
+            cursor: CursorShape::Hand,
+        }
+    }
+
+    pub fn text(rect: Rect, action: UiAction) -> Self {
+        Self {
+            rect,
+            action,
+            cursor: CursorShape::IBeam,
+        }
+    }
+
+    pub fn splitter(rect: Rect, action: UiAction) -> Self {
+        Self {
+            rect,
+            action,
+            cursor: CursorShape::ResizeEW,
+        }
+    }
 }
 
 pub struct RustPadApp {
@@ -252,8 +444,22 @@ pub struct RustPadApp {
     pub tabs: Vec<StudioTab>,
     pub active_tab: usize,
     pub split_secondary_tab: Option<usize>,
+    pub split_ratio: f32,
+    pub ui_scale: f32,
+    pub word_sidebar_open: bool,
+    pub word_sidebar_w: f32,
+    pub pdf_left_open: bool,
+    pub pdf_left_w: f32,
+    pub pdf_right_open: bool,
+    pub pdf_right_w: f32,
+    pub ai_dock: AiDockState,
+    pub ai_dock_rect: Option<Rect>,
+    pub open_dropdown: Option<ToolbarDropdown>,
+    pub active_drag: DragInteraction,
     pub modal: Option<ActiveModal>,
     pub hit_regions: Vec<HitRegion>,
+    pub hovered_hit_idx: Option<usize>,
+    pub desired_cursor: CursorShape,
     pub mouse_x: f32,
     pub mouse_y: f32,
     pub cursor_blink_on: bool,
@@ -271,6 +477,7 @@ impl RustPadApp {
     pub fn new() -> Self {
         let welcome_doc = TemplateKind::WelcomeGuide.build();
         let recent = discover_workspace_documents();
+        let dpi_scale = detect_dpi_scale().clamp(0.95, 1.45);
         Self {
             fonts: FontBook::new(),
             spellchecker: SpellChecker::new(),
@@ -280,13 +487,222 @@ impl RustPadApp {
             ],
             active_tab: 1,
             split_secondary_tab: None,
+            split_ratio: 0.50,
+            ui_scale: dpi_scale,
+            word_sidebar_open: true,
+            word_sidebar_w: 246.0,
+            pdf_left_open: true,
+            pdf_left_w: 196.0,
+            pdf_right_open: true,
+            pdf_right_w: 236.0,
+            ai_dock: AiDockState::default(),
+            ai_dock_rect: None,
+            open_dropdown: None,
+            active_drag: DragInteraction::None,
             modal: None,
-            hit_regions: Vec::with_capacity(128),
+            hit_regions: Vec::with_capacity(256),
+            hovered_hit_idx: None,
+            desired_cursor: CursorShape::Arrow,
             mouse_x: -1.0,
             mouse_y: -1.0,
             cursor_blink_on: true,
-            status_toast: "Ready · Paper & Daylight Native Rust Studio".into(),
+            status_toast: "Ready · Architectural Paper & Linen Native Rust Studio".into(),
             recent_files: recent,
+        }
+    }
+
+    /// Polls any non-blocking background AI worker thread on each 50ms tick.
+    /// Returns `true` if a repaint is needed (live elapsed timer or completed response).
+    pub fn poll_background_tasks(&mut self) -> bool {
+        let Some(rx) = &self.ai_dock.worker_rx else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(Ok(resp)) => {
+                self.ai_dock.worker_rx = None;
+                self.ai_dock.started_at = None;
+                self.ai_dock.output_text = resp.content;
+                self.ai_dock.output_scroll_y = 0.0;
+                self.ai_dock.last_latency_ms = Some(resp.latency_ms);
+                self.ai_dock.is_error = false;
+                self.ai_dock.status_line = format!(
+                    "Completed via {} ({:.2}s)",
+                    resp.model_used,
+                    resp.latency_ms as f32 / 1000.0
+                );
+                self.status_toast = format!(
+                    "AI Agent finished '{}' in {:.2}s — review & click Insert or Replace",
+                    self.ai_dock.selected_task.short_label(),
+                    resp.latency_ms as f32 / 1000.0
+                );
+                true
+            }
+            Ok(Err(err)) => {
+                self.ai_dock.worker_rx = None;
+                self.ai_dock.started_at = None;
+                self.ai_dock.is_error = true;
+                self.ai_dock.status_line = err.clone();
+                self.status_toast = format!("AI Agent error: {err}");
+                true
+            }
+            Err(TryRecvError::Empty) => {
+                if let Some(t0) = self.ai_dock.started_at {
+                    let secs = t0.elapsed().as_secs_f32();
+                    self.ai_dock.status_line = format!(
+                        "Agent running on {}… ({:.1}s)",
+                        self.ai_dock.config.preset.short_badge(),
+                        secs
+                    );
+                }
+                true
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.ai_dock.worker_rx = None;
+                self.ai_dock.started_at = None;
+                self.ai_dock.is_error = true;
+                self.ai_dock.status_line = "AI worker thread disconnected unexpectedly.".into();
+                true
+            }
+        }
+    }
+
+    pub fn start_ai_task(&mut self, task: AiTask) {
+        self.ai_dock.open = true;
+        self.ai_dock.selected_task = task;
+        self.ai_dock.focused_field = None;
+        self.ai_dock.config.save_non_secret();
+
+        let context = self.extract_active_ai_context(task);
+        if context.trim().is_empty() && self.ai_dock.custom_prompt.trim().is_empty() {
+            self.ai_dock.is_error = true;
+            self.ai_dock.status_line =
+                "Open a Word/PDF document or type an instruction first.".into();
+            return;
+        }
+
+        let cfg = self.ai_dock.config.clone();
+        let prompt = self.ai_dock.custom_prompt.clone();
+        let (tx, rx) = mpsc::channel();
+        self.ai_dock.worker_rx = Some(rx);
+        self.ai_dock.started_at = Some(Instant::now());
+        self.ai_dock.is_error = false;
+        self.ai_dock.status_line = format!(
+            "Connecting to {} ({})…",
+            cfg.preset.short_badge(),
+            cfg.model
+        );
+        self.status_toast = format!(
+            "Running '{}' via {}…",
+            task.label(),
+            cfg.preset.short_badge()
+        );
+
+        std::thread::spawn(move || {
+            let res = run_ai_task(&cfg, task, &context, &prompt);
+            let _ = tx.send(res);
+        });
+    }
+
+    fn extract_active_ai_context(&self, task: AiTask) -> String {
+        match self.tabs.get(self.active_tab) {
+            Some(StudioTab::Word(w)) => {
+                if task == AiTask::FixGrammar {
+                    if let Some((tb_idx, r, c)) = w.active_table_cell {
+                        if let Some(Block::Table(t)) = w.doc.blocks.get(tb_idx) {
+                            if let Some(cell) = t.rows.get(r).and_then(|row| row.get(c)) {
+                                if !cell.text.trim().is_empty() {
+                                    return cell.text.clone();
+                                }
+                            }
+                        }
+                    }
+                    if let Some(Block::Paragraph(p)) = w.doc.blocks.get(w.cursor_block) {
+                        let cur = p.plain_text();
+                        if cur.split_whitespace().count() >= 4 {
+                            return cur;
+                        }
+                    }
+                }
+                word_to_markdown(&w.doc)
+            }
+            Some(StudioTab::Pdf(p)) => p.pdf.extract_all_text(),
+            _ => String::new(),
+        }
+    }
+
+    pub fn apply_ai_output_to_document(&mut self, replace_current: bool) {
+        let out = self.ai_dock.output_text.trim().to_string();
+        if out.is_empty() {
+            self.status_toast = "Run an AI task first to generate content.".into();
+            return;
+        }
+
+        match self.tabs.get_mut(self.active_tab) {
+            Some(StudioTab::Word(w)) => {
+                w.history.record(&w.doc);
+                w.snapshots.capture(&w.doc, "Before AI Agent apply");
+                w.dirty = true;
+
+                if replace_current {
+                    if let Some((tb_idx, r, c)) = w.active_table_cell {
+                        if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                            if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
+                                cell.text = out.replace('\n', " ");
+                                w.table_cursor_char = cell.text.chars().count();
+                                self.status_toast = "Replaced active table cell with AI output (Ctrl+Z to undo)".into();
+                                return;
+                            }
+                        }
+                    }
+                    if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
+                        let first_line = out.lines().next().unwrap_or(&out);
+                        if out.lines().count() <= 1 {
+                            let st = p.spans.first().map(|s| s.style.clone()).unwrap_or_default();
+                            p.spans = vec![TextSpan::styled(first_line, st)];
+                            w.cursor_char = first_line.chars().count();
+                            self.status_toast =
+                                "Replaced paragraph with AI revision (Ctrl+Z to undo)".into();
+                            return;
+                        }
+                    }
+                    let new_blocks = parse_ai_output_to_blocks(&out);
+                    if !new_blocks.is_empty() {
+                        let at = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+                        w.doc.blocks.remove(at);
+                        for (offset, b) in new_blocks.into_iter().enumerate() {
+                            w.doc.blocks.insert(at + offset, b);
+                        }
+                        self.status_toast = "Replaced section with AI output (Ctrl+Z to undo)".into();
+                    }
+                } else {
+                    let new_blocks = parse_ai_output_to_blocks(&out);
+                    let count = new_blocks.len();
+                    let insert_at = (w.cursor_block + 1).min(w.doc.blocks.len());
+                    for (offset, b) in new_blocks.into_iter().enumerate() {
+                        w.doc.blocks.insert(insert_at + offset, b);
+                    }
+                    w.cursor_block = (insert_at + count.saturating_sub(1))
+                        .min(w.doc.blocks.len().saturating_sub(1));
+                    w.cursor_char = 0;
+                    w.active_table_cell = None;
+                    w.scroll_to_caret = true;
+                    self.status_toast =
+                        format!("Inserted {count} AI-drafted block(s) (Ctrl+Z to undo)");
+                }
+            }
+            Some(StudioTab::Pdf(_)) => {
+                // Convert active PDF + AI blocks into a fresh editable Word Studio tab
+                self.execute_command(CommandId::ConvertPdfToWord);
+                self.apply_ai_output_to_document(false);
+            }
+            StudioTab::HomeHub | None => {
+                let mut doc = markdown_to_word(&out, "AI Drafted Document");
+                doc.author = "Nour Yahyaoui".into();
+                self.tabs
+                    .push(StudioTab::Word(WordTabState::from_doc(doc, None)));
+                self.active_tab = self.tabs.len() - 1;
+                self.status_toast = "Opened AI output in a new Word (.docx) tab".into();
+            }
         }
     }
 
@@ -356,7 +772,7 @@ impl RustPadApp {
             StudioTab::Word(w) => {
                 if ext == "pdf" {
                     export_document_to_pdf_file(&target, &w.doc, &PdfCreateOptions::default())?;
-                    self.status_toast = format!("Exported crisp vector PDF '{}'", target.display());
+                    self.status_toast = format!("Exported vector PDF '{}'", target.display());
                 } else if ext == "md" {
                     let md = word_to_markdown(&w.doc);
                     std::fs::write(&target, md).map_err(|e| e.to_string())?;
@@ -473,6 +889,7 @@ impl RustPadApp {
     }
 
     pub fn execute_command(&mut self, cmd: CommandId) {
+        self.open_dropdown = None;
         match cmd {
             CommandId::NewWordBlank => {
                 self.tabs.push(StudioTab::Word(WordTabState::from_doc(
@@ -542,17 +959,79 @@ impl RustPadApp {
                         .push(StudioTab::Word(WordTabState::from_doc(doc, None)));
                     self.active_tab = self.tabs.len() - 1;
                     self.status_toast =
-                        "Converted PDF into a fully editable Word (.docx) tab!".into();
+                        "Converted PDF into an editable Word (.docx) tab".into();
                 } else if let Some(StudioTab::Word(w)) = self.tabs.get(self.active_tab) {
                     if let Ok(pdf) = word_to_pdf_document(&w.doc) {
                         self.tabs
                             .push(StudioTab::Pdf(PdfTabState::from_pdf(pdf, None)));
                         self.active_tab = self.tabs.len() - 1;
                         self.status_toast =
-                            "Opened Word document directly inside PDF Studio!".into();
+                            "Opened Word document directly inside PDF Studio".into();
                     }
                 }
             }
+            CommandId::Undo => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    if w.history.undo(&mut w.doc) {
+                        w.active_table_cell = None;
+                        w.cursor_block = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+                        w.cursor_char = 0;
+                        self.status_toast = "Undid last edit".into();
+                    } else {
+                        self.status_toast = "Nothing to undo".into();
+                    }
+                }
+            }
+            CommandId::Redo => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    if w.history.redo(&mut w.doc) {
+                        w.active_table_cell = None;
+                        w.cursor_block = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+                        w.cursor_char = 0;
+                        self.status_toast = "Redid edit".into();
+                    } else {
+                        self.status_toast = "Nothing to redo".into();
+                    }
+                }
+            }
+            CommandId::ToggleLeftSidebar => {
+                match self.tabs.get(self.active_tab) {
+                    Some(StudioTab::Pdf(_)) => {
+                        self.pdf_left_open = !self.pdf_left_open;
+                        self.status_toast = if self.pdf_left_open {
+                            "Showed PDF Pages sidebar".into()
+                        } else {
+                            "Collapsed PDF Pages sidebar".into()
+                        };
+                    }
+                    _ => {
+                        self.word_sidebar_open = !self.word_sidebar_open;
+                        self.status_toast = if self.word_sidebar_open {
+                            "Showed Document Outline sidebar".into()
+                        } else {
+                            "Collapsed Outline sidebar (Focus mode)".into()
+                        };
+                    }
+                }
+            }
+            CommandId::ToggleAiDock => {
+                self.ai_dock.open = !self.ai_dock.open;
+                if self.ai_dock.open && self.ai_dock.discovered_models.is_empty() {
+                    if self.ai_dock.config.preset == AiProviderPreset::OllamaLocal {
+                        self.ai_dock.discovered_models =
+                            discover_local_ollama_models(&self.ai_dock.config.endpoint_url);
+                    }
+                }
+                self.status_toast = if self.ai_dock.open {
+                    "Opened Pluggable AI Agent Studio Dock (drag edge to resize)".into()
+                } else {
+                    "Closed AI Agent Dock".into()
+                };
+            }
+            CommandId::AiRunFixGrammar => self.start_ai_task(AiTask::FixGrammar),
+            CommandId::AiRunSummarize => self.start_ai_task(AiTask::SummarizeDocument),
+            CommandId::AiRunDescribe => self.start_ai_task(AiTask::WriteDescription),
+            CommandId::AiRunAddSections => self.start_ai_task(AiTask::AddSections),
             CommandId::ToggleBold
             | CommandId::ToggleItalic
             | CommandId::ToggleUnderline
@@ -570,7 +1049,14 @@ impl RustPadApp {
             | CommandId::ToggleChecklist
             | CommandId::InsertTable
             | CommandId::TableAddRow
+            | CommandId::TableInsertRowAbove
+            | CommandId::TableDeleteRow
             | CommandId::TableAddCol
+            | CommandId::TableInsertColLeft
+            | CommandId::TableDeleteCol
+            | CommandId::TableToggleCellBold
+            | CommandId::TableCycleCellFill
+            | CommandId::TableDelete
             | CommandId::InsertPageBreak
             | CommandId::CyclePaperSize
             | CommandId::ToggleSpellcheck => {
@@ -582,7 +1068,6 @@ impl RustPadApp {
             CommandId::PdfToolSticky => self.set_active_pdf_tool(PdfTool::StickyNote),
             CommandId::PdfToolRedact => self.set_active_pdf_tool(PdfTool::Redact),
             CommandId::OpenSignaturePad => {
-                // Ensure we're on a PDF tab (or convert Word -> PDF Studio tab if on Word!)
                 if matches!(self.tabs.get(self.active_tab), Some(StudioTab::Word(_))) {
                     self.execute_command(CommandId::ConvertPdfToWord);
                 }
@@ -632,7 +1117,7 @@ impl RustPadApp {
                             0
                         };
                         self.status_toast = format!(
-                            "Compressed PDF streams: {:.1} KB -> {:.1} KB ({}% smaller!)",
+                            "Compressed PDF streams: {:.1} KB -> {:.1} KB ({}% smaller)",
                             before as f32 / 1024.0,
                             after as f32 / 1024.0,
                             pct
@@ -695,7 +1180,6 @@ impl RustPadApp {
                     self.split_secondary_tab = None;
                     self.status_toast = "Closed Side-by-Side Split View".into();
                 } else {
-                    // Pick another non-Home tab, or spin up a companion PDF Studio tab!
                     let alt = self
                         .tabs
                         .iter()
@@ -706,8 +1190,9 @@ impl RustPadApp {
                         self.split_secondary_tab = Some(sec);
                     } else {
                         let pdf = if let Some(StudioTab::Word(w)) = self.tabs.get(self.active_tab) {
-                            word_to_pdf_document(&w.doc)
-                                .unwrap_or_else(|_| PdfDocument::new_blank("Preview", 1, PaperSize::A4))
+                            word_to_pdf_document(&w.doc).unwrap_or_else(|_| {
+                                PdfDocument::new_blank("Preview", 1, PaperSize::A4)
+                            })
                         } else {
                             PdfDocument::new_blank("Reference PDF", 1, PaperSize::A4)
                         };
@@ -716,7 +1201,7 @@ impl RustPadApp {
                         self.split_secondary_tab = Some(self.tabs.len() - 1);
                     }
                     self.status_toast =
-                        "Enabled Side-by-Side Split Workspace (Word + PDF)".into();
+                        "Enabled Side-by-Side Split Workspace (drag center bar to resize)".into();
                 }
             }
             CommandId::OpenSnapshotsDrawer => {
@@ -725,8 +1210,7 @@ impl RustPadApp {
             CommandId::CaptureSnapshot => {
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
                     let id = w.snapshots.capture(&w.doc, "Manual checkpoint");
-                    self.status_toast =
-                        format!("Saved local Time-Machine Snapshot #{id}");
+                    self.status_toast = format!("Saved local Time-Machine Snapshot #{id}");
                 }
             }
             CommandId::OpenFindReplace => {
@@ -737,9 +1221,23 @@ impl RustPadApp {
                     matches_count: 0,
                 });
             }
-            CommandId::ZoomIn => self.adjust_zoom(0.1),
-            CommandId::ZoomOut => self.adjust_zoom(-0.1),
-            CommandId::ZoomReset => self.set_zoom(1.0),
+            CommandId::ZoomIn => self.adjust_zoom(0.10),
+            CommandId::ZoomOut => self.adjust_zoom(-0.10),
+            CommandId::ZoomReset => self.set_zoom(1.12),
+            CommandId::UiScaleUp => {
+                self.ui_scale = (self.ui_scale + 0.10).clamp(0.85, 1.55);
+                self.status_toast =
+                    format!("Interface Scale: {}%", (self.ui_scale * 100.0).round() as i32);
+            }
+            CommandId::UiScaleDown => {
+                self.ui_scale = (self.ui_scale - 0.10).clamp(0.85, 1.55);
+                self.status_toast =
+                    format!("Interface Scale: {}%", (self.ui_scale * 100.0).round() as i32);
+            }
+            CommandId::UiScaleReset => {
+                self.ui_scale = 1.0;
+                self.status_toast = "Interface Scale reset to 100%".into();
+            }
             CommandId::OpenAbout => {
                 self.modal = Some(ActiveModal::About);
             }
@@ -756,12 +1254,12 @@ impl RustPadApp {
     fn adjust_zoom(&mut self, delta: f32) {
         match self.tabs.get_mut(self.active_tab) {
             Some(StudioTab::Word(w)) => {
-                w.zoom = (w.zoom + delta).clamp(0.6, 1.8);
-                self.status_toast = format!("Zoom: {}%", (w.zoom * 100.0).round() as i32);
+                w.zoom = (w.zoom + delta).clamp(0.65, 2.10);
+                self.status_toast = format!("Paper Zoom: {}%", (w.zoom * 100.0).round() as i32);
             }
             Some(StudioTab::Pdf(p)) => {
-                p.zoom = (p.zoom + delta).clamp(0.6, 1.8);
-                self.status_toast = format!("Zoom: {}%", (p.zoom * 100.0).round() as i32);
+                p.zoom = (p.zoom + delta).clamp(0.65, 2.10);
+                self.status_toast = format!("PDF Zoom: {}%", (p.zoom * 100.0).round() as i32);
             }
             _ => {}
         }
@@ -770,10 +1268,62 @@ impl RustPadApp {
     fn set_zoom(&mut self, z: f32) {
         match self.tabs.get_mut(self.active_tab) {
             Some(StudioTab::Word(w)) => w.zoom = z,
-            Some(StudioTab::Pdf(p)) => p.zoom = z,
+            Some(StudioTab::Pdf(p)) => p.zoom = 1.08,
             _ => {}
         }
-        self.status_toast = "Zoom reset to 100%".into();
+        self.status_toast = format!("Zoom reset to {}%", (z * 100.0).round() as i32);
+    }
+
+    pub fn apply_paragraph_style(&mut self, style: ParagraphStyle) {
+        if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+            let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+            if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
+                w.history.record(&w.doc);
+                w.dirty = true;
+                p.style = style;
+                let sz = style.default_font_size();
+                let b = style.is_bold_by_default();
+                let color = if matches!(style, ParagraphStyle::Subtitle | ParagraphStyle::Quote) {
+                    RgbColor::MUTED_GRAY
+                } else {
+                    RgbColor::INK_SLATE
+                };
+                if p.spans.is_empty() {
+                    p.spans.push(TextSpan::styled(
+                        "",
+                        SpanStyle {
+                            font_size_pt: sz,
+                            bold: b,
+                            italic: style == ParagraphStyle::Quote,
+                            color,
+                            ..SpanStyle::default()
+                        },
+                    ));
+                } else {
+                    for s in &mut p.spans {
+                        s.style.font_size_pt = sz;
+                        s.style.bold = b;
+                        s.style.italic = style == ParagraphStyle::Quote;
+                        s.style.color = color;
+                    }
+                }
+                self.status_toast = format!("Paragraph Style: {}", style.label());
+            }
+        }
+    }
+
+    pub fn apply_font_family(&mut self, fam: FontFamily) {
+        if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+            let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+            if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
+                w.history.record(&w.doc);
+                w.dirty = true;
+                for s in &mut p.spans {
+                    s.style.font_family = fam;
+                }
+                self.status_toast = format!("Font Family: {}", fam.label());
+            }
+        }
     }
 
     fn exec_word_command(&mut self, cmd: CommandId) {
@@ -810,33 +1360,150 @@ impl RustPadApp {
                     .blocks
                     .insert(insert_at, Block::Table(TableBlock::new(3, 3)));
                 w.active_table_cell = Some((insert_at, 1, 0));
+                w.table_cursor_char = 0;
                 w.cursor_block = insert_at;
-                self.status_toast = "Inserted 3×3 styled table".into();
+                w.scroll_to_caret = true;
+                self.status_toast =
+                    "Inserted 3×3 table — type in cells, Tab to advance, drag borders to resize"
+                        .into();
                 return;
             }
             CommandId::TableAddRow => {
-                if let Some((tb_idx, _, _)) = w.active_table_cell {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
                     if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
-                        t.add_row();
-                        self.status_toast = "Added row to table".into();
+                        let at = (r + 1).min(t.rows.len());
+                        t.insert_row_at(at);
+                        w.active_table_cell = Some((tb_idx, at, c.min(t.cols.saturating_sub(1))));
+                        w.table_cursor_char = 0;
+                        self.status_toast = format!("Inserted row {} below", at + 1);
                         return;
                     }
                 }
                 if let Some(Block::Table(t)) = w.doc.blocks.get_mut(idx) {
                     t.add_row();
+                    self.status_toast = "Added row to table".into();
+                }
+                return;
+            }
+            CommandId::TableInsertRowAbove => {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                        t.insert_row_at(r);
+                        w.active_table_cell = Some((tb_idx, r, c));
+                        w.table_cursor_char = 0;
+                        self.status_toast = format!("Inserted row above row {}", r + 1);
+                    }
+                }
+                return;
+            }
+            CommandId::TableDeleteRow => {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                        if t.delete_row(r) {
+                            let nr = r.min(t.rows.len().saturating_sub(1));
+                            let nc = c.min(t.cols.saturating_sub(1));
+                            w.active_table_cell = Some((tb_idx, nr, nc));
+                            w.table_cursor_char = 0;
+                            self.status_toast = "Deleted table row".into();
+                        } else {
+                            self.status_toast = "Table must keep at least 1 row".into();
+                        }
+                    }
                 }
                 return;
             }
             CommandId::TableAddCol => {
-                if let Some((tb_idx, _, _)) = w.active_table_cell {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
                     if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
-                        t.add_column();
-                        self.status_toast = "Added column to table".into();
+                        let at = (c + 1).min(t.cols);
+                        t.insert_column_at(at);
+                        w.table_col_weights.retain(|(b, _)| *b != tb_idx);
+                        w.active_table_cell = Some((tb_idx, r, at));
+                        w.table_cursor_char = 0;
+                        self.status_toast = format!("Inserted column {}", at + 1);
                         return;
                     }
                 }
                 if let Some(Block::Table(t)) = w.doc.blocks.get_mut(idx) {
                     t.add_column();
+                    w.table_col_weights.retain(|(b, _)| *b != idx);
+                    self.status_toast = "Added column to table".into();
+                }
+                return;
+            }
+            CommandId::TableInsertColLeft => {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                        t.insert_column_at(c);
+                        w.table_col_weights.retain(|(b, _)| *b != tb_idx);
+                        w.active_table_cell = Some((tb_idx, r, c));
+                        w.table_cursor_char = 0;
+                        self.status_toast = format!("Inserted column left of column {}", c + 1);
+                    }
+                }
+                return;
+            }
+            CommandId::TableDeleteCol => {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                        if t.delete_column(c) {
+                            w.table_col_weights.retain(|(b, _)| *b != tb_idx);
+                            let nc = c.min(t.cols.saturating_sub(1));
+                            w.active_table_cell = Some((tb_idx, r, nc));
+                            w.table_cursor_char = 0;
+                            self.status_toast = "Deleted table column".into();
+                        } else {
+                            self.status_toast = "Table must keep at least 1 column".into();
+                        }
+                    }
+                }
+                return;
+            }
+            CommandId::TableToggleCellBold | CommandId::ToggleBold
+                if w.active_table_cell.is_some() =>
+            {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                        t.toggle_cell_bold(r, c);
+                        self.status_toast = "Toggled table cell bold".into();
+                    }
+                }
+                return;
+            }
+            CommandId::TableCycleCellFill => {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                        t.cycle_cell_fill(r, c);
+                        self.status_toast = "Cycled table cell shading".into();
+                    }
+                }
+                return;
+            }
+            CommandId::TableDelete => {
+                let target_idx = w.active_table_cell.map(|(b, _, _)| b).unwrap_or(idx);
+                if matches!(w.doc.blocks.get(target_idx), Some(Block::Table(_))) {
+                    w.doc.blocks.remove(target_idx);
+                    w.doc.ensure_non_empty();
+                    w.active_table_cell = None;
+                    w.cursor_block = target_idx.min(w.doc.blocks.len().saturating_sub(1));
+                    w.cursor_char = 0;
+                    self.status_toast = "Removed table (Ctrl+Z to undo)".into();
+                }
+                return;
+            }
+            CommandId::AlignLeft | CommandId::AlignCenter | CommandId::AlignRight
+                if w.active_table_cell.is_some() =>
+            {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                        if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
+                            cell.alignment = match cmd {
+                                CommandId::AlignCenter => Alignment::Center,
+                                CommandId::AlignRight => Alignment::Right,
+                                _ => Alignment::Left,
+                            };
+                        }
+                    }
                 }
                 return;
             }
@@ -849,6 +1516,8 @@ impl RustPadApp {
                 );
                 w.cursor_block = insert_at + 1;
                 w.cursor_char = 0;
+                w.active_table_cell = None;
+                w.scroll_to_caret = true;
                 self.status_toast = "Inserted physical Page Break".into();
                 return;
             }
@@ -856,6 +1525,9 @@ impl RustPadApp {
         }
 
         if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
+            if p.spans.is_empty() {
+                p.spans.push(TextSpan::plain(""));
+            }
             match cmd {
                 CommandId::ToggleBold => {
                     let target = !p.spans.first().map(|s| s.style.bold).unwrap_or(false);
@@ -886,7 +1558,7 @@ impl RustPadApp {
                     }
                 }
                 CommandId::CycleStyle => {
-                    p.style = match p.style {
+                    let next = match p.style {
                         ParagraphStyle::Normal => ParagraphStyle::Heading1,
                         ParagraphStyle::Heading1 => ParagraphStyle::Heading2,
                         ParagraphStyle::Heading2 => ParagraphStyle::Heading3,
@@ -894,14 +1566,15 @@ impl RustPadApp {
                         ParagraphStyle::Title => ParagraphStyle::Quote,
                         ParagraphStyle::Quote | ParagraphStyle::Subtitle => ParagraphStyle::Normal,
                     };
-                    let sz = p.style.default_font_size();
-                    let b = p.style.is_bold_by_default();
+                    p.style = next;
+                    let sz = next.default_font_size();
+                    let b = next.is_bold_by_default();
                     for s in &mut p.spans {
                         s.style.font_size_pt = sz;
                         s.style.bold = b;
-                        s.style.italic = p.style == ParagraphStyle::Quote;
+                        s.style.italic = next == ParagraphStyle::Quote;
                     }
-                    self.status_toast = format!("Style: {}", p.style.label());
+                    self.status_toast = format!("Style: {}", next.label());
                 }
                 CommandId::CycleFontFamily => {
                     let next = match p
@@ -921,12 +1594,12 @@ impl RustPadApp {
                 }
                 CommandId::FontSizeUp => {
                     for s in &mut p.spans {
-                        s.style.font_size_pt = (s.style.font_size_pt + 1.5).min(48.0);
+                        s.style.font_size_pt = (s.style.font_size_pt + 1.0).min(56.0);
                     }
                 }
                 CommandId::FontSizeDown => {
                     for s in &mut p.spans {
-                        s.style.font_size_pt = (s.style.font_size_pt - 1.5).max(8.0);
+                        s.style.font_size_pt = (s.style.font_size_pt - 1.0).max(8.5);
                     }
                 }
                 CommandId::CycleTextColor => {
@@ -985,11 +1658,13 @@ impl RustPadApp {
     pub fn dispatch_ui_action(&mut self, action: UiAction) {
         match action {
             UiAction::SwitchTab(idx) => {
+                self.open_dropdown = None;
                 if idx < self.tabs.len() {
                     self.active_tab = idx;
                 }
             }
             UiAction::CloseTab(idx) => {
+                self.open_dropdown = None;
                 if idx > 0 && idx < self.tabs.len() {
                     self.tabs.remove(idx);
                     if self.active_tab >= self.tabs.len() {
@@ -1003,9 +1678,11 @@ impl RustPadApp {
                 }
             }
             UiAction::OpenHomeTab => {
+                self.open_dropdown = None;
                 self.active_tab = 0;
             }
             UiAction::OpenCommandPalette => {
+                self.open_dropdown = None;
                 self.modal = Some(ActiveModal::CommandPalette {
                     query: String::new(),
                     selected: 0,
@@ -1013,6 +1690,24 @@ impl RustPadApp {
             }
             UiAction::ExecCommand(cmd) => {
                 self.execute_command(cmd);
+            }
+            UiAction::ToggleDropdown(dd) => {
+                if self.open_dropdown == Some(dd) {
+                    self.open_dropdown = None;
+                } else {
+                    self.open_dropdown = Some(dd);
+                }
+            }
+            UiAction::CloseDropdown => {
+                self.open_dropdown = None;
+            }
+            UiAction::SelectParagraphStyle(st) => {
+                self.open_dropdown = None;
+                self.apply_paragraph_style(st);
+            }
+            UiAction::SelectFontFamily(fam) => {
+                self.open_dropdown = None;
+                self.apply_font_family(fam);
             }
             UiAction::CreateFromTemplate(tpl) => {
                 let doc = tpl.build();
@@ -1032,12 +1727,13 @@ impl RustPadApp {
                 block_idx,
                 target_scroll_y,
             } => {
+                self.open_dropdown = None;
                 self.active_tab = tab_idx;
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
                     w.cursor_block = block_idx;
                     w.cursor_char = 0;
                     w.active_table_cell = None;
-                    w.scroll_y = target_scroll_y.max(0.0);
+                    w.scroll_y = target_scroll_y.clamp(0.0, w.max_scroll_y);
                 }
             }
             UiAction::ClickWordParagraph {
@@ -1045,6 +1741,8 @@ impl RustPadApp {
                 block_idx,
                 char_idx,
             } => {
+                self.open_dropdown = None;
+                self.ai_dock.focused_field = None;
                 self.active_tab = tab_idx;
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
                     w.cursor_block = block_idx;
@@ -1069,12 +1767,70 @@ impl RustPadApp {
                 block_idx,
                 row,
                 col,
+                char_idx,
             } => {
+                self.open_dropdown = None;
+                self.ai_dock.focused_field = None;
                 self.active_tab = tab_idx;
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
                     w.cursor_block = block_idx;
                     w.active_table_cell = Some((block_idx, row, col));
+                    w.table_cursor_char = char_idx;
                 }
+            }
+            UiAction::TableQuickAddRow { tab_idx, block_idx } => {
+                self.active_tab = tab_idx;
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(block_idx) {
+                        w.history.record(&w.doc);
+                        t.add_row();
+                        let last_r = t.rows.len().saturating_sub(1);
+                        w.cursor_block = block_idx;
+                        w.active_table_cell = Some((block_idx, last_r, 0));
+                        w.table_cursor_char = 0;
+                        w.dirty = true;
+                        self.status_toast =
+                            format!("Added row {} to table — start typing", last_r + 1);
+                    }
+                }
+            }
+            UiAction::TableQuickAddCol { tab_idx, block_idx } => {
+                self.active_tab = tab_idx;
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(block_idx) {
+                        w.history.record(&w.doc);
+                        t.add_column();
+                        w.table_col_weights.retain(|(b, _)| *b != block_idx);
+                        let last_c = t.cols.saturating_sub(1);
+                        w.cursor_block = block_idx;
+                        w.active_table_cell = Some((block_idx, 0, last_c));
+                        w.table_cursor_char = t.rows[0][last_c].text.chars().count();
+                        w.dirty = true;
+                        self.status_toast =
+                            format!("Added column {} to table", last_c + 1);
+                    }
+                }
+            }
+            UiAction::BeginDrag(drag) => {
+                self.open_dropdown = None;
+                self.active_drag = drag;
+                if let DragInteraction::Scrollbar {
+                    tab_idx,
+                    track_y,
+                    track_h,
+                    max_scroll,
+                } = drag
+                {
+                    self.apply_scrollbar_drag(tab_idx, track_y, track_h, max_scroll, self.mouse_y);
+                }
+            }
+            UiAction::TogglePdfRightInspector => {
+                self.pdf_right_open = !self.pdf_right_open;
+                self.status_toast = if self.pdf_right_open {
+                    "Showed PDF Inspector panel".into()
+                } else {
+                    "Collapsed PDF Inspector panel".into()
+                };
             }
             UiAction::SelectPdfPage { tab_idx, page_idx } => {
                 self.active_tab = tab_idx;
@@ -1106,6 +1862,7 @@ impl RustPadApp {
                 page_idx,
                 item_id,
             } => {
+                self.ai_dock.focused_field = None;
                 self.active_tab = tab_idx;
                 if let Some(StudioTab::Pdf(p)) = self.tabs.get_mut(tab_idx) {
                     p.current_page = page_idx;
@@ -1119,6 +1876,7 @@ impl RustPadApp {
                 pdf_x,
                 pdf_y,
             } => {
+                self.ai_dock.focused_field = None;
                 self.active_tab = tab_idx;
                 if let Some(StudioTab::Pdf(p)) = self.tabs.get_mut(tab_idx) {
                     p.current_page = page_idx;
@@ -1133,7 +1891,7 @@ impl RustPadApp {
                                     pdf_x,
                                     pdf_y,
                                     "New PDF Text",
-                                    12.0,
+                                    12.5,
                                     RgbColor::INK_SLATE,
                                 );
                                 p.selected_text_id = Some(id);
@@ -1174,6 +1932,72 @@ impl RustPadApp {
                     }
                 }
             }
+            UiAction::AiSelectProvider(preset) => {
+                self.ai_dock.config.apply_preset(preset);
+                self.ai_dock.config.save_non_secret();
+                if preset == AiProviderPreset::OllamaLocal {
+                    self.ai_dock.discovered_models =
+                        discover_local_ollama_models(&self.ai_dock.config.endpoint_url);
+                    if let Some(first) = self.ai_dock.discovered_models.first() {
+                        self.ai_dock.config.model = first.clone();
+                    }
+                } else {
+                    self.ai_dock.discovered_models.clear();
+                }
+                self.ai_dock.is_error = false;
+                self.ai_dock.status_line = format!("Switched to {}", preset.label());
+            }
+            UiAction::AiSelectTask(task) => {
+                self.ai_dock.selected_task = task;
+                if task == AiTask::AddSections || task == AiTask::CustomPrompt {
+                    self.ai_dock.focused_field = Some(AiInputField::CustomPrompt);
+                }
+            }
+            UiAction::AiFocusField(field) => {
+                self.ai_dock.focused_field = field;
+            }
+            UiAction::AiDetectOllamaModels => {
+                let found = discover_local_ollama_models(&self.ai_dock.config.endpoint_url);
+                if found.is_empty() {
+                    self.ai_dock.is_error = true;
+                    self.ai_dock.status_line =
+                        "No local Ollama models detected on :11434 (run `ollama serve`).".into();
+                } else {
+                    let count = found.len();
+                    if let Some(first) = found.first() {
+                        self.ai_dock.config.model = first.clone();
+                    }
+                    self.ai_dock.discovered_models = found;
+                    self.ai_dock.is_error = false;
+                    self.ai_dock.status_line =
+                        format!("Detected {count} local model(s) on Ollama");
+                }
+            }
+            UiAction::AiPickDiscoveredModel(m) => {
+                self.ai_dock.config.model = m.clone();
+                self.ai_dock.config.save_non_secret();
+                self.ai_dock.status_line = format!("Selected local model '{m}'");
+            }
+            UiAction::AiRunCurrentTask => {
+                let task = self.ai_dock.selected_task;
+                self.start_ai_task(task);
+            }
+            UiAction::AiCancelTask => {
+                self.ai_dock.worker_rx = None;
+                self.ai_dock.started_at = None;
+                self.ai_dock.is_error = false;
+                self.ai_dock.status_line = "Cancelled in-flight AI request.".into();
+                self.status_toast = "Cancelled AI Agent request".into();
+            }
+            UiAction::AiApplyOutput { replace_current } => {
+                self.apply_ai_output_to_document(replace_current);
+            }
+            UiAction::AiCopyOutput => {
+                if !self.ai_dock.output_text.is_empty() {
+                    set_clipboard_text(&self.ai_dock.output_text);
+                    self.status_toast = "Copied AI Agent output to clipboard".into();
+                }
+            }
             UiAction::RestoreSnapshot(id) => {
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
                     match w.snapshots.restore(id) {
@@ -1182,6 +2006,7 @@ impl RustPadApp {
                             w.doc = restored;
                             w.cursor_block = 0;
                             w.cursor_char = 0;
+                            w.active_table_cell = None;
                             w.dirty = true;
                             self.modal = None;
                             self.status_toast = format!("Restored Snapshot #{id}");
@@ -1278,7 +2103,6 @@ impl RustPadApp {
                 if let Some(StudioTab::Pdf(p)) = self.tabs.get_mut(self.active_tab) {
                     if let Some(page) = p.pdf.pages.get_mut(p.current_page) {
                         let mapped: Vec<Vec<(f32, f32)>> = if strokes.is_empty() {
-                            // Stylish default cursive stroke if user clicks Confirm immediately
                             vec![vec![
                                 (page.width_pt - 210.0, 96.0),
                                 (page.width_pt - 180.0, 122.0),
@@ -1363,6 +2187,26 @@ impl RustPadApp {
         }
     }
 
+    fn apply_scrollbar_drag(
+        &mut self,
+        tab_idx: usize,
+        track_y: f32,
+        track_h: f32,
+        max_scroll: f32,
+        y: f32,
+    ) {
+        let ratio = ((y - track_y) / track_h.max(24.0)).clamp(0.0, 1.0);
+        match self.tabs.get_mut(tab_idx) {
+            Some(StudioTab::Word(w)) => {
+                w.scroll_y = (ratio * max_scroll).clamp(0.0, max_scroll.max(0.0));
+            }
+            Some(StudioTab::Pdf(p)) => {
+                p.scroll_y = (ratio * max_scroll).clamp(0.0, max_scroll.max(0.0));
+            }
+            _ => {}
+        }
+    }
+
     pub fn handle_mouse_down(&mut self, x: f32, y: f32) {
         self.mouse_x = x;
         self.mouse_y = y;
@@ -1381,7 +2225,6 @@ impl RustPadApp {
             }
         }
 
-        // Hit-test from top-most registered region backwards
         if let Some(hit) = self
             .hit_regions
             .iter()
@@ -1390,12 +2233,16 @@ impl RustPadApp {
             .cloned()
         {
             self.dispatch_ui_action(hit.action);
+        } else {
+            self.open_dropdown = None;
+            self.ai_dock.focused_field = None;
         }
     }
 
     pub fn handle_mouse_move(&mut self, x: f32, y: f32) -> bool {
         self.mouse_x = x;
         self.mouse_y = y;
+
         if let Some(ActiveModal::SignaturePad {
             strokes,
             is_drawing,
@@ -1405,87 +2252,203 @@ impl RustPadApp {
         {
             if *is_drawing && pad_rect.contains(x, y) {
                 if let Some(last) = strokes.last_mut() {
-                    let append = last
-                        .last()
-                        .map(|(lx, ly)| ((x - lx).powi(2) + (y - ly).powi(2)) >= 4.0)
-                        .unwrap_or(true);
-                    if append {
-                        last.push((x, y));
-                        return true;
-                    }
+                    last.push((x, y));
+                    return true;
                 }
             }
         }
-        false
+
+        match self.active_drag {
+            DragInteraction::WordOutlineSplitter { pane_left } => {
+                self.word_sidebar_w = ((x - pane_left) / self.ui_scale).clamp(168.0, 440.0);
+                self.desired_cursor = CursorShape::ResizeEW;
+                return true;
+            }
+            DragInteraction::AiDockSplitter { window_right } => {
+                self.ai_dock.width = ((window_right - x) / self.ui_scale).clamp(268.0, 500.0);
+                self.desired_cursor = CursorShape::ResizeEW;
+                return true;
+            }
+            DragInteraction::PdfLeftSplitter { pane_left } => {
+                self.pdf_left_w = ((x - pane_left) / self.ui_scale).clamp(140.0, 340.0);
+                self.desired_cursor = CursorShape::ResizeEW;
+                return true;
+            }
+            DragInteraction::PdfRightSplitter { pane_right } => {
+                self.pdf_right_w = ((pane_right - x) / self.ui_scale).clamp(176.0, 380.0);
+                self.desired_cursor = CursorShape::ResizeEW;
+                return true;
+            }
+            DragInteraction::WorkspaceSplit { work_x, work_w } => {
+                self.split_ratio = ((x - work_x) / work_w.max(200.0)).clamp(0.24, 0.76);
+                self.desired_cursor = CursorShape::ResizeEW;
+                return true;
+            }
+            DragInteraction::TableColumn {
+                tab_idx,
+                block_idx,
+                cols,
+                col_idx,
+                last_x,
+                table_px_w,
+            } => {
+                let dx = x - last_x;
+                if dx.abs() > 0.5 {
+                    let delta_ratio = dx / table_px_w.max(80.0);
+                    if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
+                        w.adjust_col_divider(block_idx, cols, col_idx, delta_ratio);
+                        w.dirty = true;
+                    }
+                    self.active_drag = DragInteraction::TableColumn {
+                        tab_idx,
+                        block_idx,
+                        cols,
+                        col_idx,
+                        last_x: x,
+                        table_px_w,
+                    };
+                }
+                self.desired_cursor = CursorShape::ResizeEW;
+                return true;
+            }
+            DragInteraction::Scrollbar {
+                tab_idx,
+                track_y,
+                track_h,
+                max_scroll,
+            } => {
+                self.apply_scrollbar_drag(tab_idx, track_y, track_h, max_scroll, y);
+                self.desired_cursor = CursorShape::Hand;
+                return true;
+            }
+            DragInteraction::None => {}
+        }
+
+        let new_hit_idx = self
+            .hit_regions
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, h)| h.rect.contains(x, y))
+            .map(|(i, _)| i);
+
+        let new_cursor = new_hit_idx
+            .and_then(|i| self.hit_regions.get(i))
+            .map(|h| h.cursor)
+            .unwrap_or(CursorShape::Arrow);
+
+        let changed = new_hit_idx != self.hovered_hit_idx || new_cursor != self.desired_cursor;
+        self.hovered_hit_idx = new_hit_idx;
+        self.desired_cursor = new_cursor;
+        changed || self.open_dropdown.is_some()
     }
 
     pub fn handle_mouse_up(&mut self) {
         if let Some(ActiveModal::SignaturePad { is_drawing, .. }) = &mut self.modal {
             *is_drawing = false;
         }
+        self.active_drag = DragInteraction::None;
     }
 
     pub fn handle_scroll(&mut self, delta_y: f32, ctrl: bool) {
         if ctrl {
-            self.adjust_zoom(if delta_y < 0.0 { 0.1 } else { -0.1 });
+            self.adjust_zoom(if delta_y < 0.0 { 0.08 } else { -0.08 });
             return;
+        }
+        if let Some(dock_r) = self.ai_dock_rect {
+            if self.ai_dock.open && dock_r.contains(self.mouse_x, self.mouse_y) {
+                self.ai_dock.output_scroll_y = (self.ai_dock.output_scroll_y + delta_y).clamp(0.0, 2400.0);
+                return;
+            }
         }
         match self.tabs.get_mut(self.active_tab) {
             Some(StudioTab::Word(w)) => {
-                w.scroll_y = (w.scroll_y + delta_y * 42.0).max(0.0);
+                w.scroll_y = (w.scroll_y + delta_y).clamp(0.0, w.max_scroll_y.max(0.0));
             }
             Some(StudioTab::Pdf(p)) => {
-                p.scroll_y = (p.scroll_y + delta_y * 42.0).max(0.0);
+                p.scroll_y = (p.scroll_y + delta_y).clamp(0.0, p.max_scroll_y.max(0.0));
             }
             _ => {}
         }
     }
 
     pub fn handle_key_down(&mut self, key: Key, mods: Modifiers) {
-        // Global keyboard shortcuts
+        // Global Escape closes dropdowns, modals, or AI input focus cleanly
+        if key == Key::Escape {
+            if self.open_dropdown.is_some() {
+                self.open_dropdown = None;
+                return;
+            }
+            if self.modal.is_some() {
+                self.modal = None;
+                return;
+            }
+            if self.ai_dock.focused_field.is_some() {
+                self.ai_dock.focused_field = None;
+                return;
+            }
+        }
+
+        // Clipboard Paste (`Ctrl+V`) works in Modals, AI Dock inputs, Table cells, and Prose!
+        if mods.ctrl && key == Key::Char('v') {
+            if let Some(clip) = get_clipboard_text() {
+                self.paste_text(&clip);
+            }
+            return;
+        }
+
+        // Global Ctrl shortcuts
         if mods.ctrl {
             match key {
-                Key::Char('k') | Key::Char('K') | Key::Char('p') | Key::Char('P') => {
+                Key::Char('k') => {
                     self.dispatch_ui_action(UiAction::OpenCommandPalette);
                     return;
                 }
-                Key::Char('n') | Key::Char('N') => {
+                Key::Char('j') => {
+                    self.execute_command(CommandId::ToggleAiDock);
+                    return;
+                }
+                Key::Char('n') => {
                     self.execute_command(CommandId::NewWordBlank);
                     return;
                 }
-                Key::Char('o') | Key::Char('O') => {
+                Key::Char('o') => {
                     self.execute_command(CommandId::OpenFile);
                     return;
                 }
-                Key::Char('s') | Key::Char('S') => {
+                Key::Char('s') => {
                     self.execute_command(CommandId::SaveFile);
                     return;
                 }
-                Key::Char('e') | Key::Char('E') => {
+                Key::Char('e') => {
                     self.execute_command(CommandId::ExportWordToPdf);
                     return;
                 }
-                Key::Char('f') | Key::Char('F') => {
+                Key::Char('f') => {
                     self.execute_command(CommandId::OpenFindReplace);
                     return;
                 }
-                Key::Char('b') | Key::Char('B') => {
-                    self.execute_command(CommandId::ToggleBold);
-                    return;
-                }
-                Key::Char('i') | Key::Char('I') => {
-                    self.execute_command(CommandId::ToggleItalic);
-                    return;
-                }
-                Key::Char('u') | Key::Char('U') => {
-                    self.execute_command(CommandId::ToggleUnderline);
+                Key::Char('m') => {
+                    self.execute_command(CommandId::PdfMergeFile);
                     return;
                 }
                 Key::Char('\\') => {
                     self.execute_command(CommandId::ToggleSplitView);
                     return;
                 }
-                Key::Char('=') | Key::Char('+') => {
+                Key::Char('[') => {
+                    self.execute_command(CommandId::ToggleLeftSidebar);
+                    return;
+                }
+                Key::Char('=') if mods.shift => {
+                    self.execute_command(CommandId::UiScaleUp);
+                    return;
+                }
+                Key::Char('-') if mods.shift => {
+                    self.execute_command(CommandId::UiScaleDown);
+                    return;
+                }
+                Key::Char('=') => {
                     self.execute_command(CommandId::ZoomIn);
                     return;
                 }
@@ -1497,24 +2460,32 @@ impl RustPadApp {
                     self.execute_command(CommandId::ZoomReset);
                     return;
                 }
-                Key::Char('z') | Key::Char('Z') => {
-                    if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
-                        if mods.shift {
-                            if w.history.redo(&mut w.doc) {
-                                self.status_toast = "Redo".into();
-                            }
-                        } else if w.history.undo(&mut w.doc) {
-                            self.status_toast = "Undo".into();
-                        }
-                    }
+                Key::Char('c') => {
+                    self.copy_selection_or_block(false);
                     return;
                 }
-                Key::Char('y') | Key::Char('Y') => {
-                    if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
-                        if w.history.redo(&mut w.doc) {
-                            self.status_toast = "Redo".into();
-                        }
-                    }
+                Key::Char('x') => {
+                    self.copy_selection_or_block(true);
+                    return;
+                }
+                Key::Char('b') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                    self.execute_command(CommandId::ToggleBold);
+                    return;
+                }
+                Key::Char('i') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                    self.execute_command(CommandId::ToggleItalic);
+                    return;
+                }
+                Key::Char('u') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                    self.execute_command(CommandId::ToggleUnderline);
+                    return;
+                }
+                Key::Char('z') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                    self.execute_command(CommandId::Undo);
+                    return;
+                }
+                Key::Char('y') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                    self.execute_command(CommandId::Redo);
                     return;
                 }
                 _ => {}
@@ -1522,125 +2493,335 @@ impl RustPadApp {
         }
 
         // Modal keyboard navigation
-        if self.modal.is_some() {
-            match key {
-                Key::Escape => {
-                    self.modal = None;
-                    return;
-                }
-                Key::Enter => {
-                    if matches!(self.modal, Some(ActiveModal::FindReplace { .. })) {
-                        self.dispatch_ui_action(UiAction::FindReplaceAll);
-                    } else {
+        if let Some(modal) = &mut self.modal {
+            match modal {
+                ActiveModal::CommandPalette { query, selected } => match key {
+                    Key::Backspace => {
+                        query.pop();
+                        *selected = 0;
+                    }
+                    Key::Down => {
+                        let count = filter_commands(query).len().max(1);
+                        *selected = (*selected + 1) % count;
+                    }
+                    Key::Up => {
+                        let count = filter_commands(query).len().max(1);
+                        *selected = if *selected == 0 {
+                            count - 1
+                        } else {
+                            *selected - 1
+                        };
+                    }
+                    Key::Enter => self.confirm_active_modal(),
+                    _ => {}
+                },
+                ActiveModal::FilePrompt { input_path, .. } => match key {
+                    Key::Backspace => {
+                        input_path.pop();
+                    }
+                    Key::Enter => self.confirm_active_modal(),
+                    _ => {}
+                },
+                ActiveModal::SplitRange { range_spec } => match key {
+                    Key::Backspace => {
+                        range_spec.pop();
+                    }
+                    Key::Enter => self.confirm_active_modal(),
+                    _ => {}
+                },
+                ActiveModal::Watermark { text } => match key {
+                    Key::Backspace => {
+                        text.pop();
+                    }
+                    Key::Enter => self.confirm_active_modal(),
+                    _ => {}
+                },
+                ActiveModal::FindReplace {
+                    find_text,
+                    replace_text,
+                    editing_replace,
+                    ..
+                } => match key {
+                    Key::Tab => *editing_replace = !*editing_replace,
+                    Key::Backspace => {
+                        if *editing_replace {
+                            replace_text.pop();
+                        } else {
+                            find_text.pop();
+                        }
+                    }
+                    Key::Enter => self.dispatch_ui_action(UiAction::FindReplaceAll),
+                    _ => {}
+                },
+                ActiveModal::SignaturePad { .. } => {
+                    if key == Key::Enter {
                         self.confirm_active_modal();
                     }
-                    return;
                 }
-                Key::Tab => {
-                    if let Some(ActiveModal::FindReplace {
-                        editing_replace, ..
-                    }) = &mut self.modal
-                    {
-                        *editing_replace = !*editing_replace;
-                    }
-                    return;
-                }
-                Key::Up => {
-                    if let Some(ActiveModal::CommandPalette { selected, .. }) = &mut self.modal {
-                        *selected = selected.saturating_sub(1);
-                    }
-                    return;
-                }
-                Key::Down => {
-                    if let Some(ActiveModal::CommandPalette { query, selected }) = &mut self.modal {
-                        let len = filter_commands(query).len();
-                        if len > 0 {
-                            *selected = (*selected + 1).min(len - 1);
+                ActiveModal::SnapshotsDrawer | ActiveModal::About => {}
+            }
+            return;
+        }
+
+        // AI Dock text field editing
+        if let Some(field) = self.ai_dock.focused_field {
+            match key {
+                Key::Backspace => {
+                    match field {
+                        AiInputField::EndpointUrl => {
+                            self.ai_dock.config.endpoint_url.pop();
+                        }
+                        AiInputField::Model => {
+                            self.ai_dock.config.model.pop();
+                        }
+                        AiInputField::ApiKey => {
+                            self.ai_dock.config.api_key.pop();
+                        }
+                        AiInputField::CustomPrompt => {
+                            self.ai_dock.custom_prompt.pop();
                         }
                     }
                     return;
                 }
-                Key::Backspace => {
-                    self.backspace_modal();
+                Key::Tab => {
+                    self.ai_dock.focused_field = Some(match field {
+                        AiInputField::EndpointUrl => AiInputField::Model,
+                        AiInputField::Model => AiInputField::ApiKey,
+                        AiInputField::ApiKey => AiInputField::CustomPrompt,
+                        AiInputField::CustomPrompt => AiInputField::EndpointUrl,
+                    });
+                    return;
+                }
+                Key::Enter => {
+                    let task = self.ai_dock.selected_task;
+                    self.start_ai_task(task);
                     return;
                 }
                 _ => return,
             }
         }
 
-        // Active document editing
+        // Active Tab Editor Navigation & Typing
         match self.tabs.get_mut(self.active_tab) {
-            Some(StudioTab::Word(w)) => Self::word_key_down(w, key),
-            Some(StudioTab::Pdf(p)) => Self::pdf_key_down(p, key),
+            Some(StudioTab::Word(w)) => match key {
+                Key::Backspace => word_backspace(w),
+                Key::Delete => word_delete(w),
+                Key::Enter => word_enter(w),
+                Key::Left => word_move_left(w),
+                Key::Right => word_move_right(w),
+                Key::Up => word_move_up(w),
+                Key::Down => word_move_down(w),
+                Key::Home => {
+                    if w.active_table_cell.is_some() {
+                        w.table_cursor_char = 0;
+                    } else {
+                        w.cursor_char = 0;
+                    }
+                }
+                Key::End => {
+                    if let Some((tb_idx, r, c)) = w.active_table_cell {
+                        if let Some(Block::Table(t)) = w.doc.blocks.get(tb_idx) {
+                            if let Some(cell) = t.rows.get(r).and_then(|row| row.get(c)) {
+                                w.table_cursor_char = cell.text.chars().count();
+                            }
+                        }
+                    } else if let Some(Block::Paragraph(p)) = w.doc.blocks.get(w.cursor_block) {
+                        w.cursor_char = p.plain_text().chars().count();
+                    }
+                }
+                Key::PageDown => {
+                    w.scroll_y = (w.scroll_y + 420.0).clamp(0.0, w.max_scroll_y.max(0.0));
+                }
+                Key::PageUp => {
+                    w.scroll_y = (w.scroll_y - 420.0).clamp(0.0, w.max_scroll_y.max(0.0));
+                }
+                Key::Tab => {
+                    if let Some((tb_idx, r, c)) = w.active_table_cell {
+                        if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                            if mods.shift {
+                                let (nr, nc) = if c > 0 {
+                                    (r, c - 1)
+                                } else if r > 0 {
+                                    (r - 1, t.cols.saturating_sub(1))
+                                } else {
+                                    (0, 0)
+                                };
+                                let len = t
+                                    .rows
+                                    .get(nr)
+                                    .and_then(|row| row.get(nc))
+                                    .map(|cell| cell.text.chars().count())
+                                    .unwrap_or(0);
+                                w.active_table_cell = Some((tb_idx, nr, nc));
+                                w.table_cursor_char = len;
+                            } else if c + 1 < t.cols {
+                                let nc = c + 1;
+                                let len = t
+                                    .rows
+                                    .get(r)
+                                    .and_then(|row| row.get(nc))
+                                    .map(|cell| cell.text.chars().count())
+                                    .unwrap_or(0);
+                                w.active_table_cell = Some((tb_idx, r, nc));
+                                w.table_cursor_char = len;
+                            } else if r + 1 < t.rows.len() {
+                                let nr = r + 1;
+                                let len = t
+                                    .rows
+                                    .get(nr)
+                                    .and_then(|row| row.first())
+                                    .map(|cell| cell.text.chars().count())
+                                    .unwrap_or(0);
+                                w.active_table_cell = Some((tb_idx, nr, 0));
+                                w.table_cursor_char = len;
+                            } else {
+                                // Tab at the very last cell appends a new row automatically!
+                                t.add_row();
+                                let nr = t.rows.len().saturating_sub(1);
+                                w.active_table_cell = Some((tb_idx, nr, 0));
+                                w.table_cursor_char = 0;
+                                w.dirty = true;
+                            }
+                            w.scroll_to_caret = true;
+                        }
+                    } else if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
+                        if mods.shift {
+                            p.indent_level = p.indent_level.saturating_sub(1);
+                        } else {
+                            p.indent_level = (p.indent_level + 1).min(5);
+                        }
+                        w.dirty = true;
+                    }
+                }
+                _ => {}
+            },
+            Some(StudioTab::Pdf(p)) => match key {
+                Key::Backspace => {
+                    if let Some(sel_id) = p.selected_text_id {
+                        if let Some(page) = p.pdf.pages.get_mut(p.current_page) {
+                            if let Some(item) = page.text_items.iter_mut().find(|i| i.id == sel_id)
+                            {
+                                item.text.pop();
+                                p.dirty = true;
+                            }
+                        }
+                    }
+                }
+                Key::PageDown | Key::Down if p.selected_text_id.is_none() => {
+                    if p.current_page + 1 < p.pdf.pages.len() {
+                        p.current_page += 1;
+                    }
+                }
+                Key::PageUp | Key::Up if p.selected_text_id.is_none() => {
+                    p.current_page = p.current_page.saturating_sub(1);
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
 
-    fn backspace_modal(&mut self) {
-        match &mut self.modal {
-            Some(ActiveModal::CommandPalette { query, selected }) => {
-                query.pop();
-                *selected = 0;
-            }
-            Some(ActiveModal::FilePrompt { input_path, .. }) => {
-                input_path.pop();
-            }
-            Some(ActiveModal::FindReplace {
-                find_text,
-                replace_text,
-                editing_replace,
-                matches_count,
-            }) => {
-                if *editing_replace {
-                    replace_text.pop();
-                } else {
-                    find_text.pop();
-                    if let Some(StudioTab::Word(w)) = self.tabs.get(self.active_tab) {
-                        *matches_count = w.doc.find_occurrences(find_text).len();
+    fn copy_selection_or_block(&mut self, cut: bool) {
+        if self.ai_dock.open && !self.ai_dock.output_text.is_empty() && self.ai_dock.focused_field.is_none() {
+            // If on HomeHub, copy AI output; in Word/PDF, copy active block unless empty
+        }
+        match self.tabs.get_mut(self.active_tab) {
+            Some(StudioTab::Word(w)) => {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                        if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
+                            set_clipboard_text(&cell.text);
+                            if cut {
+                                w.history.record(&w.doc);
+                                cell.text.clear();
+                                w.table_cursor_char = 0;
+                                w.dirty = true;
+                                self.status_toast = "Cut table cell to clipboard".into();
+                            } else {
+                                self.status_toast = "Copied table cell to clipboard".into();
+                            }
+                            return;
+                        }
+                    }
+                }
+                if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
+                    let txt = p.plain_text();
+                    set_clipboard_text(&txt);
+                    if cut {
+                        w.history.record(&w.doc);
+                        let st = p.spans.first().map(|s| s.style.clone()).unwrap_or_default();
+                        p.spans = vec![TextSpan::styled("", st)];
+                        w.cursor_char = 0;
+                        w.dirty = true;
+                        self.status_toast = "Cut paragraph to clipboard".into();
+                    } else {
+                        self.status_toast = "Copied paragraph to clipboard".into();
                     }
                 }
             }
-            Some(ActiveModal::SplitRange { range_spec }) => {
-                range_spec.pop();
-            }
-            Some(ActiveModal::Watermark { text }) => {
-                text.pop();
+            Some(StudioTab::Pdf(p)) => {
+                if let Some(sel_id) = p.selected_text_id {
+                    if let Some(page) = p.pdf.pages.get(p.current_page) {
+                        if let Some(item) = page.text_items.iter().find(|i| i.id == sel_id) {
+                            set_clipboard_text(&item.text);
+                            self.status_toast = "Copied PDF text block to clipboard".into();
+                            return;
+                        }
+                    }
+                }
+                if let Some(page) = p.pdf.pages.get(p.current_page) {
+                    let joined: Vec<String> =
+                        page.text_items.iter().map(|i| i.text.clone()).collect();
+                    set_clipboard_text(&joined.join("\n"));
+                    self.status_toast = "Copied PDF page text to clipboard".into();
+                }
             }
             _ => {}
         }
     }
 
-    pub fn handle_text_input(&mut self, ch: char) {
-        if ch.is_control() {
+    pub fn paste_text(&mut self, raw: &str) {
+        let cleaned = raw.replace("\r\n", "\n").replace('\r', "\n");
+        if cleaned.is_empty() {
             return;
         }
+
         if let Some(modal) = &mut self.modal {
+            let single = cleaned.lines().next().unwrap_or("").trim();
             match modal {
                 ActiveModal::CommandPalette { query, selected } => {
-                    query.push(ch);
+                    query.push_str(single);
                     *selected = 0;
                 }
-                ActiveModal::FilePrompt { input_path, .. } => {
-                    input_path.push(ch);
-                }
+                ActiveModal::FilePrompt { input_path, .. } => input_path.push_str(single),
+                ActiveModal::SplitRange { range_spec } => range_spec.push_str(single),
+                ActiveModal::Watermark { text } => text.push_str(single),
                 ActiveModal::FindReplace {
                     find_text,
                     replace_text,
                     editing_replace,
-                    matches_count,
+                    ..
                 } => {
                     if *editing_replace {
-                        replace_text.push(ch);
+                        replace_text.push_str(single);
                     } else {
-                        find_text.push(ch);
-                        if let Some(StudioTab::Word(w)) = self.tabs.get(self.active_tab) {
-                            *matches_count = w.doc.find_occurrences(find_text).len();
-                        }
+                        find_text.push_str(single);
                     }
                 }
-                ActiveModal::SplitRange { range_spec } => range_spec.push(ch),
-                ActiveModal::Watermark { text } => text.push(ch),
                 _ => {}
+            }
+            return;
+        }
+
+        if let Some(field) = self.ai_dock.focused_field {
+            let single = cleaned.lines().next().unwrap_or("").trim();
+            match field {
+                AiInputField::EndpointUrl => self.ai_dock.config.endpoint_url.push_str(single),
+                AiInputField::Model => self.ai_dock.config.model.push_str(single),
+                AiInputField::ApiKey => self.ai_dock.config.api_key.push_str(single),
+                AiInputField::CustomPrompt => {
+                    self.ai_dock.custom_prompt.push_str(&cleaned.replace('\n', " "));
+                }
             }
             return;
         }
@@ -1649,20 +2830,98 @@ impl RustPadApp {
             Some(StudioTab::Word(w)) => {
                 w.history.record(&w.doc);
                 w.dirty = true;
-                if let Some((b_idx, r, c)) = w.active_table_cell {
-                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(b_idx) {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
                         if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
-                            cell.text.push(ch);
+                            let flat = cleaned.replace('\n', " ");
+                            insert_str_at_char(&mut cell.text, w.table_cursor_char, &flat);
+                            w.table_cursor_char += flat.chars().count();
+                            self.status_toast = "Pasted into table cell".into();
                             return;
                         }
                     }
                 }
-                w.doc.ensure_non_empty();
-                let b_idx = w.cursor_block.min(w.doc.blocks.len() - 1);
-                if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(b_idx) {
-                    insert_char_in_paragraph(p, w.cursor_char, ch);
-                    w.cursor_char += 1;
+
+                let lines: Vec<&str> = cleaned.split('\n').collect();
+                for (li, line) in lines.iter().enumerate() {
+                    if li > 0 {
+                        word_enter(w);
+                    }
+                    for ch in line.chars() {
+                        word_insert_char_no_record(w, ch);
+                    }
                 }
+                w.scroll_to_caret = true;
+                self.status_toast = "Pasted from clipboard".into();
+            }
+            Some(StudioTab::Pdf(p)) => {
+                if let Some(sel_id) = p.selected_text_id {
+                    if let Some(page) = p.pdf.pages.get_mut(p.current_page) {
+                        if let Some(item) = page.text_items.iter_mut().find(|i| i.id == sel_id) {
+                            item.text.push_str(&cleaned.replace('\n', " "));
+                            p.dirty = true;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn handle_text_input(&mut self, ch: char) {
+        if let Some(modal) = &mut self.modal {
+            match modal {
+                ActiveModal::CommandPalette { query, selected } => {
+                    query.push(ch);
+                    *selected = 0;
+                }
+                ActiveModal::FilePrompt { input_path, .. } => input_path.push(ch),
+                ActiveModal::SplitRange { range_spec } => range_spec.push(ch),
+                ActiveModal::Watermark { text } => text.push(ch),
+                ActiveModal::FindReplace {
+                    find_text,
+                    replace_text,
+                    editing_replace,
+                    ..
+                } => {
+                    if *editing_replace {
+                        replace_text.push(ch);
+                    } else {
+                        find_text.push(ch);
+                    }
+                }
+                ActiveModal::SignaturePad { .. }
+                | ActiveModal::SnapshotsDrawer
+                | ActiveModal::About => {}
+            }
+            return;
+        }
+
+        if let Some(field) = self.ai_dock.focused_field {
+            match field {
+                AiInputField::EndpointUrl => self.ai_dock.config.endpoint_url.push(ch),
+                AiInputField::Model => self.ai_dock.config.model.push(ch),
+                AiInputField::ApiKey => self.ai_dock.config.api_key.push(ch),
+                AiInputField::CustomPrompt => self.ai_dock.custom_prompt.push(ch),
+            }
+            return;
+        }
+
+        match self.tabs.get_mut(self.active_tab) {
+            Some(StudioTab::Word(w)) => {
+                if let Some((tb_idx, r, c)) = w.active_table_cell {
+                    if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                        if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
+                            let pos = w.table_cursor_char.min(cell.text.chars().count());
+                            let byte_idx = char_to_byte(&cell.text, pos);
+                            cell.text.insert(byte_idx, ch);
+                            w.table_cursor_char = pos + 1;
+                            w.dirty = true;
+                            return;
+                        }
+                    }
+                }
+                word_insert_char(w, ch);
             }
             Some(StudioTab::Pdf(p)) => {
                 if let Some(sel_id) = p.selected_text_id {
@@ -1677,244 +2936,406 @@ impl RustPadApp {
             _ => {}
         }
     }
+}
 
-    fn word_key_down(w: &mut WordTabState, key: Key) {
-        if let Some((b_idx, r, c)) = w.active_table_cell {
-            if let Some(Block::Table(t)) = w.doc.blocks.get_mut(b_idx) {
-                match key {
-                    Key::Backspace => {
-                        if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
-                            cell.text.pop();
-                            w.dirty = true;
-                        }
-                    }
-                    Key::Tab => {
-                        let next_c = (c + 1) % t.cols.max(1);
-                        let next_r = if next_c == 0 {
-                            (r + 1) % t.rows.len().max(1)
-                        } else {
-                            r
-                        };
-                        w.active_table_cell = Some((b_idx, next_r, next_c));
-                    }
-                    Key::Escape => w.active_table_cell = None,
-                    _ => {}
+fn insert_str_at_char(s: &mut String, char_idx: usize, ins: &str) {
+    let pos = char_idx.min(s.chars().count());
+    let byte_idx = char_to_byte(s, pos);
+    s.insert_str(byte_idx, ins);
+}
+
+fn word_insert_char(w: &mut WordTabState, ch: char) {
+    w.doc.ensure_non_empty();
+    let idx = w.cursor_block.min(w.doc.blocks.len() - 1);
+    w.cursor_block = idx;
+    if !matches!(w.doc.blocks.get(idx), Some(Block::Paragraph(_))) {
+        w.doc.blocks.insert(
+            idx + 1,
+            Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "")),
+        );
+        w.cursor_block = idx + 1;
+        w.cursor_char = 0;
+    }
+    word_insert_char_no_record(w, ch);
+    w.dirty = true;
+    w.scroll_to_caret = true;
+}
+
+fn word_insert_char_no_record(w: &mut WordTabState, ch: char) {
+    if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
+        if p.spans.is_empty() {
+            p.spans.push(TextSpan::plain(""));
+        }
+        let mut rem = w.cursor_char;
+        let span_count = p.spans.len();
+        for (si, span) in p.spans.iter_mut().enumerate() {
+            let slen = span.text.chars().count();
+            if rem <= slen || si + 1 == span_count {
+                let target_char = rem.min(slen);
+                let byte_idx = char_to_byte(&span.text, target_char);
+                span.text.insert(byte_idx, ch);
+                w.cursor_char += 1;
+                return;
+            }
+            rem -= slen;
+        }
+    }
+}
+
+fn word_backspace(w: &mut WordTabState) {
+    if let Some((tb_idx, r, c)) = w.active_table_cell {
+        if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+            if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
+                let len = cell.text.chars().count();
+                let cur = w.table_cursor_char.min(len);
+                if cur > 0 {
+                    let b0 = char_to_byte(&cell.text, cur - 1);
+                    let b1 = char_to_byte(&cell.text, cur);
+                    cell.text.replace_range(b0..b1, "");
+                    w.table_cursor_char = cur - 1;
+                    w.dirty = true;
                 }
                 return;
             }
         }
+    }
 
-        w.doc.ensure_non_empty();
-        let b_idx = w.cursor_block.min(w.doc.blocks.len() - 1);
-        w.cursor_block = b_idx;
-
-        match key {
-            Key::Left => {
-                if w.cursor_char > 0 {
+    if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
+        if w.cursor_char > 0 {
+            let target = w.cursor_char - 1;
+            let mut rem = target;
+            for span in &mut p.spans {
+                let slen = span.text.chars().count();
+                if rem < slen {
+                    let b0 = char_to_byte(&span.text, rem);
+                    let b1 = char_to_byte(&span.text, rem + 1);
+                    span.text.replace_range(b0..b1, "");
                     w.cursor_char -= 1;
-                } else if b_idx > 0 {
-                    w.cursor_block = b_idx - 1;
-                    w.cursor_char = block_char_len(&w.doc.blocks[w.cursor_block]);
+                    w.dirty = true;
+                    w.scroll_to_caret = true;
+                    return;
                 }
+                rem -= slen;
             }
-            Key::Right => {
-                let len = block_char_len(&w.doc.blocks[b_idx]);
-                if w.cursor_char < len {
-                    w.cursor_char += 1;
-                } else if b_idx + 1 < w.doc.blocks.len() {
-                    w.cursor_block = b_idx + 1;
-                    w.cursor_char = 0;
-                }
-            }
-            Key::Up => {
-                if b_idx > 0 {
-                    w.cursor_block = b_idx - 1;
-                    let len = block_char_len(&w.doc.blocks[w.cursor_block]);
-                    w.cursor_char = w.cursor_char.min(len);
-                }
-            }
-            Key::Down => {
-                if b_idx + 1 < w.doc.blocks.len() {
-                    w.cursor_block = b_idx + 1;
-                    let len = block_char_len(&w.doc.blocks[w.cursor_block]);
-                    w.cursor_char = w.cursor_char.min(len);
-                }
-            }
-            Key::Home => w.cursor_char = 0,
-            Key::End => w.cursor_char = block_char_len(&w.doc.blocks[b_idx]),
-            Key::PageUp => w.scroll_y = (w.scroll_y - 360.0).max(0.0),
-            Key::PageDown => w.scroll_y += 360.0,
-            Key::Backspace => {
-                w.history.record(&w.doc);
-                if w.cursor_char > 0 {
-                    if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(b_idx) {
-                        remove_char_in_paragraph(p, w.cursor_char - 1);
-                        w.cursor_char -= 1;
-                        w.dirty = true;
-                    }
-                } else if b_idx > 0 {
-                    let cur_text = match &w.doc.blocks[b_idx] {
-                        Block::Paragraph(p) => Some(p.plain_text()),
-                        _ => None,
-                    };
-                    if let Some(tail) = cur_text {
-                        if let Some(Block::Paragraph(prev_p)) =
-                            w.doc.blocks.get_mut(b_idx - 1)
-                        {
-                            let join_col = prev_p.plain_text().chars().count();
-                            if let Some(last) = prev_p.spans.last_mut() {
-                                last.text.push_str(&tail);
+        } else if p.list_kind != ListKind::None {
+            p.list_kind = ListKind::None;
+            w.dirty = true;
+            return;
+        } else if w.cursor_block > 0 {
+            // Merge paragraph cleanly into previous block (even if previous paragraph had 0 spans!)
+            let cur_block = w.doc.blocks.remove(w.cursor_block);
+            w.cursor_block -= 1;
+            if let Block::Paragraph(cur_p) = cur_block {
+                let cur_text = cur_p.plain_text();
+                match w.doc.blocks.get_mut(w.cursor_block) {
+                    Some(Block::Paragraph(prev_p)) => {
+                        let prev_len = prev_p.plain_text().chars().count();
+                        if prev_p.spans.is_empty() {
+                            if cur_p.spans.is_empty() {
+                                prev_p.spans.push(TextSpan::plain(cur_text));
+                            } else {
+                                prev_p.spans = cur_p.spans;
                             }
-                            w.doc.blocks.remove(b_idx);
-                            w.cursor_block = b_idx - 1;
-                            w.cursor_char = join_col;
-                            w.dirty = true;
+                        } else if !cur_text.is_empty() {
+                            if let Some(last) = prev_p.spans.last_mut() {
+                                last.text.push_str(&cur_text);
+                            }
                         }
+                        w.cursor_char = prev_len;
+                    }
+                    Some(Block::PageBreak | Block::HorizontalRule) => {
+                        w.doc.blocks[w.cursor_block] = Block::Paragraph(cur_p);
+                        w.cursor_char = 0;
+                    }
+                    _ => {
+                        w.doc
+                            .blocks
+                            .insert(w.cursor_block + 1, Block::Paragraph(cur_p));
                     }
                 }
             }
-            Key::Delete => {
-                w.history.record(&w.doc);
-                let len = block_char_len(&w.doc.blocks[b_idx]);
-                if w.cursor_char < len {
-                    if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(b_idx) {
-                        remove_char_in_paragraph(p, w.cursor_char);
-                        w.dirty = true;
-                    }
-                }
-            }
-            Key::Enter => {
-                w.history.record(&w.doc);
-                if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(b_idx) {
-                    let full = p.plain_text();
-                    let chars: Vec<char> = full.chars().collect();
-                    let split = w.cursor_char.min(chars.len());
-                    let left: String = chars[..split].iter().collect();
-                    let right: String = chars[split..].iter().collect();
-                    let base_style = p.spans.first().map(|s| s.style.clone()).unwrap_or_default();
-                    let next_list = match p.list_kind {
-                        ListKind::Bullet => ListKind::Bullet,
-                        ListKind::Checklist(_) => ListKind::Checklist(false),
-                        ListKind::Numbered(n) => ListKind::Numbered(n + 1),
-                        ListKind::None => ListKind::None,
-                    };
-                    p.spans = vec![doc_model::TextSpan::styled(left, base_style.clone())];
-                    let mut new_para = Paragraph::new(ParagraphStyle::Normal, right);
-                    new_para.list_kind = next_list;
-                    if let Some(first_span) = new_para.spans.first_mut() {
-                        first_span.style.font_family = base_style.font_family;
-                    }
-                    w.doc.blocks.insert(b_idx + 1, Block::Paragraph(new_para));
-                    w.cursor_block = b_idx + 1;
-                    w.cursor_char = 0;
+            w.dirty = true;
+            w.scroll_to_caret = true;
+        }
+    }
+}
+
+fn word_delete(w: &mut WordTabState) {
+    if let Some((tb_idx, r, c)) = w.active_table_cell {
+        if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+            if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
+                let len = cell.text.chars().count();
+                let cur = w.table_cursor_char.min(len);
+                if cur < len {
+                    let b0 = char_to_byte(&cell.text, cur);
+                    let b1 = char_to_byte(&cell.text, cur + 1);
+                    cell.text.replace_range(b0..b1, "");
                     w.dirty = true;
                 }
+                return;
             }
-            _ => {}
         }
     }
 
-    fn pdf_key_down(p: &mut PdfTabState, key: Key) {
-        match key {
-            Key::Backspace => {
-                if let Some(sel_id) = p.selected_text_id {
-                    if let Some(page) = p.pdf.pages.get_mut(p.current_page) {
-                        if let Some(item) = page.text_items.iter_mut().find(|i| i.id == sel_id) {
-                            item.text.pop();
-                            p.dirty = true;
-                        }
+    let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) else {
+        return;
+    };
+    let len = p.plain_text().chars().count();
+    if w.cursor_char < len {
+        let mut rem = w.cursor_char;
+        for span in &mut p.spans {
+            let slen = span.text.chars().count();
+            if rem < slen {
+                let b0 = char_to_byte(&span.text, rem);
+                let b1 = char_to_byte(&span.text, rem + 1);
+                span.text.replace_range(b0..b1, "");
+                w.dirty = true;
+                return;
+            }
+            rem -= slen;
+        }
+    } else if w.cursor_block + 1 < w.doc.blocks.len() {
+        if matches!(w.doc.blocks.get(w.cursor_block + 1), Some(Block::Paragraph(_))) {
+            if let Block::Paragraph(next_p) = w.doc.blocks.remove(w.cursor_block + 1) {
+                let next_text = next_p.plain_text();
+                if let Some(Block::Paragraph(cur_p)) = w.doc.blocks.get_mut(w.cursor_block) {
+                    if cur_p.spans.is_empty() {
+                        cur_p.spans.push(TextSpan::plain(next_text));
+                    } else if let Some(last) = cur_p.spans.last_mut() {
+                        last.text.push_str(&next_text);
                     }
                 }
+                w.dirty = true;
             }
-            Key::Escape => {
-                p.selected_text_id = None;
-                p.tool = PdfTool::SelectEdit;
+        }
+    }
+}
+
+fn word_enter(w: &mut WordTabState) {
+    if w.active_table_cell.is_some() {
+        // Inside a table cell, Enter moves cleanly to the cell directly below (or adds a row!)
+        if let Some((tb_idx, r, c)) = w.active_table_cell {
+            if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                if r + 1 < t.rows.len() {
+                    let nr = r + 1;
+                    let len = t.rows[nr][c].text.chars().count();
+                    w.active_table_cell = Some((tb_idx, nr, c));
+                    w.table_cursor_char = len;
+                } else {
+                    t.add_row();
+                    let nr = t.rows.len().saturating_sub(1);
+                    w.active_table_cell = Some((tb_idx, nr, c));
+                    w.table_cursor_char = 0;
+                    w.dirty = true;
+                }
+                w.scroll_to_caret = true;
+                return;
             }
-            Key::PageDown | Key::Down if p.selected_text_id.is_none() => {
-                if p.current_page + 1 < p.pdf.pages.len() {
-                    p.current_page += 1;
+        }
+    }
+
+    w.history.record(&w.doc);
+    let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+
+    // Pressing Enter on an empty bullet/checklist item exits the list cleanly
+    if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
+        if p.list_kind != ListKind::None && p.plain_text().trim().is_empty() {
+            p.list_kind = ListKind::None;
+            w.dirty = true;
+            return;
+        }
+    }
+
+    let new_para = if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
+        let full = p.plain_text();
+        let split_char = w.cursor_char.min(full.chars().count());
+        let b = char_to_byte(&full, split_char);
+        let left = full[..b].to_string();
+        let right = full[b..].to_string();
+        let inherited_font = p
+            .spans
+            .first()
+            .map(|s| s.style.font_family)
+            .unwrap_or(FontFamily::Sans);
+        let st = p
+            .spans
+            .first()
+            .map(|s| s.style.clone())
+            .unwrap_or_default();
+        p.spans = vec![TextSpan::styled(left, st)];
+
+        let next_list = match p.list_kind {
+            ListKind::Bullet => ListKind::Bullet,
+            ListKind::Checklist(_) => ListKind::Checklist(false),
+            ListKind::Numbered(n) => ListKind::Numbered(n + 1),
+            ListKind::None => ListKind::None,
+        };
+        let mut np = Paragraph::new(ParagraphStyle::Normal, right);
+        np.list_kind = next_list;
+        np.indent_level = p.indent_level;
+        for s in &mut np.spans {
+            s.style.font_family = inherited_font;
+        }
+        np
+    } else {
+        Paragraph::new(ParagraphStyle::Normal, "")
+    };
+
+    let insert_at = (idx + 1).min(w.doc.blocks.len());
+    w.doc.blocks.insert(insert_at, Block::Paragraph(new_para));
+    w.cursor_block = insert_at;
+    w.cursor_char = 0;
+    w.dirty = true;
+    w.scroll_to_caret = true;
+}
+
+fn word_move_left(w: &mut WordTabState) {
+    if let Some((tb_idx, r, c)) = w.active_table_cell {
+        if w.table_cursor_char > 0 {
+            w.table_cursor_char -= 1;
+        } else if c > 0 {
+            if let Some(Block::Table(t)) = w.doc.blocks.get(tb_idx) {
+                let len = t.rows[r][c - 1].text.chars().count();
+                w.active_table_cell = Some((tb_idx, r, c - 1));
+                w.table_cursor_char = len;
+            }
+        }
+        return;
+    }
+    if w.cursor_char > 0 {
+        w.cursor_char -= 1;
+    } else if w.cursor_block > 0 {
+        w.cursor_block -= 1;
+        w.cursor_char = match w.doc.blocks.get(w.cursor_block) {
+            Some(Block::Paragraph(p)) => p.plain_text().chars().count(),
+            _ => 0,
+        };
+        w.scroll_to_caret = true;
+    }
+}
+
+fn word_move_right(w: &mut WordTabState) {
+    if let Some((tb_idx, r, c)) = w.active_table_cell {
+        if let Some(Block::Table(t)) = w.doc.blocks.get(tb_idx) {
+            let len = t.rows[r][c].text.chars().count();
+            if w.table_cursor_char < len {
+                w.table_cursor_char += 1;
+            } else if c + 1 < t.cols {
+                w.active_table_cell = Some((tb_idx, r, c + 1));
+                w.table_cursor_char = 0;
+            }
+        }
+        return;
+    }
+    let len = match w.doc.blocks.get(w.cursor_block) {
+        Some(Block::Paragraph(p)) => p.plain_text().chars().count(),
+        _ => 0,
+    };
+    if w.cursor_char < len {
+        w.cursor_char += 1;
+    } else if w.cursor_block + 1 < w.doc.blocks.len() {
+        w.cursor_block += 1;
+        w.cursor_char = 0;
+        w.scroll_to_caret = true;
+    }
+}
+
+fn word_move_up(w: &mut WordTabState) {
+    if let Some((tb_idx, r, c)) = w.active_table_cell {
+        if r > 0 {
+            if let Some(Block::Table(t)) = w.doc.blocks.get(tb_idx) {
+                let len = t.rows[r - 1][c].text.chars().count();
+                w.active_table_cell = Some((tb_idx, r - 1, c));
+                w.table_cursor_char = w.table_cursor_char.min(len);
+                w.scroll_to_caret = true;
+            }
+        } else {
+            w.active_table_cell = None;
+            if tb_idx > 0 {
+                w.cursor_block = tb_idx - 1;
+            }
+        }
+        return;
+    }
+    if w.cursor_block > 0 {
+        w.cursor_block -= 1;
+        if let Some(Block::Paragraph(p)) = w.doc.blocks.get(w.cursor_block) {
+            w.cursor_char = w.cursor_char.min(p.plain_text().chars().count());
+        } else {
+            w.cursor_char = 0;
+        }
+        w.scroll_to_caret = true;
+    }
+}
+
+fn word_move_down(w: &mut WordTabState) {
+    if let Some((tb_idx, r, c)) = w.active_table_cell {
+        if let Some(Block::Table(t)) = w.doc.blocks.get(tb_idx) {
+            if r + 1 < t.rows.len() {
+                let len = t.rows[r + 1][c].text.chars().count();
+                w.active_table_cell = Some((tb_idx, r + 1, c));
+                w.table_cursor_char = w.table_cursor_char.min(len);
+                w.scroll_to_caret = true;
+            } else {
+                w.active_table_cell = None;
+                if tb_idx + 1 < w.doc.blocks.len() {
+                    w.cursor_block = tb_idx + 1;
+                    w.cursor_char = 0;
                 }
             }
-            Key::PageUp | Key::Up if p.selected_text_id.is_none() => {
-                p.current_page = p.current_page.saturating_sub(1);
-            }
-            _ => {}
         }
+        return;
     }
-}
-
-fn block_char_len(b: &Block) -> usize {
-    match b {
-        Block::Paragraph(p) => p.plain_text().chars().count(),
-        _ => 0,
-    }
-}
-
-fn insert_char_in_paragraph(p: &mut Paragraph, char_idx: usize, ch: char) {
-    p.normalize_spans();
-    let mut rem = char_idx;
-    for span in &mut p.spans {
-        let count = span.text.chars().count();
-        if rem <= count {
-            let byte_idx = span
-                .text
-                .char_indices()
-                .nth(rem)
-                .map(|(i, _)| i)
-                .unwrap_or(span.text.len());
-            span.text.insert(byte_idx, ch);
-            return;
+    if w.cursor_block + 1 < w.doc.blocks.len() {
+        w.cursor_block += 1;
+        if let Some(Block::Paragraph(p)) = w.doc.blocks.get(w.cursor_block) {
+            w.cursor_char = w.cursor_char.min(p.plain_text().chars().count());
+        } else {
+            w.cursor_char = 0;
         }
-        rem -= count;
-    }
-    if let Some(last) = p.spans.last_mut() {
-        last.text.push(ch);
+        w.scroll_to_caret = true;
     }
 }
 
-fn remove_char_in_paragraph(p: &mut Paragraph, char_idx: usize) {
-    p.normalize_spans();
-    let mut rem = char_idx;
-    for span in &mut p.spans {
-        let count = span.text.chars().count();
-        if rem < count {
-            if let Some((byte_idx, _)) = span.text.char_indices().nth(rem) {
-                span.text.remove(byte_idx);
-            }
-            p.normalize_spans();
-            return;
-        }
-        rem -= count;
-    }
+fn char_to_byte(s: &str, char_idx: usize) -> usize {
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(b, _)| b)
+        .unwrap_or(s.len())
 }
 
-fn sanitize_filename(name: &str) -> String {
-    let cleaned: String = name
+fn sanitize_filename(title: &str) -> String {
+    let cleaned: String = title
         .chars()
         .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
                 c
             } else {
                 '_'
             }
         })
         .collect();
-    if cleaned.trim_matches('_').is_empty() {
+    let trimmed = cleaned.trim_matches('_');
+    if trimmed.is_empty() {
         "Document".into()
     } else {
-        cleaned.trim_matches('_').to_string()
+        trimmed.into()
     }
 }
 
 fn discover_workspace_documents() -> Vec<PathBuf> {
     let mut found = Vec::new();
-    for dir in [".", "examples"] {
+    for dir in [".", "examples", "samples"] {
         if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
-                    let low = ext.to_ascii_lowercase();
-                    if matches!(low.as_str(), "docx" | "pdf") {
+            for ent in entries.flatten() {
+                let p = ent.path();
+                if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                    if matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "docx" | "pdf" | "md"
+                    ) && p.file_name().and_then(|n| n.to_str()) != Some("README.md")
+                        && p.file_name().and_then(|n| n.to_str()) != Some("CHANGELOG.md")
+                    {
                         found.push(p);
                     }
                 }
@@ -1924,4 +3345,50 @@ fn discover_workspace_documents() -> Vec<PathBuf> {
     found.sort();
     found.truncate(8);
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_backspace_into_empty_paragraph_preserves_text() {
+        let mut doc = Document::blank();
+        doc.blocks = vec![
+            Block::Paragraph(Paragraph {
+                style: ParagraphStyle::Normal,
+                alignment: Alignment::Left,
+                list_kind: ListKind::None,
+                indent_level: 0,
+                line_spacing: 1.4,
+                spans: Vec::new(), // Empty spans edge case (Issue #5)
+            }),
+            Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "Preserved prose")),
+        ];
+        let mut w = WordTabState::from_doc(doc, None);
+        w.cursor_block = 1;
+        w.cursor_char = 0;
+        word_backspace(&mut w);
+        assert_eq!(w.doc.blocks.len(), 1);
+        assert_eq!(w.doc.to_plain_text().trim(), "Preserved prose");
+    }
+
+    #[test]
+    fn test_table_tab_appends_row_and_column_resize() {
+        let mut app = RustPadApp::new();
+        app.execute_command(CommandId::InsertTable);
+        if let Some(StudioTab::Word(w)) = app.tabs.get_mut(app.active_tab) {
+            let tb_idx = w.cursor_block;
+            w.active_table_cell = Some((tb_idx, 2, 2)); // Last cell of 3x3
+            w.adjust_col_divider(tb_idx, 3, 0, 0.12);
+            let weights = w.normalized_col_weights(tb_idx, 3);
+            assert!(weights[0] > 0.40);
+        }
+        app.handle_key_down(Key::Tab, Modifiers::default());
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            if let Some(Block::Table(t)) = w.doc.blocks.get(w.cursor_block) {
+                assert_eq!(t.rows.len(), 4);
+            }
+        }
+    }
 }

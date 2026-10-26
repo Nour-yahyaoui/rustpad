@@ -26,8 +26,11 @@ impl RgbColor {
     pub const SKY_HIGHLIGHT: Self = Self::new(191, 219, 254);
     pub const ROSE_HIGHLIGHT: Self = Self::new(254, 205, 211);
     pub const MUTED_GRAY: Self = Self::new(100, 116, 139);
-    pub const TABLE_BORDER: Self = Self::new(203, 213, 225);
-    pub const TABLE_HEADER_BG: Self = Self::new(241, 245, 249);
+    pub const TABLE_BORDER: Self = Self::new(210, 205, 196);
+    pub const TABLE_HEADER_BG: Self = Self::new(244, 241, 235);
+    pub const TABLE_TINT_CREAM: Self = Self::new(252, 246, 229);
+    pub const TABLE_TINT_SAGE: Self = Self::new(234, 243, 238);
+    pub const TABLE_TINT_BLUE: Self = Self::new(233, 239, 246);
 
     pub fn to_hex(self) -> String {
         format!("{:02X}{:02X}{:02X}", self.r, self.g, self.b)
@@ -102,7 +105,7 @@ impl Default for SpanStyle {
     fn default() -> Self {
         Self {
             font_family: FontFamily::Sans,
-            font_size_pt: 11.5,
+            font_size_pt: 12.5,
             bold: false,
             italic: false,
             underline: false,
@@ -161,12 +164,12 @@ impl ParagraphStyle {
 
     pub fn default_font_size(self) -> f32 {
         match self {
-            Self::Title => 26.0,
-            Self::Subtitle => 15.0,
-            Self::Heading1 => 20.0,
-            Self::Heading2 => 16.0,
-            Self::Heading3 => 13.5,
-            Self::Normal | Self::Quote => 11.5,
+            Self::Title => 28.0,
+            Self::Subtitle => 14.0,
+            Self::Heading1 => 22.0,
+            Self::Heading2 => 17.5,
+            Self::Heading3 => 14.5,
+            Self::Normal | Self::Quote => 12.5,
         }
     }
 
@@ -345,6 +348,20 @@ impl TableBlock {
         self.rows.push(row);
     }
 
+    pub fn insert_row_at(&mut self, index: usize) {
+        let idx = index.min(self.rows.len());
+        let row = (0..self.cols).map(|_| TableCell::plain("")).collect();
+        self.rows.insert(idx, row);
+    }
+
+    pub fn delete_row(&mut self, index: usize) -> bool {
+        if self.rows.len() <= 1 || index >= self.rows.len() {
+            return false;
+        }
+        self.rows.remove(index);
+        true
+    }
+
     pub fn add_column(&mut self) {
         self.cols += 1;
         for (r_idx, row) in self.rows.iter_mut().enumerate() {
@@ -353,6 +370,51 @@ impl TableBlock {
             } else {
                 row.push(TableCell::plain(""));
             }
+        }
+    }
+
+    pub fn insert_column_at(&mut self, col_idx: usize) {
+        let idx = col_idx.min(self.cols);
+        self.cols += 1;
+        for (r_idx, row) in self.rows.iter_mut().enumerate() {
+            let cell = if r_idx == 0 {
+                TableCell::header(format!("Column {}", idx + 1))
+            } else {
+                TableCell::plain("")
+            };
+            let insert_pos = idx.min(row.len());
+            row.insert(insert_pos, cell);
+        }
+    }
+
+    pub fn delete_column(&mut self, col_idx: usize) -> bool {
+        if self.cols <= 1 || col_idx >= self.cols {
+            return false;
+        }
+        self.cols -= 1;
+        for row in &mut self.rows {
+            if col_idx < row.len() {
+                row.remove(col_idx);
+            }
+        }
+        true
+    }
+
+    pub fn toggle_cell_bold(&mut self, row: usize, col: usize) {
+        if let Some(cell) = self.rows.get_mut(row).and_then(|r| r.get_mut(col)) {
+            cell.bold = !cell.bold;
+        }
+    }
+
+    pub fn cycle_cell_fill(&mut self, row: usize, col: usize) {
+        if let Some(cell) = self.rows.get_mut(row).and_then(|r| r.get_mut(col)) {
+            cell.bg_color = match cell.bg_color {
+                None => Some(RgbColor::TABLE_HEADER_BG),
+                Some(c) if c == RgbColor::TABLE_HEADER_BG => Some(RgbColor::TABLE_TINT_CREAM),
+                Some(c) if c == RgbColor::TABLE_TINT_CREAM => Some(RgbColor::TABLE_TINT_SAGE),
+                Some(c) if c == RgbColor::TABLE_TINT_SAGE => Some(RgbColor::TABLE_TINT_BLUE),
+                _ => None,
+            };
         }
     }
 }
@@ -719,5 +781,25 @@ mod tests {
         assert!(doc.to_plain_text().contains("Software"));
         assert!(history.redo(&mut doc));
         assert!(doc.to_plain_text().contains("Systems"));
+    }
+
+    #[test]
+    fn test_table_insert_delete_row_col_and_shading() {
+        let mut tbl = TableBlock::new(2, 2);
+        tbl.insert_row_at(1);
+        assert_eq!(tbl.rows.len(), 3);
+        tbl.insert_column_at(1);
+        assert_eq!(tbl.cols, 3);
+        assert_eq!(tbl.rows[0].len(), 3);
+
+        tbl.toggle_cell_bold(1, 1);
+        assert!(tbl.rows[1][1].bold);
+        tbl.cycle_cell_fill(1, 1);
+        assert!(tbl.rows[1][1].bg_color.is_some());
+
+        assert!(tbl.delete_row(1));
+        assert_eq!(tbl.rows.len(), 2);
+        assert!(tbl.delete_column(1));
+        assert_eq!(tbl.cols, 2);
     }
 }

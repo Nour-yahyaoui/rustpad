@@ -1,125 +1,237 @@
-//! Paginated Word (`.docx`) Studio View: Formatting Ribbon, Outline Rail,
-//! Multi-Page A4/Letter/Legal Paper Canvas, Tables, Checklists, Cursor & Live Spellcheck.
+//! Word Studio (`.docx`) Paginated Canvas, Vector Formatting Ribbon, Contextual Table Bar,
+//! Multi-Line Resizable Tables, Character-Accurate Hit-Testing & Resizable Outline Rail.
 
 use crate::commands::CommandId;
-use crate::state::{HitRegion, UiAction, WordTabState};
-use doc_model::{Alignment, Block, ListKind, Paragraph, ParagraphStyle};
+use crate::state::{
+    DragInteraction, HitRegion, ToolbarDropdown, UiAction, WordTabState,
+};
+use doc_model::{Alignment, Block, FontFamily, ListKind, Paragraph, ParagraphStyle};
 use power_tools::SpellChecker;
-use rustpad_render::{Color, DaylightTheme, FontBook, FontSlot, Rect, Surface};
+use rustpad_render::{Color, DaylightTheme, FontBook, FontSlot, Rect, Surface, UiIcon};
 
+#[allow(clippy::too_many_arguments)]
 pub fn paint_word_tab(
     surface: &mut Surface,
     fonts: &mut FontBook,
     spellchecker: &SpellChecker,
     hit_regions: &mut Vec<HitRegion>,
     tab_idx: usize,
-    is_focused_pane: bool,
+    is_focused: bool,
     cursor_blink_on: bool,
     mouse_x: f32,
     mouse_y: f32,
+    ui_scale: f32,
+    sidebar_open: bool,
+    sidebar_w: f32,
     area: Rect,
-    w: &WordTabState,
+    w: &mut WordTabState,
 ) {
-    // 1. Word Formatting Toolbar Strip (42px)
-    let toolbar_h = 42.0;
-    let toolbar_rect = Rect::new(area.x, area.y, area.w, toolbar_h);
-    surface.fill_rect(toolbar_rect, DaylightTheme::CHROME);
+    let s = ui_scale.clamp(0.85, 1.6);
+    let ribbon_h = (44.0 * s).round();
+    let has_active_table = w.active_table_cell.is_some();
+    let table_bar_h = if has_active_table && is_focused {
+        (36.0 * s).round()
+    } else {
+        0.0
+    };
+
+    // 1. Primary Formatting Ribbon
+    let ribbon_rect = Rect::new(area.x, area.y, area.w, ribbon_h);
+    surface.fill_rect(ribbon_rect, DaylightTheme::CHROME);
     surface.fill_rect(
-        Rect::new(area.x, area.y + toolbar_h - 1.0, area.w, 1.0),
+        Rect::new(ribbon_rect.x, ribbon_rect.y + ribbon_rect.h - 1.0, ribbon_rect.w, 1.0),
         DaylightTheme::BORDER,
     );
-
-    if is_focused_pane {
-        paint_word_toolbar(surface, fonts, hit_regions, mouse_x, mouse_y, toolbar_rect, w);
+    if is_focused {
+        paint_word_ribbon(
+            surface,
+            fonts,
+            hit_regions,
+            mouse_x,
+            mouse_y,
+            s,
+            sidebar_open,
+            ribbon_rect,
+            w,
+        );
     } else {
+        let lbl = format!("WORD STUDIO · {}", w.doc.title);
         surface.draw_text(
             fonts,
             FontSlot::SansBold,
-            12.5,
-            toolbar_rect.x + 16.0,
-            toolbar_rect.y + 26.0,
+            12.0 * s,
+            ribbon_rect.x + 16.0 * s,
+            ribbon_rect.y + ribbon_h * 0.63,
             DaylightTheme::WORD_ACCENT,
-            &format!("WORD COMPANION VIEW — {}", w.doc.title),
+            &lbl,
         );
+        hit_regions.push(HitRegion::button(ribbon_rect, UiAction::SwitchTab(tab_idx)));
     }
 
+    // 2. Contextual Table Studio Sub-Bar (appears automatically when editing any table cell!)
+    if table_bar_h > 0.0 {
+        let tbar = Rect::new(area.x, area.y + ribbon_h, area.w, table_bar_h);
+        paint_contextual_table_bar(surface, fonts, hit_regions, mouse_x, mouse_y, s, tbar, w);
+    }
+
+    let top_used = ribbon_h + table_bar_h;
     let body_rect = Rect::new(
         area.x,
-        area.y + toolbar_h,
+        area.y + top_used,
         area.w,
-        (area.h - toolbar_h).max(1.0),
+        (area.h - top_used).max(40.0),
     );
     surface.fill_rect(body_rect, DaylightTheme::DESK_BG);
 
-    // 2. Left Outline & Stats Sidebar when width >= 820px
-    let show_sidebar = body_rect.w >= 820.0;
-    let sidebar_w = if show_sidebar { 228.0 } else { 0.0 };
-    if show_sidebar {
-        let sb_rect = Rect::new(body_rect.x, body_rect.y, sidebar_w, body_rect.h);
-        paint_word_sidebar(
+    // 3. Resizable + Collapsible Left Document Outline Rail
+    let can_fit_sidebar = sidebar_open && body_rect.w >= 640.0;
+    let eff_sb_w = if can_fit_sidebar {
+        (sidebar_w * s).clamp(160.0, body_rect.w * 0.42).round()
+    } else {
+        0.0
+    };
+
+    let canvas_rect = Rect::new(
+        body_rect.x + eff_sb_w,
+        body_rect.y,
+        (body_rect.w - eff_sb_w).max(80.0),
+        body_rect.h,
+    );
+
+    // 4. Layout & Paginate Document Blocks Across Physical Sheets
+    let (pt_w, pt_h) = w
+        .doc
+        .page_setup
+        .paper_size
+        .dimensions_pt(w.doc.page_setup.landscape);
+    let scale = (1.16 * w.zoom * (s * 0.96).clamp(0.92, 1.35)).clamp(0.65, 2.45);
+    let page_w = pt_w * scale;
+    let page_h = pt_h * scale;
+    let margin_x = (w.doc.page_setup.margin_left_pt * scale).min(page_w * 0.22);
+    let margin_top = (w.doc.page_setup.margin_top_pt * scale).min(page_h * 0.18);
+    let margin_bot = (w.doc.page_setup.margin_bottom_pt * scale).min(page_h * 0.18);
+    let content_w = (page_w - margin_x * 2.0).max(120.0);
+    let usable_page_h = (page_h - margin_top - margin_bot).max(160.0);
+
+    let pages = layout_document_pages(fonts, w, scale, content_w, usable_page_h);
+    let page_gap = 28.0 * s;
+    let top_pad = 26.0 * s;
+    let total_pages = pages.len().max(1);
+    let total_doc_h =
+        top_pad * 2.0 + (total_pages as f32) * page_h + (total_pages.saturating_sub(1) as f32) * page_gap;
+    w.max_scroll_y = (total_doc_h - canvas_rect.h + 40.0).max(0.0);
+
+    // Record exact canvas Y of every block for accurate Outline jump & auto-scroll-to-caret
+    let mut block_canvas_y = vec![0.0f32; w.doc.blocks.len().max(1)];
+    let mut caret_doc_y: Option<f32> = None;
+    for (p_idx, page_items) in pages.iter().enumerate() {
+        let p_top = top_pad + (p_idx as f32) * (page_h + page_gap);
+        for item in page_items {
+            let item_doc_y = p_top + margin_top + item.rel_y;
+            if item.block_idx < block_canvas_y.len() {
+                block_canvas_y[item.block_idx] = (item_doc_y - 36.0).max(0.0);
+            }
+            if w.active_table_cell.map(|(b, _, _)| b) == Some(item.block_idx)
+                || (w.active_table_cell.is_none() && w.cursor_block == item.block_idx)
+            {
+                caret_doc_y = Some(item_doc_y + item.height * 0.5);
+            }
+        }
+    }
+
+    if w.scroll_to_caret {
+        w.scroll_to_caret = false;
+        if let Some(cy) = caret_doc_y {
+            let view_top = w.scroll_y + 56.0;
+            let view_bot = w.scroll_y + canvas_rect.h - 72.0;
+            if cy < view_top {
+                w.scroll_y = (cy - 56.0).max(0.0);
+            } else if cy > view_bot {
+                w.scroll_y = (cy - canvas_rect.h + 88.0).clamp(0.0, w.max_scroll_y);
+            }
+        }
+    }
+    w.scroll_y = w.scroll_y.clamp(0.0, w.max_scroll_y);
+
+    // Paint Outline Sidebar now that exact `block_canvas_y` offsets are known!
+    if can_fit_sidebar {
+        let sb_rect = Rect::new(body_rect.x, body_rect.y, eff_sb_w, body_rect.h);
+        paint_outline_sidebar(
             surface,
             fonts,
             hit_regions,
             tab_idx,
             mouse_x,
             mouse_y,
+            s,
             sb_rect,
+            &block_canvas_y,
             w,
         );
+        // Interactive Resize Splitter on right edge of Outline Sidebar
+        let split_hit = Rect::new(sb_rect.x + sb_rect.w - 4.0, sb_rect.y, 8.0, sb_rect.h);
+        let split_hov = split_hit.contains(mouse_x, mouse_y);
+        if split_hov {
+            surface.fill_rect(
+                Rect::new(sb_rect.x + sb_rect.w - 1.5, sb_rect.y, 3.0, sb_rect.h),
+                DaylightTheme::RUST_ORANGE,
+            );
+        }
+        hit_regions.push(HitRegion::splitter(
+            split_hit,
+            UiAction::BeginDrag(DragInteraction::WordOutlineSplitter {
+                pane_left: body_rect.x,
+            }),
+        ));
     }
 
-    // 3. Scrollable Paginated Paper Canvas
-    let canvas_rect = Rect::new(
-        body_rect.x + sidebar_w,
-        body_rect.y,
-        (body_rect.w - sidebar_w).max(1.0),
-        body_rect.h,
-    );
+    // 5. Render Physical Paper Sheets & Blocks
     surface.set_clip(canvas_rect);
+    let scrollbar_reserve = if w.max_scroll_y > 4.0 { 14.0 } else { 0.0 };
+    let sheet_x = canvas_rect.x
+        + ((canvas_rect.w - scrollbar_reserve - page_w) * 0.5).max(18.0 * s);
 
-    let scale = w.zoom * 1.02;
-    let (pw_pt, ph_pt) = w
-        .doc
-        .page_setup
-        .paper_size
-        .dimensions_pt(w.doc.page_setup.landscape);
-    let page_w = (pw_pt * scale).min((canvas_rect.w - 36.0).max(240.0));
-    let eff_scale = page_w / pw_pt;
-    let page_h = ph_pt * eff_scale;
-    let page_gap = 24.0;
+    for (page_idx, page_items) in pages.iter().enumerate() {
+        let sheet_y =
+            canvas_rect.y + top_pad - w.scroll_y + (page_idx as f32) * (page_h + page_gap);
+        let sheet = Rect::new(sheet_x, sheet_y, page_w, page_h);
 
-    let margin_x = w.doc.page_setup.margin_left_pt * eff_scale;
-    let margin_top = w.doc.page_setup.margin_top_pt * eff_scale;
-    let margin_bottom = w.doc.page_setup.margin_bottom_pt * eff_scale;
-    let content_w = (page_w - margin_x * 2.0).max(120.0);
-
-    // Pre-layout blocks into pages
-    let layout_pages = layout_document_pages(fonts, w, eff_scale, content_w, page_h, margin_top, margin_bottom);
-
-    let page_x = canvas_rect.x + ((canvas_rect.w - page_w) * 0.5).max(18.0);
-    let start_y = canvas_rect.y + 22.0 - w.scroll_y;
-
-    for (page_num, page_items) in layout_pages.iter().enumerate() {
-        let py = start_y + (page_num as f32) * (page_h + page_gap);
-        let sheet = Rect::new(page_x, py, page_w, page_h);
-
-        if sheet.y + sheet.h < canvas_rect.y - 20.0 || sheet.y > canvas_rect.y + canvas_rect.h + 20.0 {
+        if sheet.y + sheet.h < canvas_rect.y - 24.0
+            || sheet.y > canvas_rect.y + canvas_rect.h + 24.0
+        {
             continue;
         }
 
-        // Crisp paper sheet + subtle elevation shadow
-        surface.draw_paper_shadow(sheet, 3.0, 12.0, 26);
-        surface.fill_rounded_rect(sheet, 3.0, DaylightTheme::PAPER);
-        surface.stroke_rounded_rect(sheet, 3.0, 1.0, DaylightTheme::BORDER);
+        // Clicking blank paper space jumps cursor cleanly to the last block on that page
+        let fallback_block = page_items
+            .last()
+            .map(|it| it.block_idx)
+            .unwrap_or_else(|| w.doc.blocks.len().saturating_sub(1));
+        let fallback_char = match w.doc.blocks.get(fallback_block) {
+            Some(Block::Paragraph(p)) => p.plain_text().chars().count(),
+            _ => 0,
+        };
+        hit_regions.push(HitRegion::text(
+            sheet,
+            UiAction::ClickWordParagraph {
+                tab_idx,
+                block_idx: fallback_block,
+                char_idx: fallback_char,
+            },
+        ));
 
-        // Header & Footer bands
+        surface.draw_page_shadow(sheet, 2.0, 12.0, 18);
+        surface.fill_rounded_rect(sheet, 2.0, DaylightTheme::PAPER);
+        surface.stroke_rounded_rect(sheet, 2.0, 1.0, DaylightTheme::BORDER);
+
+        // Running Header
         if !w.doc.page_setup.header_text.is_empty() {
             surface.draw_text_clipped(
                 fonts,
                 FontSlot::SansRegular,
-                10.5 * eff_scale,
+                (9.5 * scale).clamp(8.5, 14.0),
                 sheet.x + margin_x,
-                sheet.y + (margin_top * 0.55).max(18.0),
+                sheet.y + (margin_top * 0.56).max(20.0),
                 content_w,
                 DaylightTheme::INK_MUTED,
                 &w.doc.page_setup.header_text,
@@ -127,7 +239,7 @@ pub fn paint_word_tab(
             surface.fill_rect(
                 Rect::new(
                     sheet.x + margin_x,
-                    sheet.y + (margin_top * 0.68).max(24.0),
+                    sheet.y + (margin_top * 0.68).max(26.0),
                     content_w,
                     1.0,
                 ),
@@ -135,76 +247,161 @@ pub fn paint_word_tab(
             );
         }
 
-        let footer_y = sheet.y + page_h - (margin_bottom * 0.45).max(16.0);
+        // Running Footer + Page Counter
+        let footer_y = sheet.y + sheet.h - (margin_bot * 0.42).max(16.0);
         if !w.doc.page_setup.footer_text.is_empty() {
             surface.draw_text_clipped(
                 fonts,
                 FontSlot::SansRegular,
-                10.0 * eff_scale,
+                (9.2 * scale).clamp(8.0, 13.5),
                 sheet.x + margin_x,
                 footer_y,
-                content_w * 0.78,
+                content_w * 0.72,
                 DaylightTheme::INK_MUTED,
                 &w.doc.page_setup.footer_text,
             );
         }
         if w.doc.page_setup.show_page_numbers {
-            let pg_lbl = format!("Page {} of {}", page_num + 1, layout_pages.len());
-            let lw = fonts.measure_text(FontSlot::SansRegular, &pg_lbl, 10.0 * eff_scale);
+            let p_str = format!("Page {} of {}", page_idx + 1, total_pages);
+            let pw = fonts.measure_text(
+                FontSlot::SansRegular,
+                &p_str,
+                (9.2 * scale).clamp(8.0, 13.5),
+            );
             surface.draw_text(
                 fonts,
                 FontSlot::SansRegular,
-                10.0 * eff_scale,
-                sheet.x + page_w - margin_x - lw,
+                (9.2 * scale).clamp(8.0, 13.5),
+                sheet.x + sheet.w - margin_x - pw,
                 footer_y,
                 DaylightTheme::INK_MUTED,
-                &pg_lbl,
+                &p_str,
             );
         }
 
-        // Optional watermark
+        // Optional Watermark
         if let Some(wm) = &w.doc.page_setup.watermark {
-            let wm_px = (34.0 * eff_scale).clamp(16.0, 54.0);
-            let wm_w = fonts.measure_text(FontSlot::SansBold, wm, wm_px);
+            let wm_px = (32.0 * scale).clamp(18.0, 56.0);
+            let ww = fonts.measure_text(FontSlot::SansBold, wm, wm_px);
             surface.draw_text(
                 fonts,
                 FontSlot::SansBold,
                 wm_px,
-                sheet.x + (page_w - wm_w) * 0.5,
-                sheet.y + page_h * 0.52,
-                Color::rgba(148, 163, 184, 58),
+                sheet.x + (sheet.w - ww) * 0.5,
+                sheet.y + sheet.h * 0.52,
+                Color::rgba(122, 118, 110, 38),
                 wm,
             );
         }
 
-        // Paint each laid-out block on this page
+        let content_origin_x = sheet.x + margin_x;
+        let content_origin_y = sheet.y + margin_top;
         for item in page_items {
-            paint_placed_block(
+            paint_laid_out_block(
                 surface,
                 fonts,
                 spellchecker,
                 hit_regions,
                 tab_idx,
-                is_focused_pane,
+                is_focused,
                 cursor_blink_on,
+                mouse_x,
+                mouse_y,
                 w,
-                sheet.x + margin_x,
-                sheet.y + item.rel_y,
-                content_w,
-                eff_scale,
                 item,
+                content_origin_x,
+                content_origin_y + item.rel_y,
+                content_w,
+                scale,
             );
         }
+    }
+
+    // 6. Interactive Vertical Scrollbar Thumb
+    if w.max_scroll_y > 4.0 {
+        paint_canvas_scrollbar(
+            surface,
+            hit_regions,
+            tab_idx,
+            mouse_x,
+            mouse_y,
+            canvas_rect,
+            w.scroll_y,
+            w.max_scroll_y,
+            total_doc_h,
+        );
     }
 
     surface.reset_clip();
 }
 
-struct PlacedBlock {
+pub fn paint_canvas_scrollbar(
+    surface: &mut Surface,
+    hit_regions: &mut Vec<HitRegion>,
+    tab_idx: usize,
+    mouse_x: f32,
+    mouse_y: f32,
+    canvas_rect: Rect,
+    scroll_y: f32,
+    max_scroll_y: f32,
+    total_content_h: f32,
+) {
+    let track = Rect::new(
+        canvas_rect.x + canvas_rect.w - 11.0,
+        canvas_rect.y + 6.0,
+        7.0,
+        (canvas_rect.h - 12.0).max(24.0),
+    );
+    let visible_ratio = (canvas_rect.h / total_content_h.max(1.0)).clamp(0.08, 0.92);
+    let thumb_h = (track.h * visible_ratio).max(28.0).min(track.h);
+    let travel = (track.h - thumb_h).max(0.0);
+    let progress = (scroll_y / max_scroll_y.max(1.0)).clamp(0.0, 1.0);
+    let thumb = Rect::new(track.x, track.y + progress * travel, track.w, thumb_h);
+
+    let hit_track = Rect::new(track.x - 4.0, track.y, 14.0, track.h);
+    let hov = hit_track.contains(mouse_x, mouse_y);
+    if hov {
+        surface.fill_rounded_rect(track, 3.5, Color::rgba(200, 194, 182, 90));
+    }
+    surface.fill_rounded_rect(
+        thumb,
+        3.5,
+        if hov {
+            DaylightTheme::INK_SUB
+        } else {
+            DaylightTheme::BORDER_STRONG
+        },
+    );
+    hit_regions.push(HitRegion::button(
+        hit_track,
+        UiAction::BeginDrag(DragInteraction::Scrollbar {
+            tab_idx,
+            track_y: track.y + thumb_h * 0.5,
+            track_h: travel.max(1.0),
+            max_scroll: max_scroll_y,
+        }),
+    ));
+}
+
+struct LaidOutBlock {
     block_idx: usize,
     rel_y: f32,
     height: f32,
-    wrapped_lines: Vec<(String, usize)>, // (line_text, char_offset_start)
+    lines: Vec<LaidOutLine>,
+    table_row_heights: Vec<f32>,
+    table_wrapped_cells: Vec<Vec<Vec<String>>>,
+}
+
+struct LaidOutLine {
+    text: String,
+    char_start: usize,
+    slot: FontSlot,
+    px_size: f32,
+    line_h: f32,
+    color: Color,
+    highlight: Option<Color>,
+    underline: bool,
+    strike: bool,
 }
 
 fn layout_document_pages(
@@ -212,91 +409,131 @@ fn layout_document_pages(
     w: &WordTabState,
     scale: f32,
     content_w: f32,
-    page_h: f32,
-    margin_top: f32,
-    margin_bottom: f32,
-) -> Vec<Vec<PlacedBlock>> {
-    let mut pages: Vec<Vec<PlacedBlock>> = vec![Vec::new()];
-    let mut cur_y = margin_top;
-    let max_y = (page_h - margin_bottom).max(margin_top + 80.0);
+    usable_page_h: f32,
+) -> Vec<Vec<LaidOutBlock>> {
+    let mut pages: Vec<Vec<LaidOutBlock>> = vec![Vec::new()];
+    let mut cur_y = 0.0f32;
 
-    for (block_idx, block) in w.doc.blocks.iter().enumerate() {
+    for (b_idx, block) in w.doc.blocks.iter().enumerate() {
         match block {
             Block::PageBreak => {
                 pages.push(Vec::new());
-                cur_y = margin_top;
+                cur_y = 0.0;
             }
             Block::HorizontalRule => {
                 let h = 18.0 * scale;
-                if cur_y + h > max_y && !pages.last().unwrap().is_empty() {
+                if cur_y + h > usable_page_h && !pages.last().unwrap().is_empty() {
                     pages.push(Vec::new());
-                    cur_y = margin_top;
+                    cur_y = 0.0;
                 }
-                pages.last_mut().unwrap().push(PlacedBlock {
-                    block_idx,
+                pages.last_mut().unwrap().push(LaidOutBlock {
+                    block_idx: b_idx,
                     rel_y: cur_y,
                     height: h,
-                    wrapped_lines: Vec::new(),
+                    lines: Vec::new(),
+                    table_row_heights: Vec::new(),
+                    table_wrapped_cells: Vec::new(),
                 });
                 cur_y += h;
             }
             Block::Image(img) => {
                 let h = (img.height_pt * scale).clamp(48.0, 220.0) + 22.0 * scale;
-                if cur_y + h > max_y && !pages.last().unwrap().is_empty() {
+                if cur_y + h > usable_page_h && !pages.last().unwrap().is_empty() {
                     pages.push(Vec::new());
-                    cur_y = margin_top;
+                    cur_y = 0.0;
                 }
-                pages.last_mut().unwrap().push(PlacedBlock {
-                    block_idx,
+                pages.last_mut().unwrap().push(LaidOutBlock {
+                    block_idx: b_idx,
                     rel_y: cur_y,
                     height: h,
-                    wrapped_lines: Vec::new(),
+                    lines: Vec::new(),
+                    table_row_heights: Vec::new(),
+                    table_wrapped_cells: Vec::new(),
                 });
                 cur_y += h;
             }
             Block::Table(t) => {
-                let row_h = 26.0 * scale;
-                let h = (t.rows.len().max(1) as f32) * row_h + 14.0 * scale;
-                if cur_y + h > max_y && !pages.last().unwrap().is_empty() {
-                    pages.push(Vec::new());
-                    cur_y = margin_top;
+                let cols = t.cols.max(1);
+                let weights = w.normalized_col_weights(b_idx, cols);
+                let txt_px = (11.5 * scale).clamp(10.0, 20.0);
+                let line_h = (txt_px * 1.36).max(14.0);
+                let cell_pad_x = 9.0 * scale;
+                let cell_pad_y = 7.5 * scale;
+
+                let mut row_heights = Vec::with_capacity(t.rows.len());
+                let mut wrapped_grid = Vec::with_capacity(t.rows.len());
+
+                for (r_idx, row) in t.rows.iter().enumerate() {
+                    let mut max_lines = 1usize;
+                    let mut wrapped_row = Vec::with_capacity(cols);
+                    for c_idx in 0..cols {
+                        let cw = (content_w * weights[c_idx] - cell_pad_x * 2.0).max(28.0);
+                        let cell_txt = row.get(c_idx).map(|c| c.text.as_str()).unwrap_or("");
+                        let slot = if r_idx == 0 || row.get(c_idx).map(|c| c.bold).unwrap_or(false)
+                        {
+                            FontSlot::SansBold
+                        } else {
+                            FontSlot::SansRegular
+                        };
+                        let wlines = wrap_plain_text(fonts, slot, txt_px, cell_txt, cw);
+                        max_lines = max_lines.max(wlines.len().max(1));
+                        wrapped_row.push(wlines);
+                    }
+                    row_heights.push((max_lines as f32) * line_h + cell_pad_y * 2.0);
+                    wrapped_grid.push(wrapped_row);
                 }
-                pages.last_mut().unwrap().push(PlacedBlock {
-                    block_idx,
+
+                // Reserve space for on-canvas `+ Add Row` helper rail below table
+                let table_body_h: f32 = row_heights.iter().sum();
+                let h = table_body_h + 26.0 * scale;
+                if cur_y + h > usable_page_h && !pages.last().unwrap().is_empty() {
+                    pages.push(Vec::new());
+                    cur_y = 0.0;
+                }
+                pages.last_mut().unwrap().push(LaidOutBlock {
+                    block_idx: b_idx,
                     rel_y: cur_y,
                     height: h,
-                    wrapped_lines: Vec::new(),
+                    lines: Vec::new(),
+                    table_row_heights: row_heights,
+                    table_wrapped_cells: wrapped_grid,
                 });
                 cur_y += h;
             }
             Block::Paragraph(p) => {
-                let base_style = p.spans.first().map(|s| s.style.clone()).unwrap_or_default();
-                let slot = FontSlot::select(base_style.font_family, base_style.bold);
-                let px_size = (base_style.font_size_pt * scale * 1.18).clamp(10.0, 44.0);
                 let indent = (p.indent_level as f32) * 20.0 * scale
-                    + if matches!(p.list_kind, ListKind::None) {
-                        0.0
+                    + if p.list_kind != ListKind::None || p.style == ParagraphStyle::Quote {
+                        20.0 * scale
                     } else {
-                        22.0 * scale
+                        0.0
                     };
-                let avail_w = (content_w - indent).max(60.0);
-                let lines = wrap_paragraph_lines(fonts, slot, px_size, &p.plain_text(), avail_w);
-                let line_h = px_size * p.line_spacing.max(1.2);
-                let space_after = match p.style {
+                let wrap_w = (content_w - indent).max(60.0);
+                let lines = wrap_paragraph_lines(fonts, p, scale, wrap_w);
+                let spacing_after = match p.style {
                     ParagraphStyle::Title => 12.0 * scale,
+                    ParagraphStyle::Subtitle => 10.0 * scale,
                     ParagraphStyle::Heading1 | ParagraphStyle::Heading2 => 9.0 * scale,
-                    _ => 6.0 * scale,
+                    _ => 7.0 * scale,
                 };
-                let h = (lines.len().max(1) as f32) * line_h + space_after;
-                if cur_y + h > max_y && !pages.last().unwrap().is_empty() {
+                let spacing_before = match p.style {
+                    ParagraphStyle::Heading1 => 10.0 * scale,
+                    ParagraphStyle::Heading2 => 7.0 * scale,
+                    ParagraphStyle::Heading3 => 5.0 * scale,
+                    _ => 0.0,
+                };
+                let text_h: f32 = lines.iter().map(|l| l.line_h).sum();
+                let h = spacing_before + text_h + spacing_after;
+                if cur_y + h > usable_page_h && !pages.last().unwrap().is_empty() {
                     pages.push(Vec::new());
-                    cur_y = margin_top;
+                    cur_y = 0.0;
                 }
-                pages.last_mut().unwrap().push(PlacedBlock {
-                    block_idx,
-                    rel_y: cur_y,
+                pages.last_mut().unwrap().push(LaidOutBlock {
+                    block_idx: b_idx,
+                    rel_y: cur_y + spacing_before,
                     height: h,
-                    wrapped_lines: lines,
+                    lines,
+                    table_row_heights: Vec::new(),
+                    table_wrapped_cells: Vec::new(),
                 });
                 cur_y += h;
             }
@@ -305,389 +542,734 @@ fn layout_document_pages(
     pages
 }
 
-fn wrap_paragraph_lines(
+fn wrap_plain_text(
     fonts: &mut FontBook,
     slot: FontSlot,
     px_size: f32,
     text: &str,
     max_w: f32,
-) -> Vec<(String, usize)> {
+) -> Vec<String> {
     if text.is_empty() {
-        return vec![(String::new(), 0)];
+        return vec![String::new()];
     }
     let mut lines = Vec::new();
     let mut cur = String::new();
-    let mut cur_start = 0usize;
-    let mut char_cursor = 0usize;
-
     for word in text.split_inclusive(' ') {
-        let w_chars = word.chars().count();
         let candidate = format!("{cur}{word}");
         if !cur.is_empty() && fonts.measure_text(slot, &candidate, px_size) > max_w {
-            lines.push((cur.trim_end_matches(' ').to_string(), cur_start));
+            lines.push(cur.trim_end().to_string());
             cur = word.to_string();
-            cur_start = char_cursor;
         } else {
-            cur.push_str(word);
+            // Handle single extra-long token wider than cell width
+            if cur.is_empty() && fonts.measure_text(slot, word, px_size) > max_w {
+                let mut chunk = String::new();
+                for ch in word.chars() {
+                    let test = format!("{chunk}{ch}");
+                    if !chunk.is_empty() && fonts.measure_text(slot, &test, px_size) > max_w {
+                        lines.push(chunk);
+                        chunk = ch.to_string();
+                    } else {
+                        chunk.push(ch);
+                    }
+                }
+                cur = chunk;
+            } else {
+                cur = candidate;
+            }
         }
-        char_cursor += w_chars;
     }
     if !cur.is_empty() || lines.is_empty() {
-        lines.push((cur, cur_start));
+        lines.push(cur);
     }
     lines
 }
 
+fn wrap_paragraph_lines(
+    fonts: &mut FontBook,
+    p: &Paragraph,
+    scale: f32,
+    wrap_w: f32,
+) -> Vec<LaidOutLine> {
+    let first_span = p.spans.first();
+    let base_pt = first_span
+        .map(|s| s.style.font_size_pt)
+        .unwrap_or_else(|| p.style.default_font_size());
+    let px_size = (base_pt * scale).clamp(9.5, 58.0);
+    let bold = first_span
+        .map(|s| s.style.bold)
+        .unwrap_or_else(|| p.style.is_bold_by_default());
+    let fam = first_span
+        .map(|s| s.style.font_family)
+        .unwrap_or(FontFamily::Sans);
+    let slot = match (fam, bold) {
+        (FontFamily::Mono, _) => FontSlot::Mono,
+        (FontFamily::Serif, _) => FontSlot::Serif,
+        (FontFamily::Sans, true) => FontSlot::SansBold,
+        (FontFamily::Sans, false) => FontSlot::SansRegular,
+    };
+    let col = first_span
+        .map(|s| Color::rgb(s.style.color.r, s.style.color.g, s.style.color.b))
+        .unwrap_or(DaylightTheme::INK);
+    let hl = first_span
+        .and_then(|s| s.style.highlight)
+        .map(|h| Color::rgb(h.r, h.g, h.b));
+    let underline = first_span.map(|s| s.style.underline).unwrap_or(false);
+    let strike = first_span.map(|s| s.style.strikethrough).unwrap_or(false);
+    let line_h = px_size * p.line_spacing.max(1.32);
+
+    let full_text = p.plain_text();
+    if full_text.is_empty() {
+        return vec![LaidOutLine {
+            text: String::new(),
+            char_start: 0,
+            slot,
+            px_size,
+            line_h,
+            color: col,
+            highlight: hl,
+            underline,
+            strike,
+        }];
+    }
+
+    let mut out = Vec::new();
+    let mut cur_line = String::new();
+    let mut cur_start = 0usize;
+    let mut char_cursor = 0usize;
+
+    for token in full_text.split_inclusive(' ') {
+        let candidate = format!("{cur_line}{token}");
+        let cand_w = fonts.measure_text(slot, &candidate, px_size);
+        if !cur_line.is_empty() && cand_w > wrap_w {
+            out.push(LaidOutLine {
+                text: cur_line,
+                char_start: cur_start,
+                slot,
+                px_size,
+                line_h,
+                color: col,
+                highlight: hl,
+                underline,
+                strike,
+            });
+            cur_line = token.to_string();
+            cur_start = char_cursor;
+        } else {
+            cur_line = candidate;
+        }
+        char_cursor += token.chars().count();
+    }
+
+    if !cur_line.is_empty() {
+        out.push(LaidOutLine {
+            text: cur_line,
+            char_start: cur_start,
+            slot,
+            px_size,
+            line_h,
+            color: col,
+            highlight: hl,
+            underline,
+            strike,
+        });
+    }
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
-fn paint_placed_block(
+fn paint_laid_out_block(
     surface: &mut Surface,
     fonts: &mut FontBook,
     spellchecker: &SpellChecker,
     hit_regions: &mut Vec<HitRegion>,
     tab_idx: usize,
-    is_focused_pane: bool,
+    is_focused: bool,
     cursor_blink_on: bool,
+    mouse_x: f32,
+    mouse_y: f32,
     w: &WordTabState,
-    base_x: f32,
-    base_y: f32,
+    item: &LaidOutBlock,
+    x: f32,
+    y: f32,
     content_w: f32,
     scale: f32,
-    item: &PlacedBlock,
 ) {
     let Some(block) = w.doc.blocks.get(item.block_idx) else {
         return;
     };
+
     match block {
+        Block::PageBreak => {}
         Block::HorizontalRule => {
             surface.fill_rect(
-                Rect::new(base_x, base_y + 8.0 * scale, content_w, 1.5),
+                Rect::new(x, y + item.height * 0.45, content_w, 1.5),
                 DaylightTheme::BORDER_STRONG,
             );
         }
-        Block::PageBreak => {}
         Block::Image(img) => {
             let box_h = (item.height - 16.0 * scale).max(36.0);
-            let box_w = (img.width_pt * scale).min(content_w);
-            let r = Rect::new(base_x, base_y + 4.0, box_w, box_h);
-            surface.fill_rounded_rect(r, 6.0, DaylightTheme::SIDEBAR);
-            surface.stroke_rounded_rect(r, 6.0, 1.0, DaylightTheme::BORDER_STRONG);
+            let r = Rect::new(x, y, (img.width_pt * scale).min(content_w), box_h);
+            surface.fill_rounded_rect(r, 4.0, DaylightTheme::SIDEBAR);
+            surface.stroke_rounded_rect(r, 4.0, 1.0, DaylightTheme::BORDER_STRONG);
             if let Some((iw, ih, rgba)) = &img.rgba_preview {
-                surface.blit_rgba(r.x as i32 + 8, r.y as i32 + 8, *iw, *ih, rgba);
+                surface.blit_rgba(r.x as i32 + 4, r.y as i32 + 4, *iw, *ih, rgba);
             } else {
-                surface.draw_logo_36(r.x as i32 + 12, r.y as i32 + 10);
-                surface.draw_text_clipped(
+                surface.draw_text(
                     fonts,
                     FontSlot::SansBold,
                     12.0 * scale,
-                    r.x + 58.0,
-                    r.y + 30.0,
-                    r.w - 68.0,
+                    r.x + 14.0,
+                    r.y + 24.0,
                     DaylightTheme::INK,
-                    &format!("Embedded Figure: {}", img.name),
+                    &format!("[Embedded Image: {}]", img.name),
                 );
-                if !img.caption.is_empty() {
-                    surface.draw_text_clipped(
-                        fonts,
-                        FontSlot::SansRegular,
-                        11.0 * scale,
-                        r.x + 58.0,
-                        r.y + 48.0,
-                        r.w - 68.0,
-                        DaylightTheme::INK_SUB,
-                        &img.caption,
-                    );
-                }
             }
         }
         Block::Table(t) => {
             let cols = t.cols.max(1);
-            let col_w = content_w / (cols as f32);
-            let row_h = 26.0 * scale;
+            let weights = w.normalized_col_weights(item.block_idx, cols);
+            let txt_px = (11.5 * scale).clamp(10.0, 20.0);
+            let line_h = (txt_px * 1.36).max(14.0);
+            let cell_pad_x = 9.0 * scale;
+            let cell_pad_y = 7.5 * scale;
+            let border_col = Color::rgb(t.border_color.r, t.border_color.g, t.border_color.b);
+
+            let table_body_h: f32 = item.table_row_heights.iter().sum();
+            let table_outer = Rect::new(x - 4.0, y - 4.0, content_w + 28.0 * scale, table_body_h + 26.0 * scale);
+            let table_active_or_hovered = w
+                .active_table_cell
+                .map(|(b, _, _)| b == item.block_idx)
+                .unwrap_or(false)
+                || table_outer.contains(mouse_x, mouse_y);
+
+            let mut cur_row_y = y;
             for (r_idx, row) in t.rows.iter().enumerate() {
-                for (c_idx, cell) in row.iter().enumerate() {
-                    let cell_rect = Rect::new(
-                        base_x + (c_idx as f32) * col_w,
-                        base_y + (r_idx as f32) * row_h,
-                        col_w,
-                        row_h,
-                    );
-                    if let Some(bg) = cell.bg_color {
-                        surface.fill_rect(cell_rect, Color::from_doc(bg));
+                let rh = item
+                    .table_row_heights
+                    .get(r_idx)
+                    .copied()
+                    .unwrap_or(28.0 * scale);
+                let mut cx = x;
+
+                for c_idx in 0..cols {
+                    let cw = content_w * weights[c_idx];
+                    let cell_r = Rect::new(cx, cur_row_y, cw, rh);
+                    let cell_opt = row.get(c_idx);
+                    if let Some(bg) = cell_opt.and_then(|c| c.bg_color) {
+                        surface.fill_rect(cell_r, Color::rgb(bg.r, bg.g, bg.b));
+                    } else if r_idx == 0 {
+                        surface.fill_rect(cell_r, Color::rgb(244, 241, 235));
                     }
-                    let is_active_cell = is_focused_pane
+
+                    let is_active_cell = is_focused
                         && w.active_table_cell == Some((item.block_idx, r_idx, c_idx));
+
                     surface.stroke_rounded_rect(
-                        cell_rect,
+                        cell_r,
                         0.0,
-                        if is_active_cell { 2.0 } else { 1.0 },
+                        if is_active_cell { 1.8 } else { 1.0 },
                         if is_active_cell {
                             DaylightTheme::WORD_ACCENT
                         } else {
-                            Color::from_doc(t.border_color)
+                            border_col
                         },
                     );
-                    let slot = if cell.bold {
+
+                    let slot = if r_idx == 0 || cell_opt.map(|c| c.bold).unwrap_or(false) {
                         FontSlot::SansBold
                     } else {
                         FontSlot::SansRegular
                     };
-                    let txt_px = (11.5 * scale).clamp(9.5, 18.0);
-                    surface.draw_text_clipped(
-                        fonts,
-                        slot,
-                        txt_px,
-                        cell_rect.x + 7.0 * scale,
-                        cell_rect.y + row_h * 0.68,
-                        col_w - 14.0 * scale,
-                        DaylightTheme::INK,
-                        &cell.text,
-                    );
-                    hit_regions.push(HitRegion {
-                        rect: cell_rect,
-                        action: UiAction::ClickTableCell {
+                    let align = cell_opt.map(|c| c.alignment).unwrap_or(Alignment::Left);
+                    let cell_lines = item
+                        .table_wrapped_cells
+                        .get(r_idx)
+                        .and_then(|rw| rw.get(c_idx));
+
+                    let mut char_running = 0usize;
+                    let mut clicked_char_est = cell_opt.map(|c| c.text.chars().count()).unwrap_or(0);
+                    let mut caret_drawn = false;
+
+                    if let Some(wlines) = cell_lines {
+                        for (li, ln) in wlines.iter().enumerate() {
+                            let lw = fonts.measure_text(slot, ln, txt_px);
+                            let tx = match align {
+                                Alignment::Center => cell_r.x + ((cw - lw) * 0.5).max(cell_pad_x),
+                                Alignment::Right => (cell_r.x + cw - cell_pad_x - lw).max(cell_r.x + cell_pad_x),
+                                _ => cell_r.x + cell_pad_x,
+                            };
+                            let baseline =
+                                cell_r.y + cell_pad_y + txt_px * 0.88 + (li as f32) * line_h;
+                            if !ln.is_empty() {
+                                surface.draw_text(
+                                    fonts,
+                                    slot,
+                                    txt_px,
+                                    tx,
+                                    baseline,
+                                    DaylightTheme::INK,
+                                    ln,
+                                );
+                            }
+
+                            let ln_chars = ln.chars().count();
+                            let line_band_top = cell_r.y + cell_pad_y + (li as f32) * line_h - 3.0;
+                            let line_band_bot = line_band_top + line_h + 4.0;
+                            if cell_r.contains(mouse_x, mouse_y)
+                                && mouse_y >= line_band_top
+                                && mouse_y <= line_band_bot
+                            {
+                                clicked_char_est = char_running
+                                    + char_offset_from_x(fonts, slot, txt_px, ln, mouse_x - tx);
+                            }
+
+                            // Draw blinking caret inside active table cell!
+                            if is_active_cell && cursor_blink_on && !caret_drawn {
+                                let caret_pos = w
+                                    .table_cursor_char
+                                    .min(cell_opt.map(|c| c.text.chars().count()).unwrap_or(0));
+                                let is_last_line = li + 1 == wlines.len();
+                                if (caret_pos >= char_running && caret_pos <= char_running + ln_chars)
+                                    || is_last_line
+                                {
+                                    let local_off = caret_pos.saturating_sub(char_running).min(ln_chars);
+                                    let prefix: String = ln.chars().take(local_off).collect();
+                                    let cx_caret = tx + fonts.measure_text(slot, &prefix, txt_px);
+                                    surface.fill_rect(
+                                        Rect::new(
+                                            cx_caret,
+                                            baseline - txt_px * 0.86,
+                                            2.0,
+                                            txt_px * 1.15,
+                                        ),
+                                        DaylightTheme::WORD_ACCENT,
+                                    );
+                                    caret_drawn = true;
+                                }
+                            }
+                            // Account for space consumed between wrapped lines
+                            char_running += ln_chars;
+                            if let Some(cell) = cell_opt {
+                                if cell.text.chars().nth(char_running) == Some(' ') {
+                                    char_running += 1;
+                                }
+                            }
+                        }
+                    }
+
+                    hit_regions.push(HitRegion::text(
+                        cell_r,
+                        UiAction::ClickTableCell {
                             tab_idx,
                             block_idx: item.block_idx,
                             row: r_idx,
                             col: c_idx,
+                            char_idx: clicked_char_est,
                         },
-                    });
+                    ));
+
+                    cx += cw;
                 }
+                cur_row_y += rh;
+            }
+
+            // Column Border Drag-Resize Handles across the full height of the table!
+            let mut div_x = x;
+            for c_idx in 0..cols.saturating_sub(1) {
+                div_x += content_w * weights[c_idx];
+                let grip = Rect::new(div_x - 3.5, y, 7.0, table_body_h);
+                if grip.contains(mouse_x, mouse_y) {
+                    surface.fill_rect(
+                        Rect::new(div_x - 1.0, y, 2.0, table_body_h),
+                        DaylightTheme::RUST_ORANGE,
+                    );
+                }
+                hit_regions.push(HitRegion::splitter(
+                    grip,
+                    UiAction::BeginDrag(DragInteraction::TableColumn {
+                        tab_idx,
+                        block_idx: item.block_idx,
+                        cols,
+                        col_idx: c_idx,
+                        last_x: mouse_x,
+                        table_px_w: content_w,
+                    }),
+                ));
+            }
+
+            // On-Canvas `+ Add Row` bottom bar & `+ Col` right edge button!
+            if table_active_or_hovered {
+                let row_btn = Rect::new(x, y + table_body_h + 2.0, content_w, (19.0 * scale).clamp(17.0, 26.0));
+                let row_hov = row_btn.contains(mouse_x, mouse_y);
+                surface.fill_rounded_rect(
+                    row_btn,
+                    3.0,
+                    if row_hov {
+                        DaylightTheme::WORD_SOFT
+                    } else {
+                        DaylightTheme::SIDEBAR
+                    },
+                );
+                surface.stroke_rounded_rect(
+                    row_btn,
+                    3.0,
+                    1.0,
+                    if row_hov {
+                        DaylightTheme::WORD_ACCENT
+                    } else {
+                        DaylightTheme::BORDER
+                    },
+                );
+                let r_lbl = "+ Add Row";
+                let r_px = (10.2 * scale).clamp(9.5, 13.5);
+                let rw = fonts.measure_text(FontSlot::SansBold, r_lbl, r_px);
+                surface.draw_text(
+                    fonts,
+                    FontSlot::SansBold,
+                    r_px,
+                    row_btn.x + (row_btn.w - rw) * 0.5,
+                    row_btn.y + row_btn.h * 0.72,
+                    if row_hov {
+                        DaylightTheme::WORD_ACCENT
+                    } else {
+                        DaylightTheme::INK_SUB
+                    },
+                    r_lbl,
+                );
+                hit_regions.push(HitRegion::button(
+                    row_btn,
+                    UiAction::TableQuickAddRow {
+                        tab_idx,
+                        block_idx: item.block_idx,
+                    },
+                ));
+
+                // Right-edge `+ Col` rail
+                let col_btn = Rect::new(
+                    x + content_w + 3.0,
+                    y,
+                    (21.0 * scale).clamp(18.0, 28.0),
+                    table_body_h.max(24.0),
+                );
+                let col_hov = col_btn.contains(mouse_x, mouse_y);
+                surface.fill_rounded_rect(
+                    col_btn,
+                    3.0,
+                    if col_hov {
+                        DaylightTheme::WORD_SOFT
+                    } else {
+                        DaylightTheme::SIDEBAR
+                    },
+                );
+                surface.stroke_rounded_rect(
+                    col_btn,
+                    3.0,
+                    1.0,
+                    if col_hov {
+                        DaylightTheme::WORD_ACCENT
+                    } else {
+                        DaylightTheme::BORDER
+                    },
+                );
+                surface.draw_icon(
+                    UiIcon::Plus,
+                    col_btn.x + col_btn.w * 0.5,
+                    col_btn.y + col_btn.h * 0.5,
+                    (11.0 * scale).clamp(9.0, 14.0),
+                    if col_hov {
+                        DaylightTheme::WORD_ACCENT
+                    } else {
+                        DaylightTheme::INK_SUB
+                    },
+                );
+                hit_regions.push(HitRegion::button(
+                    col_btn,
+                    UiAction::TableQuickAddCol {
+                        tab_idx,
+                        block_idx: item.block_idx,
+                    },
+                ));
             }
         }
         Block::Paragraph(p) => {
-            paint_paragraph(
+            paint_paragraph_block(
                 surface,
                 fonts,
                 spellchecker,
                 hit_regions,
                 tab_idx,
-                is_focused_pane,
+                is_focused,
                 cursor_blink_on,
+                mouse_x,
+                mouse_y,
                 w,
                 p,
-                base_x,
-                base_y,
+                item,
+                x,
+                y,
                 content_w,
                 scale,
-                item,
             );
         }
     }
 }
 
+fn char_offset_from_x(
+    fonts: &mut FontBook,
+    slot: FontSlot,
+    px_size: f32,
+    line: &str,
+    rel_x: f32,
+) -> usize {
+    if rel_x <= 0.0 || line.is_empty() {
+        return 0;
+    }
+    let mut acc = 0.0f32;
+    for (idx, ch) in line.chars().enumerate() {
+        let adv = fonts.glyph(slot, ch, px_size).advance_px;
+        if rel_x < acc + adv * 0.52 {
+            return idx;
+        }
+        acc += adv;
+    }
+    line.chars().count()
+}
+
 #[allow(clippy::too_many_arguments)]
-fn paint_paragraph(
+fn paint_paragraph_block(
     surface: &mut Surface,
     fonts: &mut FontBook,
     spellchecker: &SpellChecker,
     hit_regions: &mut Vec<HitRegion>,
     tab_idx: usize,
-    is_focused_pane: bool,
+    is_focused: bool,
     cursor_blink_on: bool,
+    mouse_x: f32,
+    mouse_y: f32,
     w: &WordTabState,
     p: &Paragraph,
-    base_x: f32,
-    base_y: f32,
+    item: &LaidOutBlock,
+    x: f32,
+    y: f32,
     content_w: f32,
     scale: f32,
-    item: &PlacedBlock,
 ) {
-    let base_style = p.spans.first().map(|s| s.style.clone()).unwrap_or_default();
-    let slot = FontSlot::select(base_style.font_family, base_style.bold);
-    let px_size = (base_style.font_size_pt * scale * 1.18).clamp(10.0, 44.0);
-    let line_h = px_size * p.line_spacing.max(1.2);
     let indent_px = (p.indent_level as f32) * 20.0 * scale;
+    let mut text_x = x + indent_px;
 
-    // Quote accent bar
     if p.style == ParagraphStyle::Quote {
         surface.fill_rounded_rect(
-            Rect::new(base_x + indent_px, base_y + 2.0, 3.5, item.height - 6.0),
+            Rect::new(
+                text_x,
+                y + 2.0,
+                3.0 * scale,
+                (item.height - 8.0 * scale).max(16.0),
+            ),
             1.5,
-            DaylightTheme::WORD_ACCENT,
+            DaylightTheme::RUST_ORANGE,
         );
+        text_x += 14.0 * scale;
     }
 
-    let list_offset = match p.list_kind {
-        ListKind::None => {
-            if p.style == ParagraphStyle::Quote {
-                14.0 * scale
-            } else {
-                0.0
-            }
-        }
+    let first_line_h = item.lines.first().map(|l| l.line_h).unwrap_or(20.0);
+    let first_px = item.lines.first().map(|l| l.px_size).unwrap_or(14.0);
+    match p.list_kind {
+        ListKind::None => {}
         ListKind::Bullet => {
+            let dot_r = (2.8 * scale).clamp(2.2, 4.5);
             surface.fill_rounded_rect(
                 Rect::new(
-                    base_x + indent_px + 5.0 * scale,
-                    base_y + px_size * 0.52,
-                    5.0 * scale,
-                    5.0 * scale,
+                    text_x + 4.0 * scale,
+                    y + first_px * 0.56 - dot_r,
+                    dot_r * 2.0,
+                    dot_r * 2.0,
                 ),
-                2.5 * scale,
-                DaylightTheme::WORD_ACCENT,
+                dot_r,
+                DaylightTheme::INK_SUB,
             );
-            22.0 * scale
+            text_x += 20.0 * scale;
         }
         ListKind::Numbered(n) => {
             surface.draw_text(
                 fonts,
                 FontSlot::SansBold,
-                px_size * 0.92,
-                base_x + indent_px,
-                base_y + px_size * 0.92,
-                DaylightTheme::WORD_ACCENT,
+                first_px,
+                text_x,
+                y + first_px * 0.88,
+                DaylightTheme::INK_SUB,
                 &format!("{n}."),
             );
-            24.0 * scale
+            text_x += 22.0 * scale;
         }
         ListKind::Checklist(done) => {
-            let cb = Rect::new(
-                base_x + indent_px + 2.0,
-                base_y + px_size * 0.18,
-                14.0 * scale,
-                14.0 * scale,
-            );
+            let box_sz = (14.5 * scale).clamp(12.0, 21.0);
+            let cb = Rect::new(text_x, y + (first_line_h - box_sz) * 0.36, box_sz, box_sz);
             if done {
-                surface.fill_rounded_rect(cb, 3.5, DaylightTheme::SUCCESS);
+                surface.fill_rounded_rect(cb, 3.0, DaylightTheme::SUCCESS);
                 surface.draw_line(
-                    cb.x + 3.0 * scale,
-                    cb.y + 7.5 * scale,
-                    cb.x + 6.0 * scale,
-                    cb.y + 10.5 * scale,
+                    cb.x + box_sz * 0.22,
+                    cb.y + box_sz * 0.52,
+                    cb.x + box_sz * 0.44,
+                    cb.y + box_sz * 0.76,
                     1.8,
                     DaylightTheme::PAPER,
                 );
                 surface.draw_line(
-                    cb.x + 6.0 * scale,
-                    cb.y + 10.5 * scale,
-                    cb.x + 11.2 * scale,
-                    cb.y + 4.0 * scale,
+                    cb.x + box_sz * 0.44,
+                    cb.y + box_sz * 0.76,
+                    cb.x + box_sz * 0.80,
+                    cb.y + box_sz * 0.26,
                     1.8,
                     DaylightTheme::PAPER,
                 );
             } else {
-                surface.fill_rounded_rect(cb, 3.5, DaylightTheme::PAPER);
-                surface.stroke_rounded_rect(cb, 3.5, 1.4, DaylightTheme::BORDER_STRONG);
+                surface.fill_rounded_rect(cb, 3.0, DaylightTheme::PAPER);
+                surface.stroke_rounded_rect(cb, 3.0, 1.4, DaylightTheme::BORDER_STRONG);
             }
-            hit_regions.push(HitRegion {
-                rect: cb.inset(-3.0),
-                action: UiAction::ToggleChecklistItem {
+            hit_regions.push(HitRegion::button(
+                Rect::new(cb.x - 3.0, cb.y - 3.0, cb.w + 6.0, cb.h + 6.0),
+                UiAction::ToggleChecklistItem {
                     tab_idx,
                     block_idx: item.block_idx,
                 },
-            });
-            24.0 * scale
+            ));
+            text_x += 23.0 * scale;
         }
-    };
+    }
 
-    let text_x0 = base_x + indent_px + list_offset;
-    let avail_w = (content_w - indent_px - list_offset).max(60.0);
-    let text_color = if matches!(p.list_kind, ListKind::Checklist(true)) {
-        DaylightTheme::INK_MUTED
-    } else {
-        Color::from_doc(base_style.color)
-    };
+    let is_checked_done = matches!(p.list_kind, ListKind::Checklist(true));
+    let avail_w = (content_w - (text_x - x)).max(40.0);
+    let mut cur_y = y;
 
-    for (line_idx, (line_str, line_char_start)) in item.wrapped_lines.iter().enumerate() {
-        let line_w = fonts.measure_text(slot, line_str, px_size);
+    for (line_idx, ln) in item.lines.iter().enumerate() {
+        let lw = fonts.measure_text(ln.slot, &ln.text, ln.px_size);
         let draw_x = match p.alignment {
-            Alignment::Left | Alignment::Justify => text_x0,
-            Alignment::Center => text_x0 + ((avail_w - line_w) * 0.5).max(0.0),
-            Alignment::Right => text_x0 + (avail_w - line_w).max(0.0),
+            Alignment::Center => text_x + ((avail_w - lw) * 0.5).max(0.0),
+            Alignment::Right => text_x + (avail_w - lw).max(0.0),
+            Alignment::Left | Alignment::Justify => text_x,
         };
-        let baseline_y = base_y + (line_idx as f32) * line_h + px_size * 0.92;
+        let baseline_y = cur_y + ln.px_size * 0.90;
 
-        if let Some(hl) = base_style.highlight {
-            if !line_str.is_empty() {
+        if let Some(hl_col) = ln.highlight {
+            if lw > 0.5 {
                 surface.fill_rounded_rect(
-                    Rect::new(draw_x - 2.0, baseline_y - px_size * 0.82, line_w + 4.0, px_size * 1.05),
+                    Rect::new(draw_x - 2.0, cur_y + 1.0, lw + 4.0, ln.line_h - 2.0),
                     2.5,
-                    Color::from_doc(hl),
+                    hl_col,
                 );
             }
         }
 
-        surface.draw_text(fonts, slot, px_size, draw_x, baseline_y, text_color, line_str);
+        let eff_color = if is_checked_done {
+            DaylightTheme::INK_MUTED
+        } else {
+            ln.color
+        };
 
-        if base_style.underline && line_w > 0.0 {
-            surface.fill_rect(
-                Rect::new(draw_x, baseline_y + 2.0, line_w, 1.2),
-                text_color,
+        if !ln.text.is_empty() {
+            surface.draw_text(
+                fonts,
+                ln.slot,
+                ln.px_size,
+                draw_x,
+                baseline_y,
+                eff_color,
+                &ln.text,
+            );
+        } else if item.block_idx == 0 && w.doc.blocks.len() == 1 {
+            surface.draw_text(
+                fonts,
+                FontSlot::SansRegular,
+                ln.px_size,
+                draw_x,
+                baseline_y,
+                DaylightTheme::INK_MUTED,
+                "Start writing on this A4 sheet, press Ctrl+J for AI Assistant, or Ctrl+K for tools…",
             );
         }
-        if (base_style.strikethrough || matches!(p.list_kind, ListKind::Checklist(true)))
-            && line_w > 0.0
-        {
+
+        if ln.underline && lw > 0.5 {
             surface.fill_rect(
-                Rect::new(draw_x, baseline_y - px_size * 0.3, line_w, 1.2),
-                text_color,
+                Rect::new(draw_x, baseline_y + 2.0, lw, (1.1 * scale).max(1.0)),
+                eff_color,
+            );
+        }
+        if (ln.strike || is_checked_done) && lw > 0.5 {
+            surface.fill_rect(
+                Rect::new(
+                    draw_x,
+                    baseline_y - ln.px_size * 0.30,
+                    lw,
+                    (1.1 * scale).max(1.0),
+                ),
+                eff_color,
             );
         }
 
-        // Spellcheck wavy red underline
-        if w.spellcheck && !line_str.is_empty() {
-            let mut scan_x = draw_x;
-            for piece in line_str.split_inclusive(' ') {
-                let pw = fonts.measure_text(slot, piece, px_size);
-                let trimmed = piece.trim();
-                if !trimmed.is_empty() && !spellchecker.is_valid(trimmed) {
-                    let tw = fonts.measure_text(slot, trimmed, px_size);
-                    surface.fill_rect(
-                        Rect::new(scan_x, baseline_y + 2.5, tw, 1.6),
-                        DaylightTheme::PDF_ACCENT,
-                    );
-                }
-                scan_x += pw;
+        if w.spellcheck && !ln.text.is_empty() {
+            for (c0, c1, _word) in spellchecker.check_paragraph(&ln.text) {
+                let pre: String = ln.text.chars().take(c0).collect();
+                let bad: String = ln.text.chars().skip(c0).take(c1 - c0).collect();
+                let wx = draw_x + fonts.measure_text(ln.slot, &pre, ln.px_size);
+                let ww = fonts.measure_text(ln.slot, &bad, ln.px_size);
+                surface.fill_rect(
+                    Rect::new(wx, baseline_y + 2.5, ww, 1.5),
+                    DaylightTheme::PDF_ACCENT,
+                );
             }
         }
 
-        // Active blinking caret
-        let line_chars = line_str.chars().count();
-        let is_last_line = line_idx + 1 == item.wrapped_lines.len();
-        let in_this_line = w.cursor_char >= *line_char_start
-            && (w.cursor_char < *line_char_start + line_chars
-                || (is_last_line && w.cursor_char <= *line_char_start + line_chars + 1));
-
-        if is_focused_pane
-            && w.active_table_cell.is_none()
-            && w.cursor_block == item.block_idx
-            && in_this_line
-            && cursor_blink_on
-        {
-            let rel_chars = w.cursor_char.saturating_sub(*line_char_start).min(line_chars);
-            let prefix: String = line_str.chars().take(rel_chars).collect();
-            let cx = draw_x + fonts.measure_text(slot, &prefix, px_size);
-            surface.fill_rect(
-                Rect::new(cx, baseline_y - px_size * 0.84, 2.0, px_size * 1.06),
-                DaylightTheme::WORD_ACCENT,
-            );
+        // Blinking Caret
+        let line_chars = ln.text.chars().count();
+        let is_last_line = line_idx + 1 == item.lines.len();
+        let cursor_in_block =
+            is_focused && w.active_table_cell.is_none() && w.cursor_block == item.block_idx;
+        if cursor_in_block && cursor_blink_on {
+            let in_this_line = if is_last_line {
+                w.cursor_char >= ln.char_start && w.cursor_char <= ln.char_start + line_chars
+            } else {
+                w.cursor_char >= ln.char_start && w.cursor_char < ln.char_start + line_chars
+            };
+            if in_this_line {
+                let offset = w.cursor_char.saturating_sub(ln.char_start);
+                let prefix: String = ln.text.chars().take(offset).collect();
+                let cx = draw_x + fonts.measure_text(ln.slot, &prefix, ln.px_size);
+                surface.fill_rect(
+                    Rect::new(cx, cur_y + 1.0, 2.0, ln.line_h - 2.0),
+                    DaylightTheme::WORD_ACCENT,
+                );
+            }
         }
 
-        // Clickable line hit region
-        let line_rect = Rect::new(
-            base_x,
-            base_y + (line_idx as f32) * line_h,
-            content_w,
-            line_h,
-        );
-        let click_char = *line_char_start + line_chars;
-        hit_regions.push(HitRegion {
-            rect: line_rect,
-            action: UiAction::ClickWordParagraph {
+        // Character-accurate hit region using live `mouse_x` glyph advance measurement!
+        let line_hit = Rect::new(x, cur_y, content_w, ln.line_h.max(16.0));
+        let click_char = if line_hit.contains(mouse_x, mouse_y) {
+            ln.char_start + char_offset_from_x(fonts, ln.slot, ln.px_size, &ln.text, mouse_x - draw_x)
+        } else {
+            ln.char_start + line_chars
+        };
+        hit_regions.push(HitRegion::text(
+            line_hit,
+            UiAction::ClickWordParagraph {
                 tab_idx,
                 block_idx: item.block_idx,
                 char_idx: click_char,
             },
-        });
+        ));
+
+        cur_y += ln.line_h;
     }
 }
 
-fn paint_word_toolbar(
+#[allow(clippy::too_many_arguments)]
+fn paint_word_ribbon(
     surface: &mut Surface,
     fonts: &mut FontBook,
     hit_regions: &mut Vec<HitRegion>,
     mouse_x: f32,
     mouse_y: f32,
+    s: f32,
+    sidebar_open: bool,
     bar: Rect,
     w: &WordTabState,
 ) {
@@ -695,116 +1277,555 @@ fn paint_word_toolbar(
         Block::Paragraph(p) => Some(p),
         _ => None,
     });
-    let bold_on = cur_para
+    let is_bold = cur_para
         .and_then(|p| p.spans.first())
-        .map(|s| s.style.bold)
+        .map(|sp| sp.style.bold)
         .unwrap_or(false);
-    let italic_on = cur_para
+    let is_italic = cur_para
         .and_then(|p| p.spans.first())
-        .map(|s| s.style.italic)
+        .map(|sp| sp.style.italic)
         .unwrap_or(false);
-    let under_on = cur_para
+    let is_under = cur_para
         .and_then(|p| p.spans.first())
-        .map(|s| s.style.underline)
+        .map(|sp| sp.style.underline)
         .unwrap_or(false);
-    let style_lbl = cur_para.map(|p| p.style.label()).unwrap_or("Table");
-    let font_lbl = cur_para
+    let has_hl = cur_para
         .and_then(|p| p.spans.first())
-        .map(|s| match s.style.font_family {
-            doc_model::FontFamily::Sans => "Sans",
-            doc_model::FontFamily::Serif => "Serif",
-            doc_model::FontFamily::Mono => "Mono",
+        .and_then(|sp| sp.style.highlight)
+        .is_some();
+    let cur_pt = cur_para
+        .and_then(|p| p.spans.first())
+        .map(|sp| sp.style.font_size_pt)
+        .unwrap_or(12.5);
+    let style_lbl = cur_para.map(|p| p.style.label()).unwrap_or("Body");
+    let fam_lbl = cur_para
+        .and_then(|p| p.spans.first())
+        .map(|sp| match sp.style.font_family {
+            FontFamily::Sans => "Sans",
+            FontFamily::Serif => "Serif",
+            FontFamily::Mono => "Mono",
         })
         .unwrap_or("Sans");
+    let cur_align = cur_para.map(|p| p.alignment).unwrap_or(Alignment::Left);
+    let is_bullet = cur_para
+        .map(|p| p.list_kind == ListKind::Bullet)
+        .unwrap_or(false);
+    let is_check = cur_para
+        .map(|p| matches!(p.list_kind, ListKind::Checklist(_)))
+        .unwrap_or(false);
 
-    let buttons: &[(&str, CommandId, bool)] = &[
-        (style_lbl, CommandId::CycleStyle, false),
-        (font_lbl, CommandId::CycleFontFamily, false),
-        ("A-", CommandId::FontSizeDown, false),
-        ("A+", CommandId::FontSizeUp, false),
-        ("B", CommandId::ToggleBold, bold_on),
-        ("I", CommandId::ToggleItalic, italic_on),
-        ("U", CommandId::ToggleUnderline, under_on),
-        ("Ink", CommandId::CycleTextColor, false),
-        ("Mark", CommandId::ToggleHighlight, false),
-        ("Left", CommandId::AlignLeft, false),
-        ("Center", CommandId::AlignCenter, false),
-        ("• List", CommandId::ToggleBulletList, false),
-        ("☑ Task", CommandId::ToggleChecklist, false),
-        ("+ Table", CommandId::InsertTable, false),
-        ("Break", CommandId::InsertPageBreak, false),
-        ("Paper", CommandId::CyclePaperSize, false),
-        ("Spell", CommandId::ToggleSpellcheck, w.spellcheck),
-        ("-> PDF", CommandId::ExportWordToPdf, false),
-        ("History", CommandId::OpenSnapshotsDrawer, false),
-    ];
+    let bh = (30.0 * s).round();
+    let by = (bar.y + (bar.h - bh) * 0.5).round();
+    let mut bx = bar.x + 10.0 * s;
+    let max_x = bar.x + bar.w - 10.0 * s;
 
-    let mut x = bar.x + 12.0;
-    let btn_y = bar.y + 7.0;
-    let btn_h = 28.0;
+    // Helper closures via compact functions
+    // 1. Sidebar Toggle + Undo / Redo
+    bx = draw_icon_btn(
+        surface,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        UiIcon::Sidebar,
+        sidebar_open,
+        UiAction::ExecCommand(CommandId::ToggleLeftSidebar),
+    );
+    bx = draw_divider(surface, bx, bar.y, bar.h, s);
 
-    for (label, cmd, active) in buttons {
-        let tw = fonts.measure_text(FontSlot::SansBold, label, 11.5);
-        let bw = (tw + 16.0).max(30.0);
-        if x + bw > bar.x + bar.w - 10.0 {
+    bx = draw_icon_btn(
+        surface,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        UiIcon::Undo,
+        false,
+        UiAction::ExecCommand(CommandId::Undo),
+    );
+    bx = draw_icon_btn(
+        surface,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        UiIcon::Redo,
+        false,
+        UiAction::ExecCommand(CommandId::Redo),
+    );
+    bx = draw_divider(surface, bx, bar.y, bar.h, s);
+
+    // 2. Paragraph Style Dropdown + Font Family Dropdown + Font Size Stepper
+    let style_w = (96.0 * s).round();
+    if bx + style_w < max_x {
+        let r = Rect::new(bx, by, style_w, bh);
+        let hov = r.contains(mouse_x, mouse_y);
+        surface.fill_rounded_rect(r, 5.0, if hov { DaylightTheme::HOVER } else { DaylightTheme::PAPER });
+        surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::BORDER);
+        surface.draw_text_clipped(
+            fonts,
+            FontSlot::SansBold,
+            11.8 * s,
+            r.x + 8.0 * s,
+            r.y + bh * 0.66,
+            style_w - 22.0 * s,
+            DaylightTheme::INK,
+            style_lbl,
+        );
+        surface.draw_icon(
+            UiIcon::ChevronDown,
+            r.x + r.w - 11.0 * s,
+            r.y + bh * 0.52,
+            9.0 * s,
+            DaylightTheme::INK_MUTED,
+        );
+        hit_regions.push(HitRegion::button(
+            r,
+            UiAction::ToggleDropdown(ToolbarDropdown::ParagraphStyle {
+                anchor_x: r.x as i32,
+                anchor_y: (bar.y + bar.h) as i32,
+            }),
+        ));
+        bx += style_w + 5.0 * s;
+    }
+
+    let font_w = (68.0 * s).round();
+    if bx + font_w < max_x {
+        let r = Rect::new(bx, by, font_w, bh);
+        let hov = r.contains(mouse_x, mouse_y);
+        surface.fill_rounded_rect(r, 5.0, if hov { DaylightTheme::HOVER } else { DaylightTheme::PAPER });
+        surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::BORDER);
+        surface.draw_text(
+            fonts,
+            FontSlot::SansRegular,
+            11.8 * s,
+            r.x + 8.0 * s,
+            r.y + bh * 0.66,
+            DaylightTheme::INK,
+            fam_lbl,
+        );
+        surface.draw_icon(
+            UiIcon::ChevronDown,
+            r.x + r.w - 11.0 * s,
+            r.y + bh * 0.52,
+            9.0 * s,
+            DaylightTheme::INK_MUTED,
+        );
+        hit_regions.push(HitRegion::button(
+            r,
+            UiAction::ToggleDropdown(ToolbarDropdown::FontFamily {
+                anchor_x: r.x as i32,
+                anchor_y: (bar.y + bar.h) as i32,
+            }),
+        ));
+        bx += font_w + 5.0 * s;
+    }
+
+    // Joined [- 12.5 +] size control
+    let step_w = (82.0 * s).round();
+    if bx + step_w < max_x {
+        let r = Rect::new(bx, by, step_w, bh);
+        surface.fill_rounded_rect(r, 5.0, DaylightTheme::PAPER);
+        surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::BORDER);
+        let btn_seg = (22.0 * s).round();
+        let down_r = Rect::new(r.x, r.y, btn_seg, bh);
+        let up_r = Rect::new(r.x + r.w - btn_seg, r.y, btn_seg, bh);
+        surface.draw_icon(UiIcon::Minus, down_r.x + btn_seg * 0.5, r.y + bh * 0.5, 9.0 * s, DaylightTheme::INK_SUB);
+        surface.draw_icon(UiIcon::Plus, up_r.x + btn_seg * 0.5, r.y + bh * 0.5, 9.0 * s, DaylightTheme::INK_SUB);
+        let sz_txt = if (cur_pt.fract()).abs() < 0.1 {
+            format!("{:.0}", cur_pt)
+        } else {
+            format!("{:.1}", cur_pt)
+        };
+        let tw = fonts.measure_text(FontSlot::Mono, &sz_txt, 11.2 * s);
+        surface.draw_text(
+            fonts,
+            FontSlot::Mono,
+            11.2 * s,
+            r.x + (r.w - tw) * 0.5,
+            r.y + bh * 0.66,
+            DaylightTheme::INK,
+            &sz_txt,
+        );
+        hit_regions.push(HitRegion::button(down_r, UiAction::ExecCommand(CommandId::FontSizeDown)));
+        hit_regions.push(HitRegion::button(up_r, UiAction::ExecCommand(CommandId::FontSizeUp)));
+        bx += step_w + 4.0 * s;
+    }
+
+    bx = draw_divider(surface, bx, bar.y, bar.h, s);
+
+    // 3. Inline Marks (`B`, `I`, `U`, `Ink`, `Mark`)
+    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "B", FontSlot::SansBold, is_bold, false, CommandId::ToggleBold);
+    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "I", FontSlot::Serif, is_italic, false, CommandId::ToggleItalic);
+    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "U", FontSlot::SansRegular, is_under, false, CommandId::ToggleUnderline);
+    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Ink", FontSlot::SansRegular, false, false, CommandId::CycleTextColor);
+    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Mark", FontSlot::SansRegular, has_hl, false, CommandId::ToggleHighlight);
+
+    bx = draw_divider(surface, bx, bar.y, bar.h, s);
+
+    // 4. Alignment & Lists (Crisp Vector Icons!)
+    for (ic, active, cmd) in [
+        (UiIcon::AlignLeft, cur_align == Alignment::Left, CommandId::AlignLeft),
+        (UiIcon::AlignCenter, cur_align == Alignment::Center, CommandId::AlignCenter),
+        (UiIcon::AlignRight, cur_align == Alignment::Right, CommandId::AlignRight),
+        (UiIcon::BulletList, is_bullet, CommandId::ToggleBulletList),
+        (UiIcon::Checklist, is_check, CommandId::ToggleChecklist),
+    ] {
+        if bx + bh > max_x {
             break;
         }
-        let r = Rect::new(x, btn_y, bw, btn_h);
-        let hovered = r.contains(mouse_x, mouse_y);
-        let is_pdf_cta = *cmd == CommandId::ExportWordToPdf;
-        let bg = if is_pdf_cta {
-            DaylightTheme::PDF_SOFT
-        } else if *active {
-            DaylightTheme::WORD_SOFT
-        } else if hovered {
-            DaylightTheme::HOVER
-        } else {
-            DaylightTheme::PAPER
-        };
-        let fg = if is_pdf_cta {
-            DaylightTheme::PDF_ACCENT
-        } else if *active {
-            DaylightTheme::WORD_ACCENT
-        } else {
-            DaylightTheme::INK
-        };
-        surface.fill_rounded_rect(r, 6.0, bg);
+        bx = draw_icon_btn(
+            surface,
+            hit_regions,
+            mouse_x,
+            mouse_y,
+            bx,
+            by,
+            bh,
+            s,
+            ic,
+            active,
+            UiAction::ExecCommand(cmd),
+        );
+    }
+
+    bx = draw_divider(surface, bx, bar.y, bar.h, s);
+
+    // 5. Insert Table + Page Tools + Export PDF
+    bx = draw_icon_text_btn(
+        surface,
+        fonts,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        max_x,
+        UiIcon::Table,
+        "Table",
+        w.active_table_cell.is_some(),
+        false,
+        CommandId::InsertTable,
+    );
+    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Break", FontSlot::SansRegular, false, false, CommandId::InsertPageBreak);
+    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Spell", FontSlot::SansRegular, w.spellcheck, false, CommandId::ToggleSpellcheck);
+    let _ = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Export PDF", FontSlot::SansBold, false, true, CommandId::ExportWordToPdf);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_contextual_table_bar(
+    surface: &mut Surface,
+    fonts: &mut FontBook,
+    hit_regions: &mut Vec<HitRegion>,
+    mouse_x: f32,
+    mouse_y: f32,
+    s: f32,
+    bar: Rect,
+    w: &WordTabState,
+) {
+    surface.fill_rect(bar, DaylightTheme::RUST_SOFT);
+    surface.fill_rect(
+        Rect::new(bar.x, bar.y + bar.h - 1.0, bar.w, 1.0),
+        DaylightTheme::BORDER,
+    );
+
+    let cell_info = w
+        .active_table_cell
+        .map(|(_, r, c)| format!("TABLE R{}·C{}", r + 1, c + 1))
+        .unwrap_or_else(|| "TABLE".into());
+    surface.draw_text(
+        fonts,
+        FontSlot::SansBold,
+        10.8 * s,
+        bar.x + 12.0 * s,
+        bar.y + bar.h * 0.64,
+        DaylightTheme::RUST_ORANGE,
+        &cell_info,
+    );
+
+    let bh = (25.0 * s).round();
+    let by = (bar.y + (bar.h - bh) * 0.5).round();
+    let mut bx = bar.x + 98.0 * s;
+    let max_x = bar.x + bar.w - 10.0 * s;
+
+    let actions: &[(&str, CommandId, bool)] = &[
+        ("+ Row Below", CommandId::TableAddRow, false),
+        ("+ Row Above", CommandId::TableInsertRowAbove, false),
+        ("- Row", CommandId::TableDeleteRow, false),
+        ("+ Col Right", CommandId::TableAddCol, false),
+        ("+ Col Left", CommandId::TableInsertColLeft, false),
+        ("- Col", CommandId::TableDeleteCol, false),
+        ("Cell Bold", CommandId::TableToggleCellBold, false),
+        ("Shade Cell", CommandId::TableCycleCellFill, false),
+        ("Delete Table", CommandId::TableDelete, true),
+    ];
+
+    for (lbl, cmd, danger) in actions {
+        let tw = fonts.measure_text(FontSlot::SansBold, lbl, 11.0 * s);
+        let bw = (tw + 16.0 * s).round();
+        if bx + bw > max_x {
+            break;
+        }
+        let r = Rect::new(bx, by, bw, bh);
+        let hov = r.contains(mouse_x, mouse_y);
+        surface.fill_rounded_rect(
+            r,
+            4.0,
+            if hov {
+                if *danger {
+                    DaylightTheme::PDF_SOFT
+                } else {
+                    DaylightTheme::PAPER
+                }
+            } else {
+                Color::rgba(255, 255, 255, 210)
+            },
+        );
         surface.stroke_rounded_rect(
             r,
-            6.0,
+            4.0,
             1.0,
-            if *active {
-                DaylightTheme::WORD_ACCENT
+            if *danger && hov {
+                DaylightTheme::PDF_ACCENT
             } else {
-                DaylightTheme::BORDER
+                DaylightTheme::BORDER_STRONG
             },
         );
         surface.draw_text(
             fonts,
             FontSlot::SansBold,
-            11.5,
-            r.x + (bw - tw) * 0.5,
-            r.y + 18.5,
-            fg,
-            label,
+            11.0 * s,
+            r.x + 8.0 * s,
+            r.y + bh * 0.68,
+            if *danger {
+                DaylightTheme::PDF_ACCENT
+            } else {
+                DaylightTheme::INK
+            },
+            lbl,
         );
-        hit_regions.push(HitRegion {
-            rect: r,
-            action: UiAction::ExecCommand(*cmd),
-        });
-        x += bw + 5.0;
+        hit_regions.push(HitRegion::button(r, UiAction::ExecCommand(*cmd)));
+        bx += bw + 5.0 * s;
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn paint_word_sidebar(
+fn draw_icon_btn(
+    surface: &mut Surface,
+    hit_regions: &mut Vec<HitRegion>,
+    mouse_x: f32,
+    mouse_y: f32,
+    bx: f32,
+    by: f32,
+    bh: f32,
+    s: f32,
+    icon: UiIcon,
+    active: bool,
+    action: UiAction,
+) -> f32 {
+    let bw = (30.0 * s).round();
+    let r = Rect::new(bx, by, bw, bh);
+    let hov = r.contains(mouse_x, mouse_y);
+    if active || hov {
+        surface.fill_rounded_rect(
+            r,
+            5.0,
+            if active {
+                DaylightTheme::WORD_SOFT
+            } else {
+                DaylightTheme::HOVER
+            },
+        );
+    }
+    if active {
+        surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::WORD_ACCENT);
+    }
+    surface.draw_icon(
+        icon,
+        r.x + bw * 0.5,
+        r.y + bh * 0.5,
+        13.5 * s,
+        if active {
+            DaylightTheme::WORD_ACCENT
+        } else {
+            DaylightTheme::INK_SUB
+        },
+    );
+    hit_regions.push(HitRegion::button(r, action));
+    bx + bw + 3.0 * s
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_icon_text_btn(
+    surface: &mut Surface,
+    fonts: &mut FontBook,
+    hit_regions: &mut Vec<HitRegion>,
+    mouse_x: f32,
+    mouse_y: f32,
+    bx: f32,
+    by: f32,
+    bh: f32,
+    s: f32,
+    max_x: f32,
+    icon: UiIcon,
+    label: &str,
+    active: bool,
+    accent: bool,
+    cmd: CommandId,
+) -> f32 {
+    let tw = fonts.measure_text(FontSlot::SansBold, label, 11.5 * s);
+    let bw = (tw + 30.0 * s).round();
+    if bx + bw > max_x {
+        return bx;
+    }
+    let r = Rect::new(bx, by, bw, bh);
+    let hov = r.contains(mouse_x, mouse_y);
+    if active || hov || accent {
+        surface.fill_rounded_rect(
+            r,
+            5.0,
+            if accent {
+                DaylightTheme::PDF_SOFT
+            } else if active {
+                DaylightTheme::WORD_SOFT
+            } else {
+                DaylightTheme::HOVER
+            },
+        );
+    }
+    if active || accent {
+        surface.stroke_rounded_rect(
+            r,
+            5.0,
+            1.0,
+            if accent {
+                DaylightTheme::PDF_ACCENT
+            } else {
+                DaylightTheme::WORD_ACCENT
+            },
+        );
+    }
+    let fg = if accent {
+        DaylightTheme::PDF_ACCENT
+    } else if active {
+        DaylightTheme::WORD_ACCENT
+    } else {
+        DaylightTheme::INK
+    };
+    surface.draw_icon(icon, r.x + 12.0 * s, r.y + bh * 0.5, 12.5 * s, fg);
+    surface.draw_text(
+        fonts,
+        FontSlot::SansBold,
+        11.5 * s,
+        r.x + 22.0 * s,
+        r.y + bh * 0.66,
+        fg,
+        label,
+    );
+    hit_regions.push(HitRegion::button(r, UiAction::ExecCommand(cmd)));
+    bx + bw + 4.0 * s
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_label_btn(
+    surface: &mut Surface,
+    fonts: &mut FontBook,
+    hit_regions: &mut Vec<HitRegion>,
+    mouse_x: f32,
+    mouse_y: f32,
+    bx: f32,
+    by: f32,
+    bh: f32,
+    s: f32,
+    max_x: f32,
+    label: &str,
+    slot: FontSlot,
+    active: bool,
+    pdf_accent: bool,
+    cmd: CommandId,
+) -> f32 {
+    let tw = fonts.measure_text(slot, label, 12.0 * s);
+    let bw = (tw + 15.0 * s).max(28.0 * s).round();
+    if bx + bw > max_x {
+        return bx;
+    }
+    let r = Rect::new(bx, by, bw, bh);
+    let hov = r.contains(mouse_x, mouse_y);
+    if pdf_accent || active || hov {
+        surface.fill_rounded_rect(
+            r,
+            5.0,
+            if pdf_accent {
+                DaylightTheme::PDF_SOFT
+            } else if active {
+                DaylightTheme::WORD_SOFT
+            } else {
+                DaylightTheme::HOVER
+            },
+        );
+    }
+    if pdf_accent || active {
+        surface.stroke_rounded_rect(
+            r,
+            5.0,
+            1.0,
+            if pdf_accent {
+                DaylightTheme::PDF_ACCENT
+            } else {
+                DaylightTheme::WORD_ACCENT
+            },
+        );
+    }
+    let fg = if pdf_accent {
+        DaylightTheme::PDF_ACCENT
+    } else if active {
+        DaylightTheme::WORD_ACCENT
+    } else {
+        DaylightTheme::INK
+    };
+    surface.draw_text(
+        fonts,
+        slot,
+        12.0 * s,
+        r.x + (bw - tw) * 0.5,
+        r.y + bh * 0.67,
+        fg,
+        label,
+    );
+    hit_regions.push(HitRegion::button(r, UiAction::ExecCommand(cmd)));
+    bx + bw + 3.0 * s
+}
+
+fn draw_divider(surface: &mut Surface, bx: f32, bar_y: f32, bar_h: f32, s: f32) -> f32 {
+    surface.fill_rect(
+        Rect::new((bx + 3.0 * s).round(), bar_y + 10.0 * s, 1.0, bar_h - 20.0 * s),
+        DaylightTheme::BORDER,
+    );
+    bx + 8.0 * s
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_outline_sidebar(
     surface: &mut Surface,
     fonts: &mut FontBook,
     hit_regions: &mut Vec<HitRegion>,
     tab_idx: usize,
     mouse_x: f32,
     mouse_y: f32,
+    s: f32,
     sb: Rect,
+    block_canvas_y: &[f32],
     w: &WordTabState,
 ) {
     surface.fill_rect(sb, DaylightTheme::SIDEBAR);
@@ -816,45 +1837,55 @@ fn paint_word_sidebar(
     surface.draw_text(
         fonts,
         FontSlot::SansBold,
-        11.0,
-        sb.x + 16.0,
-        sb.y + 24.0,
+        10.5 * s,
+        sb.x + 14.0 * s,
+        sb.y + 24.0 * s,
         DaylightTheme::INK_MUTED,
-        "DOCUMENT OUTLINE",
+        "OUTLINE",
     );
 
     let outline = w.doc.outline();
-    let mut y = sb.y + 38.0;
+    let mut y = sb.y + 36.0 * s;
+    let footer_h = 132.0 * s;
+
     if outline.is_empty() {
-        surface.draw_text(
+        surface.draw_text_clipped(
             fonts,
             FontSlot::SansRegular,
-            12.0,
-            sb.x + 16.0,
-            y + 14.0,
+            11.8 * s,
+            sb.x + 14.0 * s,
+            y + 16.0 * s,
+            sb.w - 28.0 * s,
             DaylightTheme::INK_MUTED,
-            "Add H1 / H2 headings to populate",
+            "Apply Heading 1–3 to build a live outline.",
         );
-        y += 32.0;
     } else {
-        for item in outline.iter().take(12) {
-            if y + 26.0 > sb.y + sb.h - 150.0 {
+        for item in &outline {
+            let row_h = (28.0 * s).round();
+            if y + row_h > sb.y + sb.h - footer_h {
                 break;
             }
-            let indent = (item.level.saturating_sub(1) as f32) * 10.0;
-            let row = Rect::new(sb.x + 8.0, y, sb.w - 18.0, 24.0);
-            let is_cur = w.cursor_block == item.block_index;
-            if is_cur || row.contains(mouse_x, mouse_y) {
+            let row = Rect::new(sb.x + 8.0 * s, y, sb.w - 16.0 * s, row_h);
+            let active = w.cursor_block == item.block_index;
+            let hov = row.contains(mouse_x, mouse_y);
+            if active || hov {
                 surface.fill_rounded_rect(
                     row,
-                    5.0,
-                    if is_cur {
+                    4.0,
+                    if active {
                         DaylightTheme::WORD_SOFT
                     } else {
                         DaylightTheme::HOVER
                     },
                 );
             }
+            if active {
+                surface.fill_rect(
+                    Rect::new(row.x, row.y + 5.0 * s, 2.5, row.h - 10.0 * s),
+                    DaylightTheme::WORD_ACCENT,
+                );
+            }
+            let indent = (item.level as f32) * 9.0 * s;
             surface.draw_text_clipped(
                 fonts,
                 if item.level <= 1 {
@@ -862,67 +1893,74 @@ fn paint_word_sidebar(
                 } else {
                     FontSlot::SansRegular
                 },
-                12.0,
-                row.x + 8.0 + indent,
-                row.y + 16.5,
-                row.w - 14.0 - indent,
-                if is_cur {
+                12.0 * s,
+                row.x + 10.0 * s + indent,
+                row.y + row_h * 0.67,
+                (row.w - 16.0 * s - indent).max(32.0),
+                if active {
                     DaylightTheme::WORD_ACCENT
                 } else {
                     DaylightTheme::INK_SUB
                 },
                 &item.title,
             );
-            hit_regions.push(HitRegion {
-                rect: row,
-                action: UiAction::JumpOutline {
+            let target_y = block_canvas_y.get(item.block_index).copied().unwrap_or(0.0);
+            hit_regions.push(HitRegion::button(
+                row,
+                UiAction::JumpOutline {
                     tab_idx,
                     block_idx: item.block_index,
-                    target_scroll_y: (item.block_index as f32) * 32.0,
+                    target_scroll_y: target_y,
                 },
-            });
-            y += 26.0;
+            ));
+            y += row_h + 2.0 * s;
         }
     }
 
-    // Bottom Live Stats Card
+    // Hairline-separated Document Metrics Ledger (zero floating AI-slop nested card!)
     let stats = w.doc.stats();
-    let card_h = 128.0;
-    let card = Rect::new(
-        sb.x + 12.0,
-        (sb.y + sb.h - card_h - 14.0).max(y + 12.0),
-        sb.w - 24.0,
-        card_h,
-    );
-    if card.y + card.h <= sb.y + sb.h - 4.0 {
-        surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
-        surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER);
+    let m_top = (sb.y + sb.h - footer_h + 8.0 * s).max(y + 12.0 * s);
+    if m_top + 96.0 * s <= sb.y + sb.h {
+        surface.fill_rect(
+            Rect::new(sb.x + 14.0 * s, m_top, sb.w - 28.0 * s, 1.0),
+            DaylightTheme::BORDER,
+        );
         surface.draw_text(
             fonts,
             FontSlot::SansBold,
-            11.0,
-            card.x + 12.0,
-            card.y + 20.0,
-            DaylightTheme::WORD_ACCENT,
-            "LIVE METRICS",
+            10.2 * s,
+            sb.x + 14.0 * s,
+            m_top + 18.0 * s,
+            DaylightTheme::INK_MUTED,
+            "DOCUMENT METRICS",
         );
-        let lines = [
-            format!("Words: {}", stats.words),
-            format!("Characters: {}", stats.chars),
-            format!("Reading time: ~{} min", stats.reading_time_minutes.max(1)),
-            format!("Paper: {}", w.doc.page_setup.paper_size.label()),
-            format!("Snapshots: {}", w.snapshots.list().len()),
+        let rows = [
+            ("Words", format!("{}", stats.words)),
+            ("Characters", format!("{}", stats.chars)),
+            ("Reading", format!("~{} min", stats.reading_time_minutes)),
+            ("Paper", w.doc.page_setup.paper_size.label().to_string()),
         ];
-        for (i, line) in lines.iter().enumerate() {
-            surface.draw_text_clipped(
+        for (i, (k, val)) in rows.iter().enumerate() {
+            let ry = m_top + (36.0 + (i as f32) * 19.0) * s;
+            surface.draw_text(
                 fonts,
                 FontSlot::SansRegular,
-                11.5,
-                card.x + 12.0,
-                card.y + 39.0 + (i as f32) * 17.5,
-                card.w - 20.0,
-                DaylightTheme::INK_SUB,
-                line,
+                11.4 * s,
+                sb.x + 14.0 * s,
+                ry,
+                DaylightTheme::INK_MUTED,
+                k,
+            );
+            let vw = fonts.measure_text(FontSlot::Mono, val, 11.2 * s);
+            surface.draw_text_clipped(
+                fonts,
+                FontSlot::Mono,
+                11.2 * s,
+                (sb.x + sb.w - 14.0 * s - vw).max(sb.x + 76.0 * s),
+                ry,
+                sb.w - 86.0 * s,
+                DaylightTheme::INK,
+                val,
             );
         }
     }

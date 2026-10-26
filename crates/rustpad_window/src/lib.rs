@@ -1,6 +1,6 @@
-//! Cross-Platform Native Desktop Windowing, Input Events, Clipboard & OS File Dialogs.
+//! Cross-Platform Native Desktop Windowing, Input Events, Cursors, DPI, Clipboard & OS File Dialogs.
 //! Zero external crate dependencies: uses dynamic `libX11.so.6` on Linux, native `Win32`
-//! (`user32` / `gdi32` / `comdlg32`) on Windows, and portable fallback elsewhere.
+//! (`user32` / `gdi32` / `comdlg32` / `kernel32`) on Windows, and portable fallback elsewhere.
 
 #[cfg(target_os = "linux")]
 mod linux_x11;
@@ -8,8 +8,10 @@ mod linux_x11;
 mod win32;
 
 use rustpad_render::Surface;
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modifiers {
@@ -43,6 +45,14 @@ pub enum MouseButton {
     Middle,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorShape {
+    Arrow,
+    IBeam,
+    Hand,
+    ResizeEW,
+}
+
 #[derive(Debug, Clone)]
 pub enum WindowEvent {
     Resize { width: u32, height: u32 },
@@ -69,6 +79,9 @@ pub enum WindowEvent {
 pub trait DesktopAppHandler {
     fn on_event(&mut self, event: WindowEvent, surface: &mut Surface) -> AppControl;
     fn render(&mut self, surface: &mut Surface);
+    fn desired_cursor(&self) -> CursorShape {
+        CursorShape::Arrow
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +89,135 @@ pub enum AppControl {
     Continue,
     Redraw,
     Exit,
+}
+
+/// Detects the display scale factor (`1.0` at 96 DPI, `1.25` at 120 DPI, `1.5` at 144 DPI, etc.).
+pub fn detect_dpi_scale() -> f32 {
+    if let Ok(raw) = std::env::var("RUSTPAD_UI_SCALE") {
+        if let Ok(v) = raw.trim().parse::<f32>() {
+            return v.clamp(0.85, 2.0);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return win32::query_system_dpi_scale();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(gdk) = std::env::var("GDK_SCALE") {
+            if let Ok(v) = gdk.trim().parse::<f32>() {
+                return v.clamp(1.0, 2.0);
+            }
+        }
+        1.0
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        1.0
+    }
+}
+
+fn internal_clipboard() -> &'static Mutex<String> {
+    static CLIP: OnceLock<Mutex<String>> = OnceLock::new();
+    CLIP.get_or_init(|| Mutex::new(String::new()))
+}
+
+/// Writes UTF-8 text to the native OS clipboard (with in-process mirror for headless/test use).
+pub fn set_clipboard_text(text: &str) -> bool {
+    if let Ok(mut guard) = internal_clipboard().lock() {
+        *guard = text.to_string();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return win32::set_win32_clipboard_text(text);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        for (bin, args) in [
+            ("wl-copy", &[][..]),
+            ("xclip", &["-selection", "clipboard"][..]),
+            ("xsel", &["--clipboard", "--input"][..]),
+        ] {
+            if let Ok(mut child) = Command::new(bin)
+                .args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+                if child.wait().map(|s| s.success()).unwrap_or(false) {
+                    return true;
+                }
+            }
+        }
+        true
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(mut child) = Command::new("pbcopy").stdin(Stdio::piped()).spawn() {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            let _ = child.wait();
+        }
+        true
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        true
+    }
+}
+
+/// Reads UTF-8 text from the native OS clipboard (falling back to the in-process clipboard buffer).
+pub fn get_clipboard_text() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(s) = win32::get_win32_clipboard_text() {
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        for (bin, args) in [
+            ("wl-paste", &["--no-newline"][..]),
+            ("xclip", &["-selection", "clipboard", "-o"][..]),
+            ("xsel", &["--clipboard", "--output"][..]),
+        ] {
+            if let Ok(out) = Command::new(bin)
+                .args(args)
+                .stderr(Stdio::null())
+                .output()
+            {
+                if out.status.success() {
+                    let s = String::from_utf8_lossy(&out.stdout).to_string();
+                    if !s.is_empty() {
+                        return Some(s);
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = Command::new("pbpaste").output() {
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout).to_string();
+                if !s.is_empty() {
+                    return Some(s);
+                }
+            }
+        }
+    }
+    internal_clipboard()
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .filter(|s| !s.is_empty())
 }
 
 pub fn run_native_window(
@@ -99,9 +241,6 @@ pub fn run_native_window(
     }
 }
 
-/// Attempts to invoke a native OS Open File dialog (`Explorer` on Windows, `zenity`/`kdialog` on Linux,
-/// `osascript` on macOS). Returns `None` if cancelled or if no external dialog tool is installed
-/// (allowing the caller to fall back cleanly to RustPad's built-in Daylight File Modal).
 pub fn try_native_open_dialog(title: &str) -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -191,7 +330,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_window_event_types() {
+    fn test_window_event_and_clipboard_roundtrip() {
         let ev = WindowEvent::KeyDown {
             key: Key::Char('k'),
             mods: Modifiers {
@@ -201,5 +340,10 @@ mod tests {
             },
         };
         assert!(matches!(ev, WindowEvent::KeyDown { .. }));
+        assert!(set_clipboard_text("RustPad Clipboard Check"));
+        assert_eq!(
+            get_clipboard_text().as_deref(),
+            Some("RustPad Clipboard Check")
+        );
     }
 }

@@ -380,4 +380,149 @@ impl Surface {
     pub fn draw_logo_64(&mut self, x: i32, y: i32) {
         self.blit_rgba(x, y, 64, 64, LOGO_64_RGBA);
     }
+
+    /// Draws crisp anti-aliased geometric desktop icons without bitmap blur or emoji.
+    pub fn draw_icon(&mut self, icon: UiIcon, cx: f32, cy: f32, size: f32, color: Color) {
+        let h = size * 0.5;
+        let sw = (size * 0.105).clamp(1.25, 2.0);
+        match icon {
+            UiIcon::Sidebar => {
+                let r = Rect::new(cx - h, cy - h * 0.82, size, size * 0.82);
+                self.stroke_rounded_rect(r, 2.5, sw, color);
+                self.draw_line(r.x + r.w * 0.34, r.y + 1.0, r.x + r.w * 0.34, r.y + r.h - 1.0, sw, color);
+            }
+            UiIcon::SidebarRight => {
+                let r = Rect::new(cx - h, cy - h * 0.82, size, size * 0.82);
+                self.stroke_rounded_rect(r, 2.5, sw, color);
+                self.draw_line(r.x + r.w * 0.66, r.y + 1.0, r.x + r.w * 0.66, r.y + r.h - 1.0, sw, color);
+            }
+            UiIcon::SplitPane => {
+                let r = Rect::new(cx - h, cy - h * 0.82, size, size * 0.82);
+                self.stroke_rounded_rect(r, 2.5, sw, color);
+                self.draw_line(cx, r.y + 1.0, cx, r.y + r.h - 1.0, sw, color);
+            }
+            UiIcon::Undo => {
+                self.draw_line(cx - h * 0.65, cy - h * 0.15, cx - h * 0.18, cy - h * 0.60, sw, color);
+                self.draw_line(cx - h * 0.65, cy - h * 0.15, cx - h * 0.18, cy + h * 0.28, sw, color);
+                self.draw_line(cx - h * 0.60, cy - h * 0.15, cx + h * 0.45, cy - h * 0.15, sw, color);
+                self.draw_line(cx + h * 0.45, cy - h * 0.15, cx + h * 0.65, cy + h * 0.18, sw, color);
+                self.draw_line(cx + h * 0.65, cy + h * 0.18, cx + h * 0.35, cy + h * 0.55, sw, color);
+                self.draw_line(cx + h * 0.35, cy + h * 0.55, cx - h * 0.20, cy + h * 0.55, sw, color);
+            }
+            UiIcon::Redo => {
+                self.draw_line(cx + h * 0.65, cy - h * 0.15, cx + h * 0.18, cy - h * 0.60, sw, color);
+                self.draw_line(cx + h * 0.65, cy - h * 0.15, cx + h * 0.18, cy + h * 0.28, sw, color);
+                self.draw_line(cx + h * 0.60, cy - h * 0.15, cx - h * 0.45, cy - h * 0.15, sw, color);
+                self.draw_line(cx - h * 0.45, cy - h * 0.15, cx - h * 0.65, cy + h * 0.18, sw, color);
+                self.draw_line(cx - h * 0.65, cy + h * 0.18, cx - h * 0.35, cy + h * 0.55, sw, color);
+                self.draw_line(cx - h * 0.35, cy + h * 0.55, cx + h * 0.20, cy + h * 0.55, sw, color);
+            }
+            UiIcon::AlignLeft => {
+                let x0 = cx - h * 0.72;
+                for (i, w_mul) in [1.44f32, 0.98, 1.36, 0.82].iter().enumerate() {
+                    let y = cy - h * 0.58 + (i as f32) * (size * 0.25);
+                    self.draw_line(x0, y, x0 + h * w_mul, y, sw, color);
+                }
+            }
+            UiIcon::AlignCenter => {
+                for (i, w_mul) in [0.72f32, 0.46, 0.68, 0.40].iter().enumerate() {
+                    let y = cy - h * 0.58 + (i as f32) * (size * 0.25);
+                    self.draw_line(cx - h * w_mul, y, cx + h * w_mul, y, sw, color);
+                }
+            }
+            UiIcon::AlignRight => {
+                let x1 = cx + h * 0.72;
+                for (i, w_mul) in [1.44f32, 0.98, 1.36, 0.82].iter().enumerate() {
+                    let y = cy - h * 0.58 + (i as f32) * (size * 0.25);
+                    self.draw_line(x1 - h * w_mul, y, x1, y, sw, color);
+                }
+            }
+            UiIcon::BulletList => {
+                for i in 0..3 {
+                    let y = cy - h * 0.52 + (i as f32) * (size * 0.34);
+                    self.fill_rounded_rect(Rect::new(cx - h * 0.78, y - 1.6, 3.2, 3.2), 1.6, color);
+                    self.draw_line(cx - h * 0.32, y, cx + h * 0.76, y, sw, color);
+                }
+            }
+            UiIcon::Checklist => {
+                let box1 = Rect::new(cx - h * 0.80, cy - h * 0.65, size * 0.34, size * 0.34);
+                self.stroke_rounded_rect(box1, 1.5, sw * 0.9, color);
+                self.draw_line(box1.x + 1.2, box1.y + box1.h * 0.55, box1.x + box1.w * 0.42, box1.y + box1.h - 1.2, sw * 0.9, color);
+                self.draw_line(box1.x + box1.w * 0.42, box1.y + box1.h - 1.2, box1.x + box1.w - 0.8, box1.y + 1.2, sw * 0.9, color);
+                self.draw_line(cx - h * 0.12, cy - h * 0.32, cx + h * 0.78, cy - h * 0.32, sw, color);
+
+                let box2 = Rect::new(cx - h * 0.80, cy + h * 0.12, size * 0.34, size * 0.34);
+                self.stroke_rounded_rect(box2, 1.5, sw * 0.9, color);
+                self.draw_line(cx - h * 0.12, cy + h * 0.45, cx + h * 0.78, cy + h * 0.45, sw, color);
+            }
+            UiIcon::Table => {
+                let r = Rect::new(cx - h * 0.78, cy - h * 0.72, size * 0.78, size * 0.72);
+                self.stroke_rounded_rect(r, 2.0, sw, color);
+                self.draw_line(r.x, r.y + r.h * 0.38, r.x + r.w, r.y + r.h * 0.38, sw, color);
+                self.draw_line(r.x + r.w * 0.5, r.y, r.x + r.w * 0.5, r.y + r.h, sw, color);
+            }
+            UiIcon::Sparkles => {
+                // Clean 4-point architectural star + secondary dot
+                self.draw_line(cx - h * 0.12, cy - h * 0.76, cx - h * 0.12, cy + h * 0.64, sw, color);
+                self.draw_line(cx - h * 0.82, cy - h * 0.06, cx + h * 0.58, cy - h * 0.06, sw, color);
+                self.draw_line(cx - h * 0.48, cy - h * 0.42, cx + h * 0.24, cy + h * 0.30, sw * 0.85, color);
+                self.draw_line(cx + h * 0.24, cy - h * 0.42, cx - h * 0.48, cy + h * 0.30, sw * 0.85, color);
+                self.draw_line(cx + h * 0.58, cy - h * 0.72, cx + h * 0.58, cy - h * 0.28, sw * 0.85, color);
+                self.draw_line(cx + h * 0.36, cy - h * 0.50, cx + h * 0.80, cy - h * 0.50, sw * 0.85, color);
+            }
+            UiIcon::Search => {
+                let r = Rect::new(cx - h * 0.74, cy - h * 0.74, size * 0.62, size * 0.62);
+                self.stroke_rounded_rect(r, size * 0.31, sw, color);
+                self.draw_line(cx + h * 0.16, cy + h * 0.16, cx + h * 0.74, cy + h * 0.74, sw * 1.15, color);
+            }
+            UiIcon::Plus => {
+                self.draw_line(cx - h * 0.62, cy, cx + h * 0.62, cy, sw * 1.1, color);
+                self.draw_line(cx, cy - h * 0.62, cx, cy + h * 0.62, sw * 1.1, color);
+            }
+            UiIcon::Minus => {
+                self.draw_line(cx - h * 0.62, cy, cx + h * 0.62, cy, sw * 1.1, color);
+            }
+            UiIcon::ChevronDown => {
+                self.draw_line(cx - h * 0.52, cy - h * 0.20, cx, cy + h * 0.32, sw * 1.05, color);
+                self.draw_line(cx, cy + h * 0.32, cx + h * 0.52, cy - h * 0.20, sw * 1.05, color);
+            }
+            UiIcon::ChevronRight => {
+                self.draw_line(cx - h * 0.22, cy - h * 0.52, cx + h * 0.30, cy, sw * 1.05, color);
+                self.draw_line(cx + h * 0.30, cy, cx - h * 0.22, cy + h * 0.52, sw * 1.05, color);
+            }
+            UiIcon::Close => {
+                self.draw_line(cx - h * 0.52, cy - h * 0.52, cx + h * 0.52, cy + h * 0.52, sw * 1.05, color);
+                self.draw_line(cx + h * 0.52, cy - h * 0.52, cx - h * 0.52, cy + h * 0.52, sw * 1.05, color);
+            }
+            UiIcon::Trash => {
+                self.draw_line(cx - h * 0.68, cy - h * 0.48, cx + h * 0.68, cy - h * 0.48, sw, color);
+                self.draw_line(cx - h * 0.25, cy - h * 0.72, cx + h * 0.25, cy - h * 0.72, sw, color);
+                let body = Rect::new(cx - h * 0.50, cy - h * 0.44, size * 0.50, size * 0.60);
+                self.stroke_rounded_rect(body, 1.8, sw, color);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiIcon {
+    Sidebar,
+    SidebarRight,
+    SplitPane,
+    Undo,
+    Redo,
+    AlignLeft,
+    AlignCenter,
+    AlignRight,
+    BulletList,
+    Checklist,
+    Table,
+    Sparkles,
+    Search,
+    Plus,
+    Minus,
+    ChevronDown,
+    ChevronRight,
+    Close,
+    Trash,
 }

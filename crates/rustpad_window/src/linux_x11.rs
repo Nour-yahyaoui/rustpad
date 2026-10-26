@@ -3,7 +3,9 @@
 
 #![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
 
-use crate::{AppControl, DesktopAppHandler, Key, Modifiers, MouseButton, WindowEvent};
+use crate::{
+    AppControl, CursorShape, DesktopAppHandler, Key, Modifiers, MouseButton, WindowEvent,
+};
 use rustpad_render::canvas::LOGO_64_RGBA;
 use rustpad_render::{DaylightTheme, Surface};
 use std::ffi::{c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void, CString};
@@ -251,6 +253,10 @@ pub fn run_x11_window(
             load_sym(lib, b"XDestroyWindow\0")?;
         let XCloseDisplay: unsafe extern "C" fn(*mut Display) -> c_int =
             load_sym(lib, b"XCloseDisplay\0")?;
+        let x_create_font_cursor: Option<unsafe extern "C" fn(*mut Display, c_uint) -> c_ulong> =
+            load_sym(lib, b"XCreateFontCursor\0").ok();
+        let x_define_cursor: Option<unsafe extern "C" fn(*mut Display, Window, c_ulong) -> c_int> =
+            load_sym(lib, b"XDefineCursor\0").ok();
 
         let dpy = XOpenDisplay(std::ptr::null());
         if dpy.is_null() {
@@ -340,6 +346,17 @@ pub fn run_x11_window(
 
         let mut last_tick = Instant::now();
         let mut running = true;
+        let mut active_cursor = CursorShape::Arrow;
+        let cursors = if let Some(create_cur) = x_create_font_cursor {
+            Some((
+                create_cur(dpy, 68),  // XC_left_ptr
+                create_cur(dpy, 152), // XC_xterm
+                create_cur(dpy, 60),  // XC_hand2
+                create_cur(dpy, 108), // XC_sb_h_double_arrow
+            ))
+        } else {
+            None
+        };
 
         while running {
             let mut needs_redraw = false;
@@ -403,11 +420,11 @@ pub fn run_x11_window(
                                 mods,
                             }),
                             4 => Some(WindowEvent::Scroll {
-                                delta_y: 48.0,
+                                delta_y: -56.0,
                                 mods,
                             }),
                             5 => Some(WindowEvent::Scroll {
-                                delta_y: -48.0,
+                                delta_y: 56.0,
                                 mods,
                             }),
                             _ => None,
@@ -474,6 +491,23 @@ pub fn run_x11_window(
                                 &mut surface,
                             );
                             handle_ctrl(ctrl, &mut running, &mut needs_redraw);
+                        } else if mods.ctrl && matches!(keysym, 0x5C | 0x3D | 0x2B | 0x2D | 0x30 | 0x5B | 0x5D) {
+                            let ch = match keysym {
+                                0x5C => '\\',
+                                0x3D | 0x2B => '=',
+                                0x2D => '-',
+                                0x30 => '0',
+                                0x5B => '[',
+                                _ => ']',
+                            };
+                            let ctrl = app.on_event(
+                                WindowEvent::KeyDown {
+                                    key: Key::Char(ch),
+                                    mods,
+                                },
+                                &mut surface,
+                            );
+                            handle_ctrl(ctrl, &mut running, &mut needs_redraw);
                         } else if n > 0 && !mods.ctrl {
                             let bytes: Vec<u8> =
                                 buf[..n as usize].iter().map(|&c| c as u8).collect();
@@ -492,7 +526,24 @@ pub fn run_x11_window(
                 }
             }
 
-            if last_tick.elapsed() >= Duration::from_millis(500) {
+            let next_cur = app.desired_cursor();
+            if next_cur != active_cursor {
+                active_cursor = next_cur;
+                if let (Some(def_cur), Some((c_arr, c_ibeam, c_hand, c_ew))) =
+                    (x_define_cursor, cursors)
+                {
+                    let cid = match next_cur {
+                        CursorShape::Arrow => c_arr,
+                        CursorShape::IBeam => c_ibeam,
+                        CursorShape::Hand => c_hand,
+                        CursorShape::ResizeEW => c_ew,
+                    };
+                    def_cur(dpy, win, cid);
+                    XFlush(dpy);
+                }
+            }
+
+            if last_tick.elapsed() >= Duration::from_millis(50) {
                 last_tick = Instant::now();
                 let ctrl = app.on_event(WindowEvent::Tick, &mut surface);
                 handle_ctrl(ctrl, &mut running, &mut needs_redraw);

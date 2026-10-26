@@ -1,8 +1,9 @@
-//! Pure-Rust Win32 (`user32` / `gdi32` / `comdlg32`) Native Desktop Window & Explorer Dialogs.
+//! Pure-Rust Win32 (`user32` / `gdi32` / `comdlg32` / `kernel32`) Native Desktop Window,
+//! HiDPI Scale Detection, Native Cursors, UTF-16 Clipboard & Explorer File Dialogs.
 
 #![allow(non_snake_case, non_camel_case_types, clippy::upper_case_acronyms)]
 
-use crate::{AppControl, DesktopAppHandler, Key, Modifiers, MouseButton, WindowEvent};
+use crate::{AppControl, CursorShape, DesktopAppHandler, Key, Modifiers, MouseButton, WindowEvent};
 use rustpad_render::{DaylightTheme, Surface};
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ type HICON = *mut c_void;
 type HCURSOR = *mut c_void;
 type HBRUSH = *mut c_void;
 type HMENU = *mut c_void;
+type HGLOBAL = *mut c_void;
 type UINT = u32;
 type DWORD = u32;
 type WORD = u16;
@@ -114,6 +116,10 @@ struct OPENFILENAMEW {
 #[link(name = "kernel32")]
 extern "system" {
     fn GetModuleHandleW(lpModuleName: *const u16) -> HINSTANCE;
+    fn GlobalAlloc(uFlags: UINT, dwBytes: usize) -> HGLOBAL;
+    fn GlobalLock(hMem: HGLOBAL) -> *mut c_void;
+    fn GlobalUnlock(hMem: HGLOBAL) -> BOOL;
+    fn GlobalFree(hMem: HGLOBAL) -> HGLOBAL;
 }
 
 #[link(name = "user32")]
@@ -146,12 +152,23 @@ extern "system" {
     fn SetTimer(hWnd: HWND, nIDEvent: usize, uElapse: UINT, lpTimerFunc: *const c_void) -> usize;
     fn GetKeyState(nVirtKey: i32) -> i16;
     fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: *const u16) -> HCURSOR;
+    fn SetCursor(hCursor: HCURSOR) -> HCURSOR;
+    fn SetCapture(hWnd: HWND) -> HWND;
+    fn ReleaseCapture() -> BOOL;
+    fn GetDC(hWnd: HWND) -> HDC;
+    fn ReleaseDC(hWnd: HWND, hDC: HDC) -> i32;
+    fn OpenClipboard(hWndNewOwner: HWND) -> BOOL;
+    fn CloseClipboard() -> BOOL;
+    fn EmptyClipboard() -> BOOL;
+    fn GetClipboardData(uFormat: UINT) -> HGLOBAL;
+    fn SetClipboardData(uFormat: UINT, hMem: HGLOBAL) -> HGLOBAL;
     fn SetWindowLongPtrW(hWnd: HWND, nIndex: i32, dwNewLong: isize) -> isize;
     fn GetWindowLongPtrW(hWnd: HWND, nIndex: i32) -> isize;
 }
 
 #[link(name = "gdi32")]
 extern "system" {
+    fn GetDeviceCaps(hdc: HDC, index: i32) -> i32;
     fn StretchDIBits(
         hdc: HDC,
         xDest: i32,
@@ -184,6 +201,88 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+pub fn query_system_dpi_scale() -> f32 {
+    unsafe {
+        SetProcessDPIAware();
+        let hdc = GetDC(std::ptr::null_mut());
+        if hdc.is_null() {
+            return 1.0;
+        }
+        let dpi_x = GetDeviceCaps(hdc, 88 /* LOGPIXELSX */);
+        ReleaseDC(std::ptr::null_mut(), hdc);
+        if dpi_x <= 0 {
+            1.0
+        } else {
+            (dpi_x as f32 / 96.0).clamp(1.0, 2.0)
+        }
+    }
+}
+
+pub fn set_win32_clipboard_text(text: &str) -> bool {
+    const CF_UNICODETEXT: UINT = 13;
+    const GMEM_MOVEABLE: UINT = 0x0002;
+    unsafe {
+        if OpenClipboard(std::ptr::null_mut()) == 0 {
+            return false;
+        }
+        EmptyClipboard();
+        let wide: Vec<u16> = text
+            .replace("\r\n", "\n")
+            .replace('\n', "\r\n")
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let byte_len = wide.len() * 2;
+        let hmem = GlobalAlloc(GMEM_MOVEABLE, byte_len);
+        if hmem.is_null() {
+            CloseClipboard();
+            return false;
+        }
+        let dst = GlobalLock(hmem) as *mut u16;
+        if dst.is_null() {
+            GlobalFree(hmem);
+            CloseClipboard();
+            return false;
+        }
+        std::ptr::copy_nonoverlapping(wide.as_ptr(), dst, wide.len());
+        GlobalUnlock(hmem);
+        let ok = !SetClipboardData(CF_UNICODETEXT, hmem).is_null();
+        if !ok {
+            GlobalFree(hmem);
+        }
+        CloseClipboard();
+        ok
+    }
+}
+
+pub fn get_win32_clipboard_text() -> Option<String> {
+    const CF_UNICODETEXT: UINT = 13;
+    unsafe {
+        if OpenClipboard(std::ptr::null_mut()) == 0 {
+            return None;
+        }
+        let hmem = GetClipboardData(CF_UNICODETEXT);
+        if hmem.is_null() {
+            CloseClipboard();
+            return None;
+        }
+        let ptr = GlobalLock(hmem) as *const u16;
+        if ptr.is_null() {
+            CloseClipboard();
+            return None;
+        }
+        let mut len = 0usize;
+        while len < 524_288 && *ptr.add(len) != 0 {
+            len += 1;
+        }
+        let slice = std::slice::from_raw_parts(ptr, len);
+        let decoded = String::from_utf16_lossy(slice).replace("\r\n", "\n");
+        GlobalUnlock(hmem);
+        CloseClipboard();
+        Some(decoded)
+    }
+}
+
 fn current_mods() -> Modifiers {
     unsafe {
         Modifiers {
@@ -191,6 +290,19 @@ fn current_mods() -> Modifiers {
             ctrl: (GetKeyState(0x11) as u16 & 0x8000) != 0,
             alt: (GetKeyState(0x12) as u16 & 0x8000) != 0,
         }
+    }
+}
+
+unsafe fn apply_win32_cursor(shape: CursorShape) {
+    let id: usize = match shape {
+        CursorShape::Arrow => 32512,    // IDC_ARROW
+        CursorShape::IBeam => 32513,    // IDC_IBEAM
+        CursorShape::ResizeEW => 32644, // IDC_SIZEWE
+        CursorShape::Hand => 32649,     // IDC_HAND
+    };
+    let hcur = LoadCursorW(std::ptr::null_mut(), id as *const u16);
+    if !hcur.is_null() {
+        SetCursor(hcur);
     }
 }
 
@@ -206,18 +318,25 @@ unsafe extern "system" fn wnd_proc(
     }
     let ctx = &mut *ptr;
 
-    let mut dispatch = |ev: WindowEvent| {
-        match ctx.app.on_event(ev, &mut ctx.surface) {
-            AppControl::Continue => {}
-            AppControl::Redraw => {
-                ctx.app.render(&mut ctx.surface);
-                InvalidateRect(hwnd, std::ptr::null(), 0);
-            }
-            AppControl::Exit => PostQuitMessage(0),
+    let mut dispatch = |ev: WindowEvent| match ctx.app.on_event(ev, &mut ctx.surface) {
+        AppControl::Continue => {}
+        AppControl::Redraw => {
+            ctx.app.render(&mut ctx.surface);
+            InvalidateRect(hwnd, std::ptr::null(), 0);
         }
+        AppControl::Exit => PostQuitMessage(0),
     };
 
     match msg {
+        0x0014 /* WM_ERASEBKGND */ => 1,
+        0x0020 /* WM_SETCURSOR */ => {
+            if (lparam & 0xFFFF) == 1 /* HTCLIENT */ {
+                apply_win32_cursor(ctx.app.desired_cursor());
+                1
+            } else {
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
+        }
         0x000F /* WM_PAINT */ => {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
             let hdc = BeginPaint(hwnd, &mut ps);
@@ -225,10 +344,10 @@ unsafe extern "system" fn wnd_proc(
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: std::mem::size_of::<BITMAPINFOHEADER>() as DWORD,
                     biWidth: ctx.surface.width as LONG,
-                    biHeight: -(ctx.surface.height as LONG), // top-down
+                    biHeight: -(ctx.surface.height as LONG),
                     biPlanes: 1,
                     biBitCount: 32,
-                    biCompression: 0, // BI_RGB
+                    biCompression: 0,
                     biSizeImage: 0,
                     biXPelsPerMeter: 0,
                     biYPelsPerMeter: 0,
@@ -259,7 +378,9 @@ unsafe extern "system" fn wnd_proc(
             let w = ((lparam as usize) & 0xFFFF).max(320) as u32;
             let h = (((lparam as usize) >> 16) & 0xFFFF).max(240) as u32;
             ctx.surface.resize(w, h, DaylightTheme::DESK_BG);
-            let _ = ctx.app.on_event(WindowEvent::Resize { width: w, height: h }, &mut ctx.surface);
+            let _ = ctx
+                .app
+                .on_event(WindowEvent::Resize { width: w, height: h }, &mut ctx.surface);
             ctx.app.render(&mut ctx.surface);
             InvalidateRect(hwnd, std::ptr::null(), 0);
             0
@@ -267,30 +388,57 @@ unsafe extern "system" fn wnd_proc(
         0x0200 /* WM_MOUSEMOVE */ => {
             let x = (lparam as i16) as f32;
             let y = ((lparam >> 16) as i16) as f32;
-            dispatch(WindowEvent::MouseMove { x, y, mods: current_mods() });
+            dispatch(WindowEvent::MouseMove {
+                x,
+                y,
+                mods: current_mods(),
+            });
+            apply_win32_cursor(ctx.app.desired_cursor());
             0
         }
         0x0201 /* WM_LBUTTONDOWN */ => {
+            SetCapture(hwnd);
             let x = (lparam as i16) as f32;
             let y = ((lparam >> 16) as i16) as f32;
-            dispatch(WindowEvent::MouseDown { x, y, button: MouseButton::Left, mods: current_mods() });
+            dispatch(WindowEvent::MouseDown {
+                x,
+                y,
+                button: MouseButton::Left,
+                mods: current_mods(),
+            });
             0
         }
         0x0202 /* WM_LBUTTONUP */ => {
+            ReleaseCapture();
             let x = (lparam as i16) as f32;
             let y = ((lparam >> 16) as i16) as f32;
-            dispatch(WindowEvent::MouseUp { x, y, button: MouseButton::Left, mods: current_mods() });
+            dispatch(WindowEvent::MouseUp {
+                x,
+                y,
+                button: MouseButton::Left,
+                mods: current_mods(),
+            });
             0
         }
         0x0204 /* WM_RBUTTONDOWN */ => {
             let x = (lparam as i16) as f32;
             let y = ((lparam >> 16) as i16) as f32;
-            dispatch(WindowEvent::MouseDown { x, y, button: MouseButton::Right, mods: current_mods() });
+            dispatch(WindowEvent::MouseDown {
+                x,
+                y,
+                button: MouseButton::Right,
+                mods: current_mods(),
+            });
             0
         }
         0x020A /* WM_MOUSEWHEEL */ => {
-            let delta = ((wparam >> 16) as i16) as f32 / 120.0 * 48.0;
-            dispatch(WindowEvent::Scroll { delta_y: delta, mods: current_mods() });
+            // Positive WHEEL_DELTA = scroll up (decrease scroll_y by 56px per notch)
+            let notches = ((wparam >> 16) as i16) as f32 / 120.0;
+            let delta = -notches * 56.0;
+            dispatch(WindowEvent::Scroll {
+                delta_y: delta,
+                mods: current_mods(),
+            });
             0
         }
         0x0100 /* WM_KEYDOWN */ => {
@@ -312,6 +460,12 @@ unsafe extern "system" fn wnd_proc(
                 vk if mods.ctrl && (0x41..=0x5A).contains(&vk) => {
                     Some(Key::Char(((vk as u8) + 32) as char))
                 }
+                0xDC if mods.ctrl => Some(Key::Char('\\')),
+                0xBB | 0x6B if mods.ctrl => Some(Key::Char('=')),
+                0xBD | 0x6D if mods.ctrl => Some(Key::Char('-')),
+                0x30 | 0x60 if mods.ctrl => Some(Key::Char('0')),
+                0xDB if mods.ctrl => Some(Key::Char('[')),
+                0xDD if mods.ctrl => Some(Key::Char(']')),
                 _ => None,
             };
             if let Some(k) = key {
@@ -350,7 +504,10 @@ pub fn run_win32_window(
     app: &mut dyn DesktopAppHandler,
 ) -> Result<(), String> {
     unsafe {
-        SetProcessDPIAware();
+        let dpi_scale = query_system_dpi_scale();
+        let scaled_w = ((initial_width as f32) * dpi_scale.clamp(1.0, 1.5)).round() as u32;
+        let scaled_h = ((initial_height as f32) * dpi_scale.clamp(1.0, 1.5)).round() as u32;
+
         let hinst = GetModuleHandleW(std::ptr::null());
         let cls_name = to_wide("RustPadNativeStudioWindow");
         let wnd_title = to_wide(title);
@@ -362,7 +519,7 @@ pub fn run_win32_window(
             cbWndExtra: 0,
             hInstance: hinst,
             hIcon: std::ptr::null_mut(),
-            hCursor: LoadCursorW(std::ptr::null_mut(), 32512 as *const u16),
+            hCursor: std::ptr::null_mut(), // Managed dynamically via WM_SETCURSOR
             hbrBackground: std::ptr::null_mut(),
             lpszMenuName: std::ptr::null(),
             lpszClassName: cls_name.as_ptr(),
@@ -371,7 +528,7 @@ pub fn run_win32_window(
 
         let mut ctx = Win32Context {
             app,
-            surface: Surface::new(initial_width, initial_height, DaylightTheme::DESK_BG),
+            surface: Surface::new(scaled_w, scaled_h, DaylightTheme::DESK_BG),
         };
         ctx.app.render(&mut ctx.surface);
 
@@ -380,10 +537,10 @@ pub fn run_win32_window(
             cls_name.as_ptr(),
             wnd_title.as_ptr(),
             0x00CF_0000, /* WS_OVERLAPPEDWINDOW */
-            80,
-            50,
-            initial_width as i32 + 16,
-            initial_height as i32 + 39,
+            64,
+            40,
+            scaled_w as i32 + 16,
+            scaled_h as i32 + 39,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             hinst,
@@ -394,7 +551,8 @@ pub fn run_win32_window(
         }
 
         SetWindowLongPtrW(hwnd, -21, (&mut ctx as *mut Win32Context<'_>) as isize);
-        SetTimer(hwnd, 1, 500, std::ptr::null());
+        // 50ms tick drives smooth cursor blink AND non-blocking background AI worker polling
+        SetTimer(hwnd, 1, 50, std::ptr::null());
         ShowWindow(hwnd, 5 /* SW_SHOW */);
 
         let mut msg: MSG = std::mem::zeroed();

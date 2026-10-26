@@ -1,4 +1,4 @@
-//! RustPad (`rustpad`) — 100% Pure-Rust Native Word (`.docx`) & PDF (`.pdf`) Desktop Studio + CLI.
+//! RustPad (`rustpad`) — 100% Pure-Rust Native Word (`.docx`), Vector PDF (`.pdf`) & Pluggable AI Desktop Studio + CLI.
 //! Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
 
 pub mod commands;
@@ -15,9 +15,14 @@ use doc_model::{RgbColor, TemplateKind};
 use docx_io::{load_docx_file, save_docx_file};
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
 use pdf_engine::{load_pdf_file, PdfAnnotation, PdfDocument};
-use power_tools::{convert_file, extract_text_ocr_or_pdf, word_to_markdown, word_to_pdf_document};
+use power_tools::{
+    convert_file, extract_text_ocr_or_pdf, parse_ai_output_to_blocks, run_ai_task,
+    word_to_markdown, word_to_pdf_document, AiAgentConfig, AiProviderPreset, AiTask,
+};
 use rustpad_render::{encode_surface_png, DaylightTheme, Surface};
-use rustpad_window::{run_native_window, AppControl, DesktopAppHandler, WindowEvent};
+use rustpad_window::{
+    run_native_window, AppControl, CursorShape, DesktopAppHandler, WindowEvent,
+};
 use std::path::{Path, PathBuf};
 
 struct NativeAppRunner {
@@ -62,9 +67,13 @@ impl DesktopAppHandler for NativeAppRunner {
                 AppControl::Redraw
             }
             WindowEvent::Tick => {
+                let mut needs_redraw = self.app.poll_background_tasks();
                 self.tick_counter = self.tick_counter.wrapping_add(1);
-                if self.tick_counter % 30 == 0 {
+                if self.tick_counter % 10 == 0 {
                     self.app.cursor_blink_on = !self.app.cursor_blink_on;
+                    needs_redraw = true;
+                }
+                if needs_redraw {
                     AppControl::Redraw
                 } else {
                     AppControl::Continue
@@ -77,16 +86,27 @@ impl DesktopAppHandler for NativeAppRunner {
     fn render(&mut self, surface: &mut Surface) {
         render_app(&mut self.app, surface);
     }
+
+    fn desired_cursor(&self) -> CursorShape {
+        self.app.active_cursor
+    }
 }
 
 fn print_help() {
     println!(
         "\
-RustPad v{ver} — Pure-Rust Native Word (.docx) & PDF (.pdf) Desktop Studio
+RustPad v{ver} — Pure-Rust Native Word (.docx), Vector PDF (.pdf) & Pluggable AI Studio
 Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
 
 USAGE:
   rustpad [FILE]                        Launch the native desktop studio (optionally opening FILE)
+  rustpad ai <FILE> [OPTIONS]           Run a local (Ollama, nour-code, LM Studio) or cloud AI task
+      --task <grammar|summarize|description|sections|ask>
+      --provider <ollama|nour-code|lm-studio|openai|claude>
+      --url <ENDPOINT_URL>              Override HTTP(S) chat/messages endpoint URL
+      --model <MODEL_NAME>              Override model identifier (e.g. qwen2.5:7b, nour-code)
+      --prompt <INSTRUCTION>            Optional focus instruction or custom question
+      -o, --out <OUTPUT.docx|.md>       Write AI-augmented document or Markdown output to file
   rustpad convert <INPUT> <OUTPUT>      Convert between .docx, .pdf, and .md offline
   rustpad inspect <FILE>                Print page, word, character, or PDF object metrics
   rustpad ocr <FILE>                    Extract searchable text from a PDF or scanned image
@@ -97,6 +117,111 @@ USAGE:
   rustpad --help                        Print this help guide",
         ver = env!("CARGO_PKG_VERSION")
     );
+}
+
+fn run_cli_ai(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("Usage: rustpad ai <FILE> [--task summarize] [--provider ollama|nour-code|openai|claude] [--model NAME] [-o OUT]".into());
+    }
+    let input_path = PathBuf::from(&args[0]);
+    let mut cfg = AiAgentConfig::default();
+    let mut task = AiTask::SummarizeDocument;
+    let mut custom_prompt = String::new();
+    let mut out_path: Option<PathBuf> = None;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--task" | "-t" => {
+                i += 1;
+                let v = args.get(i).ok_or("Missing value after --task")?;
+                task = AiTask::from_cli_name(v).ok_or_else(|| {
+                    format!(
+                        "Unknown --task '{v}' (expected grammar, summarize, description, sections, ask)"
+                    )
+                })?;
+            }
+            "--provider" | "-p" => {
+                i += 1;
+                let v = args.get(i).ok_or("Missing value after --provider")?;
+                cfg.apply_preset(AiProviderPreset::from_slug(v));
+            }
+            "--url" => {
+                i += 1;
+                cfg.endpoint_url = args.get(i).ok_or("Missing value after --url")?.clone();
+            }
+            "--model" | "-m" => {
+                i += 1;
+                cfg.model = args.get(i).ok_or("Missing value after --model")?.clone();
+            }
+            "--prompt" => {
+                i += 1;
+                custom_prompt = args.get(i).ok_or("Missing value after --prompt")?.clone();
+            }
+            "-o" | "--out" => {
+                i += 1;
+                out_path = Some(PathBuf::from(args.get(i).ok_or("Missing value after -o")?));
+            }
+            flag => return Err(format!("Unrecognized flag '{flag}' for `rustpad ai`")),
+        }
+        i += 1;
+    }
+
+    let ext = input_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    let (mut maybe_doc, context) = match ext.as_str() {
+        "docx" => {
+            let doc = load_docx_file(&input_path).map_err(|e| e.0)?;
+            let md = word_to_markdown(&doc);
+            (Some(doc), md)
+        }
+        "pdf" => {
+            let (doc, text) = extract_text_ocr_or_pdf(&input_path)?;
+            (Some(doc), text)
+        }
+        _ => {
+            let raw = std::fs::read_to_string(&input_path)
+                .map_err(|e| format!("Failed reading '{}': {e}", input_path.display()))?;
+            (None, raw)
+        }
+    };
+
+    let res = run_ai_task(&cfg, task, &context, &custom_prompt)?;
+    if let Some(out) = out_path {
+        let out_ext = out
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if out_ext == "docx" {
+            let mut doc = maybe_doc
+                .take()
+                .unwrap_or_else(|| power_tools::markdown_to_word(&context));
+            doc.blocks.extend(parse_ai_output_to_blocks(&res.content));
+            save_docx_file(&out, &doc).map_err(|e| e.0)?;
+            eprintln!(
+                "AI ({} · {}ms) appended structured sections -> '{}'",
+                res.model_used,
+                res.latency_ms,
+                out.display()
+            );
+        } else {
+            std::fs::write(&out, &res.content).map_err(|e| e.to_string())?;
+            eprintln!(
+                "AI ({} · {}ms) wrote output -> '{}'",
+                res.model_used,
+                res.latency_ms,
+                out.display()
+            );
+        }
+    } else {
+        println!("{}", res.content);
+    }
+    Ok(())
 }
 
 fn generate_demo_files(out_dir: &Path) -> Result<(), String> {
@@ -138,13 +263,17 @@ fn render_studio_previews(out_dir: &Path) -> Result<(), String> {
     let mut app = RustPadApp::new();
     let mut surface = Surface::new(1440, 900, DaylightTheme::DESK_BG);
 
-    // 1. Word Studio Preview (Welcome Guide)
+    // 1. Word Studio + Pluggable AI Agent Studio Dock Preview
     app.active_tab = 1;
+    app.ai_dock.open = true;
+    app.ai_dock.output_text = "## Executive Summary\n- Pure-Rust native Win32 & X11 studio with zero WebView overhead.\n- Interactive OpenXML (.docx) tables with wrapped cells & draggable column dividers.\n- Pluggable local (Ollama, nour-code, LM Studio) & cloud AI agent bridge.".into();
+    app.ai_dock.status_line = "Completed via nour-code local endpoint in 184 ms.".into();
     render_app(&mut app, &mut surface);
     std::fs::write(out_dir.join("word-studio.png"), encode_surface_png(&surface))
         .map_err(|e| e.to_string())?;
+    app.ai_dock.open = false;
 
-    // 2. Home Hub Preview
+    // 2. Asymmetric Editorial Home Hub Preview
     app.active_tab = 0;
     render_app(&mut app, &mut surface);
     std::fs::write(out_dir.join("home-hub.png"), encode_surface_png(&surface))
@@ -197,7 +326,7 @@ fn render_studio_previews(out_dir: &Path) -> Result<(), String> {
     app.active_tab = 1;
     app.split_secondary_tab = Some(pdf_tab_idx);
     app.modal = Some(ActiveModal::CommandPalette {
-        query: "pdf".into(),
+        query: "table".into(),
         selected: 0,
     });
     render_app(&mut app, &mut surface);
@@ -253,7 +382,9 @@ fn inspect_file(path: &Path) -> Result<(), String> {
             println!("Annotations: {annotations}");
             Ok(())
         }
-        other => Err(format!("Unsupported inspect format '.{other}' (expected .docx or .pdf)")),
+        other => Err(format!(
+            "Unsupported inspect format '.{other}' (expected .docx or .pdf)"
+        )),
     }
 }
 
@@ -268,6 +399,9 @@ fn run_cli() -> Result<(), String> {
             "-V" | "--version" | "version" => {
                 println!("rustpad {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
+            }
+            "ai" => {
+                return run_cli_ai(&args[1..]);
             }
             "convert" => {
                 if args.len() < 3 {
@@ -307,7 +441,10 @@ fn run_cli() -> Result<(), String> {
                 return Ok(());
             }
             "demo-files" => {
-                let dir = args.get(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("examples"));
+                let dir = args
+                    .get(1)
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("examples"));
                 return generate_demo_files(&dir);
             }
             "--render-preview" => {
@@ -330,9 +467,9 @@ fn run_cli() -> Result<(), String> {
         tick_counter: 0,
     };
     run_native_window(
-        "RustPad — Pure-Rust Word (.docx) & PDF (.pdf) Studio",
-        1360,
-        860,
+        "RustPad — Pure-Rust Word (.docx), Vector PDF & AI Studio",
+        1380,
+        880,
         &mut runner,
     )
 }
@@ -349,13 +486,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_app_render_and_command_execution() {
+    fn test_app_render_tables_ai_dock_and_command_execution() {
         let mut app = RustPadApp::new();
-        let mut surface = Surface::new(1280, 800, DaylightTheme::DESK_BG);
+        let mut surface = Surface::new(1360, 860, DaylightTheme::DESK_BG);
         render_app(&mut app, &mut surface);
         assert!(!app.hit_regions.is_empty());
 
         app.execute_command(CommandId::ToggleBold);
+        app.execute_command(CommandId::InsertTable);
+        app.execute_command(CommandId::TableAddRow);
+        app.execute_command(CommandId::TableAddCol);
+        app.execute_command(CommandId::ToggleAiDock);
+        app.execute_command(CommandId::UiScaleUp);
+        app.execute_command(CommandId::UiScaleReset);
         app.execute_command(CommandId::ConvertPdfToWord);
         app.execute_command(CommandId::StampApproved);
         app.execute_command(CommandId::ToggleSplitView);
