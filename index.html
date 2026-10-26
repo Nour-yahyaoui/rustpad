@@ -1,0 +1,986 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('rustpad:theme');
+          var theme =
+            saved === 'dark' || saved === 'light'
+              ? saved
+              : window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          document.documentElement.dataset.theme = theme;
+        } catch (_) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
+    <title>RustPad — Pure-Rust Native Word (.docx) &amp; PDF (.pdf) Desktop Studio</title>
+    <meta
+      name="description"
+      content="Create, edit, sign, redact, and convert Microsoft Word (.docx) and vector PDF (.pdf) files offline in a 3.3 MB zero-WebView Rust desktop application by Nour Yahyaoui."
+    />
+    <meta name="author" content="Nour Yahyaoui" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="canonical" href="https://rustpad-studio.vercel.app/" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:title"
+      content="RustPad — Pure-Rust Native Word (.docx) &amp; PDF (.pdf) Desktop Studio"
+    />
+    <meta
+      property="og:description"
+      content="100% pure-Rust native desktop office suite (3.3 MB binary, zero WebView): Word (.docx) authoring, inline vector PDF (.pdf) editing, ink signatures, redaction, and CLI converters."
+    />
+    <meta property="og:url" content="https://rustpad-studio.vercel.app/" />
+    <meta property="og:image" content="https://rustpad-studio.vercel.app/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="RustPad native desktop studio showing Word (.docx) and Vector PDF (.pdf) side by side in the Paper and Daylight theme."
+    />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="RustPad — Pure-Rust Native Word (.docx) &amp; PDF (.pdf) Desktop Studio"
+    />
+    <meta
+      name="twitter:description"
+      content="3.3 MB pure-Rust native Word (.docx) and PDF (.pdf) desktop studio with zero WebView dependencies."
+    />
+    <meta name="twitter:image" content="https://rustpad-studio.vercel.app/og.png" />
+
+    <!-- Fonts (metric-matched fallbacks ensure zero layout shift offline or online) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Structured Data (SoftwareApplication) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "RustPad",
+        "softwareVersion": "1.0.0",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Linux, Windows, macOS",
+        "fileSize": "3.3MB",
+        "license": "https://opensource.org/licenses/MIT",
+        "url": "https://rustpad-studio.vercel.app/",
+        "downloadUrl": "https://github.com/Nour-yahyaoui/word/releases/tag/v1.0.0",
+        "codeRepository": "https://github.com/Nour-yahyaoui/word",
+        "description": "100% pure-Rust native desktop application and CLI for creating, editing, signing, redacting, and converting Microsoft Word (.docx) and ISO 32000 PDF (.pdf) documents offline.",
+        "author": {
+          "@type": "Person",
+          "name": "Nour Yahyaoui",
+          "url": "https://github.com/Nour-yahyaoui",
+          "email": "nourryahyaoui@gmail.com"
+        },
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        }
+      }
+    </script>
+  </head>
+  <body id="top">
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+
+    <!-- Typesetter's Proof Registration Strip -->
+    <div class="reg-strip" role="region" aria-label="Technical specification summary">
+      <div class="proof-frame reg-strip-inner">
+        <span class="reg-coord">
+          <span class="reg-mark" aria-hidden="true"></span>
+          <span>SPEC SHEET · RUSTPAD v1.0.0 · MIT OPEN SOURCE</span>
+        </span>
+        <span class="tabular">
+          ECMA-376 (.DOCX) + ISO 32000-1 (.PDF) · 3.3 MB STRIPPED BINARY · ZERO WEBVIEW
+        </span>
+      </div>
+    </div>
+
+    <!-- Sticky Proof Header -->
+    <header class="site-header">
+      <div class="proof-frame header-inner">
+        <a class="brand-link" href="#top" aria-label="RustPad home">
+          <img
+            class="brand-logo"
+            src="/rustpad-logo.png"
+            alt=""
+            width="34"
+            height="34"
+            decoding="async"
+          />
+          <span class="brand-wordmark">
+            <span class="brand-title">RustPad</span>
+            <span class="brand-sub">Word &amp; PDF Studio</span>
+          </span>
+        </a>
+
+        <nav class="desktop-nav" aria-label="Primary specification sections">
+          <a class="nav-item" href="#capabilities">
+            <span class="nav-idx">01</span>Capabilities
+          </a>
+          <a class="nav-item" href="#specimens">
+            <span class="nav-idx">02</span>Specimens
+          </a>
+          <a class="nav-item" href="#architecture">
+            <span class="nav-idx">03</span>9-Crate Ledger
+          </a>
+          <a class="nav-item" href="#cli">
+            <span class="nav-idx">04</span>CLI &amp; Builds
+          </a>
+          <a class="nav-item" href="#faq">
+            <span class="nav-idx">05</span>FAQ
+          </a>
+        </nav>
+
+        <div class="header-actions">
+          <button
+            type="button"
+            class="btn btn-tour-header"
+            data-start-tour
+            aria-label="Start 20-second interactive specification tour"
+          >
+            20s Tour
+          </button>
+
+          <button
+            type="button"
+            id="theme-toggle"
+            class="btn btn-icon"
+            aria-pressed="false"
+            aria-label="Switch to Darkroom Litho dark theme"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.5" />
+              <path d="M8 2.5A5.5 5.5 0 0 1 8 13.5Z" fill="currentColor" />
+            </svg>
+            <span id="theme-toggle-label" class="mono" style="font-size:0.75rem;">Dark</span>
+          </button>
+
+          <a
+            class="btn btn-primary"
+            href="https://github.com/Nour-yahyaoui/word/releases/tag/v1.0.0"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Release v1.0.0
+          </a>
+
+          <button
+            type="button"
+            id="mobile-menu-open"
+            class="btn btn-icon menu-toggle"
+            aria-expanded="false"
+            aria-controls="mobile-drawer"
+            aria-label="Open navigation menu"
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+              <path
+                d="M2.5 4.5H15.5M2.5 9H15.5M2.5 13.5H15.5"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="square"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Mobile Navigation Drawer -->
+    <div id="mobile-drawer" class="mobile-drawer" hidden>
+      <div class="mobile-drawer-panel" role="dialog" aria-modal="true" aria-label="Site navigation">
+        <div class="mobile-drawer-head">
+          <span class="mono" style="font-size:0.78rem;font-weight:700;">NAVIGATION INDEX</span>
+          <button
+            type="button"
+            id="mobile-menu-close"
+            class="btn btn-icon"
+            aria-label="Close navigation menu"
+          >
+            Close
+          </button>
+        </div>
+        <nav class="mobile-nav-list" aria-label="Mobile sections">
+          <a class="mobile-nav-link" href="#capabilities">
+            <span>Capabilities Matrix</span><span class="mono nav-idx">01</span>
+          </a>
+          <a class="mobile-nav-link" href="#specimens">
+            <span>Live .docx &amp; .pdf Specimens</span><span class="mono nav-idx">02</span>
+          </a>
+          <a class="mobile-nav-link" href="#architecture">
+            <span>9-Crate Pure-Rust Ledger</span><span class="mono nav-idx">03</span>
+          </a>
+          <a class="mobile-nav-link" href="#cli">
+            <span>CLI &amp; Release Verification</span><span class="mono nav-idx">04</span>
+          </a>
+          <a class="mobile-nav-link" href="#faq">
+            <span>Engineering FAQ</span><span class="mono nav-idx">05</span>
+          </a>
+        </nav>
+        <button type="button" class="btn" data-start-tour data-close-drawer>
+          Start 20-Second Guided Tour
+        </button>
+        <a
+          class="btn btn-primary"
+          href="https://github.com/Nour-yahyaoui/word"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          View GitHub Repository
+        </a>
+      </div>
+    </div>
+
+    <main id="main-content" class="proof-frame">
+      <!-- Custom 404 Proof Plate (shown only when visiting unknown path) -->
+      <section id="not-found-view" class="not-found-plate" aria-labelledby="not-found-heading" hidden>
+        <div class="plate-eyebrow">
+          <span class="plate-num">ERR 404</span>
+          <span>UNREGISTERED PROOF PLATE</span>
+        </div>
+        <h1 id="not-found-heading" class="plate-title">
+          No specification plate exists at <code id="not-found-path">/unknown</code>.
+        </h1>
+        <p class="plate-lead">
+          Check the URL or return to the primary RustPad proof sheet to inspect the native studio,
+          download sample <code>.docx</code> and <code>.pdf</code> deliverables, or grab the
+          <code>v1.0.0</code> release.
+        </p>
+        <div class="hero-cta-row">
+          <a id="not-found-return" class="btn btn-primary" href="/">Return to Primary Proof Sheet</a>
+          <a class="btn" href="/downloads/RustPad_Welcome_Guide.pdf" download>
+            Download Welcome Guide (.pdf)
+          </a>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           PLATE 00 — ASYMMETRIC HERO & 4-MODE NATIVE STUDIO SWITCHBOARD
+           ================================================================ -->
+      <section id="overview" class="plate" aria-labelledby="hero-heading">
+        <div class="hero-grid">
+          <div>
+            <div class="plate-eyebrow">
+              <span class="plate-num">PLATE 00</span>
+              <span>NATIVE DESKTOP OFFICE SUITE · PURE RUST</span>
+            </div>
+
+            <h1 id="hero-heading" class="hero-title">
+              Author <em>.docx</em> and edit vector <em>.pdf</em> in one 3.3&nbsp;MB binary.
+            </h1>
+
+            <p class="hero-deck">
+              <strong>RustPad</strong> (<code>rustpad</code>) replaces 400&nbsp;MB WebView wrappers
+              with 14,280 lines of zero-dependency Rust. Draft paginated Microsoft Word documents,
+              edit PDF text streams in place, sign with polyline ink, redact sensitive passages, and
+              convert files offline in under 100&nbsp;ms cold start.
+            </p>
+
+            <div class="hero-cta-row">
+              <a
+                class="btn btn-primary"
+                href="https://github.com/Nour-yahyaoui/word/releases/tag/v1.0.0"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Download v1.0.0 Release
+              </a>
+              <a class="btn" href="#specimens">Inspect Live .docx / .pdf Bytes</a>
+              <a
+                class="btn"
+                href="https://github.com/Nour-yahyaoui/word"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Source on GitHub
+              </a>
+            </div>
+
+            <div class="hero-install-box" aria-label="Build from source command">
+              <code class="hero-install-cmd">
+                git clone https://github.com/Nour-yahyaoui/word.git &amp;&amp; cd word &amp;&amp; cargo run --release -p rustpad
+              </code>
+              <button type="button" id="hero-copy-btn" class="copy-mini-btn">Copy</button>
+            </div>
+
+            <div class="spec-ledger-mini" aria-label="Verified engineering metrics">
+              <div class="spec-cell">
+                <span class="spec-val">3.3 MB</span>
+                <span class="spec-lbl">Stripped x86_64 release binary</span>
+              </div>
+              <div class="spec-cell">
+                <span class="spec-val">9 Crates</span>
+                <span class="spec-lbl">14,280 LOC · 0 crates.io deps</span>
+              </div>
+              <div class="spec-cell">
+                <span class="spec-val">49 Actions</span>
+                <span class="spec-lbl">Fuzzy Ctrl+K Command Palette</span>
+              </div>
+              <div class="spec-cell">
+                <span class="spec-val">12 Releases</span>
+                <span class="spec-lbl">v0.1.0 -> v1.0.0 tagged history</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Signature Interactive Component: Genuine 1440x900 Native Framebuffer Switchboard -->
+          <div id="studio-switchboard" class="studio-switchboard">
+            <div
+              id="switchboard-tabs"
+              class="switchboard-tabs"
+              role="tablist"
+              aria-label="RustPad native studio views"
+            >
+              <button
+                type="button"
+                role="tab"
+                class="switchboard-tab"
+                data-mode="word"
+                aria-selected="true"
+                tabindex="0"
+              >
+                <span class="tab-kicker">Mode 01 · .docx</span>
+                <span class="tab-name">Word Studio</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="switchboard-tab"
+                data-mode="pdf"
+                aria-selected="false"
+                tabindex="-1"
+              >
+                <span class="tab-kicker">Mode 02 · .pdf</span>
+                <span class="tab-name">Vector PDF Studio</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="switchboard-tab"
+                data-mode="split"
+                aria-selected="false"
+                tabindex="-1"
+              >
+                <span class="tab-kicker">Mode 03 · 50/50</span>
+                <span class="tab-name">Split + Ctrl+K</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="switchboard-tab"
+                data-mode="home"
+                aria-selected="false"
+                tabindex="-1"
+              >
+                <span class="tab-kicker">Mode 04 · Hub</span>
+                <span class="tab-name">Template Hub</span>
+              </button>
+            </div>
+
+            <div class="switchboard-viewport">
+              <img
+                id="switchboard-img"
+                class="switchboard-img"
+                src="/screenshots/word-studio.png"
+                alt="RustPad Word Studio showing an A4 sheet with headings, bullet list, 3-column table, interactive checklists, left document outline, and live word count metrics."
+                width="1440"
+                height="900"
+                fetchpriority="high"
+              />
+            </div>
+
+            <div class="switchboard-caption-bar">
+              <span id="switchboard-caption" class="caption-meta">
+                Paginated A4 / Letter / Legal ECMA-376 OpenXML editor with clickable heading
+                outline, live reading-time metrics, tables, checklists, and inline Levenshtein
+                spellcheck.
+              </span>
+              <span style="display:flex;align-items:center;gap:0.45rem;flex-shrink:0;">
+                <span id="switchboard-shortcut" class="kbd-badge">Ctrl+N · Ctrl+S</span>
+                <code id="switchboard-source" class="kbd-badge">app/src/word_view.rs</code>
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           PLATE 01 — CAPABILITY SPECIFICATION MATRIX
+           ================================================================ -->
+      <section id="capabilities" class="plate" aria-labelledby="cap-heading">
+        <div class="plate-eyebrow">
+          <span class="plate-num">PLATE 01</span>
+          <span>CAPABILITY SPECIFICATION LEDGER</span>
+        </div>
+        <h2 id="cap-heading" class="plate-title">
+          Three engines compiled into one calm Daylight workspace.
+        </h2>
+        <p class="plate-lead">
+          Every document operation runs locally inside native Rust memory—from PKZIP/DEFLATE byte
+          compression to TrueType glyph rasterization—eliminating browser runtime overhead and cloud
+          round-trips.
+        </p>
+
+        <div class="capability-ledger">
+          <article class="cap-row">
+            <div class="cap-pillar">
+              <span class="format-tag format-docx">ECMA-376 · .DOCX</span>
+              <h3 class="cap-heading">Word Document Studio</h3>
+            </div>
+            <div class="cap-body">
+              <p>
+                Open, write, format, and round-trip standards-compliant Microsoft Word
+                <code>.docx</code> archives on physical A4, US Letter, or Legal paper geometry.
+              </p>
+              <ul class="cap-spec-list">
+                <li>Title, H1–H3, Quote &amp; Code block styles</li>
+                <li>Sans, Serif &amp; Monospace TrueType families</li>
+                <li>Bullet, numbered &amp; interactive checklists</li>
+                <li>Multi-column tables with cell tint fills</li>
+                <li>Running headers, footers &amp; Page X of Y</li>
+                <li>Find &amp; Replace, Undo/Redo &amp; offline spellcheck</li>
+              </ul>
+            </div>
+            <div class="cap-source">
+              <span>CRATES: docx_io, doc_model</span>
+              <span>SHORTCUTS: Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+F</span>
+              <span>TEMPLATES: 6 built-in OpenXML starters</span>
+            </div>
+          </article>
+
+          <article class="cap-row">
+            <div class="cap-pillar">
+              <span class="format-tag format-pdf">ISO 32000 · .PDF</span>
+              <h3 class="cap-heading">Vector PDF 1.7 Studio</h3>
+            </div>
+            <div class="cap-body">
+              <p>
+                Generate crisp vector PDFs from any Word draft in one click, or open existing PDF
+                1.4–1.7 files to modify text blocks, sign, stamp, redact, and reorganize pages.
+              </p>
+              <ul class="cap-spec-list">
+                <li>Click-to-edit inline PDF text blocks</li>
+                <li>Freehand polyline ink Signature Pad</li>
+                <li>Vector [APPROVED] stamps &amp; sticky notes</li>
+                <li>True text-stream security Redaction</li>
+                <li>Multi-file PDF Merge &amp; range Split</li>
+                <li>90-degree page rotation &amp; /FlateDecode compression</li>
+              </ul>
+            </div>
+            <div class="cap-source">
+              <span>CRATES: pdf_create, pdf_engine</span>
+              <span>SHORTCUTS: Ctrl+E (Export), Ctrl+M (Merge)</span>
+              <span>STREAMS: RFC 1950 Zlib /FlateDecode</span>
+            </div>
+          </article>
+
+          <article class="cap-row">
+            <div class="cap-pillar">
+              <span class="format-tag format-power">WORKFLOW · CLI + GUI</span>
+              <h3 class="cap-heading">Power Tools &amp; Split View</h3>
+            </div>
+            <div class="cap-body">
+              <p>
+                Bridge formats without leaving your keyboard. Pair a Word draft next to a reference
+                PDF in 50/50 Split Workspace or script batch conversions from your terminal.
+              </p>
+              <ul class="cap-spec-list">
+                <li>Bidirectional DOCX &lt;-&gt; PDF &lt;-&gt; Markdown</li>
+                <li>50/50 Side-by-Side Split Workspace</li>
+                <li>Instant Ctrl+K fuzzy Command Palette</li>
+                <li>Offline OCR / PDF text extraction</li>
+                <li>Compressed local Time-Machine snapshots</li>
+                <li>Headless 1440x900 PNG frame renderer</li>
+              </ul>
+            </div>
+            <div class="cap-source">
+              <span>CRATES: power_tools, rustpad_render</span>
+              <span>SHORTCUTS: Ctrl+\ (Split), Ctrl+K (Palette)</span>
+              <span>CLI: convert, inspect, ocr, merge</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           PLATE 02 — LIVE BINARY SPECIMEN INSPECTOR & DOWNLOADS
+           ================================================================ -->
+      <section id="specimens" class="plate" aria-labelledby="specimens-heading">
+        <div class="plate-eyebrow">
+          <span class="plate-num">PLATE 02</span>
+          <span>LIVE BINARY SPECIMEN INSPECTOR · GENERATED BY RUSTPAD v1.0.0</span>
+        </div>
+        <h2 id="specimens-heading" class="plate-title">
+          Verify real <code>.docx</code> and <code>.pdf</code> output bytes in your browser.
+        </h2>
+        <p class="plate-lead">
+          Select any sample deliverable generated natively by <code>rustpad demo-files</code> below
+          to inspect its live 48-byte PKZIP (<code>50 4B 03 04</code>) or ISO 32000
+          (<code>%PDF-1.7</code>) header signature and download the file directly to open in
+          Microsoft Word, LibreOffice, or any PDF viewer.
+        </p>
+
+        <div class="specimen-layout">
+          <div id="specimen-list" class="specimen-list" aria-label="Sample documents generated by RustPad">
+            <a class="specimen-btn" href="/downloads/RustPad_Welcome_Guide.docx" download>
+              <span>
+                <span class="specimen-name">RustPad_Welcome_Guide.docx</span>
+                <span class="specimen-std">ECMA-376 OpenXML (.docx)</span>
+              </span>
+              <span class="specimen-bytes">5.2 KB</span>
+            </a>
+            <a class="specimen-btn" href="/downloads/RustPad_Welcome_Guide.pdf" download>
+              <span>
+                <span class="specimen-name">RustPad_Welcome_Guide.pdf</span>
+                <span class="specimen-std">ISO 32000-1 PDF 1.7 (.pdf)</span>
+              </span>
+              <span class="specimen-bytes">3.8 KB</span>
+            </a>
+            <a class="specimen-btn" href="/downloads/Nour_Yahyaoui_Modern_Resume.docx" download>
+              <span>
+                <span class="specimen-name">Nour_Yahyaoui_Modern_Resume.docx</span>
+                <span class="specimen-std">ECMA-376 OpenXML (.docx)</span>
+              </span>
+              <span class="specimen-bytes">4.7 KB</span>
+            </a>
+            <a class="specimen-btn" href="/downloads/Business_Invoice_Sample.pdf" download>
+              <span>
+                <span class="specimen-name">Business_Invoice_Sample.pdf</span>
+                <span class="specimen-std">ISO 32000-1 PDF 1.7 (.pdf)</span>
+              </span>
+              <span class="specimen-bytes">3.0 KB</span>
+            </a>
+          </div>
+
+          <div id="specimen-detail" class="inspector-pane" aria-live="polite">
+            <div class="inspector-header">
+              <div>
+                <span class="tab-kicker">ECMA-376 OpenXML (.docx) · 5.2 KB</span>
+                <h3 class="cap-heading">RustPad_Welcome_Guide.docx</h3>
+              </div>
+              <a
+                class="btn btn-primary"
+                href="/downloads/RustPad_Welcome_Guide.docx"
+                download="RustPad_Welcome_Guide.docx"
+              >
+                Download DOCX
+              </a>
+            </div>
+            <p style="margin:0;color:var(--fg-secondary);font-size:var(--text-sm);">
+              A4 paginated welcome guide containing styled headings, 3-column feature matrix table,
+              interactive checklist items, and running header/footer XML parts.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           PLATE 03 — SEARCHABLE 9-CRATE PURE-RUST ARCHITECTURE LEDGER
+           ================================================================ -->
+      <section id="architecture" class="plate" aria-labelledby="arch-heading">
+        <div class="plate-eyebrow">
+          <span class="plate-num">PLATE 03</span>
+          <span>WORKSPACE ARCHITECTURE · 9 SELF-CONTAINED RUST CRATES</span>
+        </div>
+        <h2 id="arch-heading" class="plate-title">
+          Zero WebView. Zero external runtime crates. Every layer auditable.
+        </h2>
+        <p class="plate-lead">
+          RustPad is structured as a modular 9-crate Cargo workspace. Filter the ledger below to
+          inspect how compression, OpenXML parsing, vector PDF layout, TrueType glyph rendering, and
+          OS windowing fit together in 14,280 lines of pure Rust.
+        </p>
+
+        <div class="ledger-toolbar">
+          <div style="flex:1;">
+            <label for="crate-search" class="sr-only">Filter crates by name, path, or feature</label>
+            <input
+              id="crate-search"
+              type="search"
+              class="search-input"
+              placeholder="Filter crates (e.g. deflate, ttf, redact, x11)..."
+              autocomplete="off"
+            />
+          </div>
+
+          <div id="crate-filters" class="filter-pills" role="group" aria-label="Filter crates by layer">
+            <button type="button" class="filter-pill" data-category="All" aria-pressed="true">
+              All (9)
+            </button>
+            <button type="button" class="filter-pill" data-category="Core I/O" aria-pressed="false">
+              Core I/O
+            </button>
+            <button
+              type="button"
+              class="filter-pill"
+              data-category="Document &amp; PDF"
+              aria-pressed="false"
+            >
+              Document &amp; PDF
+            </button>
+            <button
+              type="button"
+              class="filter-pill"
+              data-category="Power Tools"
+              aria-pressed="false"
+            >
+              Power Tools
+            </button>
+            <button type="button" class="filter-pill" data-category="Native UI" aria-pressed="false">
+              Native UI
+            </button>
+          </div>
+        </div>
+
+        <p
+          id="crate-count-label"
+          class="mono"
+          style="margin:0 0 0.65rem;font-size:var(--text-xs);color:var(--muted);"
+        >
+          Showing 9 of 9 crates · 14,254 pure-Rust LOC
+        </p>
+
+        <div class="table-scroll">
+          <table class="crate-table">
+            <thead>
+              <tr>
+                <th scope="col">Crate</th>
+                <th scope="col">Layer</th>
+                <th scope="col">LOC</th>
+                <th scope="col">Responsibility &amp; Verified Path</th>
+                <th scope="col">Test Suite</th>
+              </tr>
+            </thead>
+            <tbody id="crate-tbody">
+              <tr>
+                <td class="mono" style="font-weight:700;">rustpad (app)</td>
+                <td class="mono">Native UI</td>
+                <td class="mono tabular">5,384</td>
+                <td>
+                  Unified desktop binary &amp; CLI orchestrating Word/PDF tabs, 49 Command Palette
+                  actions, and 50/50 split workspace.
+                </td>
+                <td class="mono">Pass</td>
+              </tr>
+              <tr>
+                <td class="mono" style="font-weight:700;">pdf_engine</td>
+                <td class="mono">Document &amp; PDF</td>
+                <td class="mono tabular">1,586</td>
+                <td>
+                  PDF 1.4–1.7 parser, inline text editing, ink signatures, vector stamps, true
+                  redaction, merge, split, and compression.
+                </td>
+                <td class="mono">Pass</td>
+              </tr>
+              <tr>
+                <td class="mono" style="font-weight:700;">docx_io</td>
+                <td class="mono">Core I/O</td>
+                <td class="mono tabular">1,275</td>
+                <td>
+                  ECMA-376 OpenXML (.docx) serializer and parser for paragraphs, tables, lists,
+                  images, and headers/footers.
+                </td>
+                <td class="mono">Pass</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div id="crate-empty" class="empty-ledger" hidden>
+          <p style="margin:0 0 0.75rem;font-weight:600;">
+            No workspace crates matched that filter query.
+          </p>
+          <button type="button" id="crate-clear-btn" class="btn">Reset Crate Filter</button>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           PLATE 04 — INTERACTIVE CLI & DESKTOP RELEASE VERIFICATION
+           ================================================================ -->
+      <section id="cli" class="plate" aria-labelledby="cli-heading">
+        <div class="plate-eyebrow">
+          <span class="plate-num">PLATE 04</span>
+          <span>HEADLESS CLI &amp; CROSS-PLATFORM DELIVERY</span>
+        </div>
+        <h2 id="cli-heading" class="plate-title">
+          One executable for interactive desktop work and headless automation.
+        </h2>
+        <p class="plate-lead">
+          The same <code>rustpad</code> binary opens the Paper &amp; Daylight GUI when launched
+          directly or runs subcommands for document conversion, structural inspection, PDF merging,
+          and offline text extraction.
+        </p>
+
+        <div class="cli-grid">
+          <div class="cli-bench">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:0.75rem;">
+              <span class="mono" style="font-size:var(--text-xs);font-weight:700;color:var(--muted);">
+                INTERACTIVE COMMAND BUILDER
+              </span>
+              <button type="button" id="cli-copy-btn" class="copy-mini-btn">Copy Cmd</button>
+            </div>
+
+            <div id="cli-presets" class="cli-preset-row" role="group" aria-label="CLI command presets">
+              <button
+                type="button"
+                class="filter-pill"
+                data-preset="build-run"
+                aria-pressed="true"
+              >
+                Build &amp; Run
+              </button>
+              <button type="button" class="filter-pill" data-preset="convert" aria-pressed="false">
+                convert
+              </button>
+              <button type="button" class="filter-pill" data-preset="inspect" aria-pressed="false">
+                inspect
+              </button>
+              <button type="button" class="filter-pill" data-preset="merge" aria-pressed="false">
+                merge
+              </button>
+              <button type="button" class="filter-pill" data-preset="ocr" aria-pressed="false">
+                ocr
+              </button>
+            </div>
+
+            <pre class="cli-code-box"><code id="cli-active-cmd">$ cargo build --release -p rustpad &amp;&amp; ./target/release/rustpad</code></pre>
+
+            <div
+              style="padding:0.75rem;border:1px solid var(--border);background:var(--bg);font-family:var(--font-mono);font-size:var(--text-xs);margin-bottom:0.75rem;"
+            >
+              <span style="color:var(--muted);display:block;margin-bottom:0.2rem;">STDOUT PREVIEW:</span>
+              <span id="cli-active-out" style="color:var(--ok);">
+                Finished `release` profile [optimized] · Binary: target/release/rustpad (3.3 MB, stripped)
+              </span>
+            </div>
+
+            <p id="cli-active-note" style="margin:0;font-size:var(--text-sm);color:var(--fg-secondary);">
+              Compiles all 9 pure-Rust crates offline with zero external crates.io network fetches
+              and opens the native Daylight desktop window.
+            </p>
+          </div>
+
+          <div class="os-notes-box">
+            <span class="mono" style="font-size:var(--text-xs);font-weight:700;color:var(--muted);">
+              PLATFORM BACKENDS &amp; VERIFICATION (v1.0.0)
+            </span>
+            <h3 class="cap-heading" style="margin:0.35rem 0 0.5rem;">
+              Native OS windowing without runtime bloat
+            </h3>
+            <p style="margin:0;font-size:var(--text-sm);color:var(--fg-secondary);">
+              Verify release archives against <a href="/downloads/SHA256SUMS.txt">SHA256SUMS.txt</a>
+              or build reproducibly from source with standard <code>rustc</code> + <code>cargo</code>.
+            </p>
+
+            <div class="os-dl-list">
+              <div class="os-dl-item">
+                <strong>Linux (x86_64 / aarch64 · X11 Dynamic FFI)</strong>
+                <p>
+                  Loads <code>libX11.so.6</code> at runtime via <code>dlopen</code>—no
+                  <code>libx11-dev</code> headers required to compile. Sets 64x64
+                  <code>_NET_WM_ICON</code> taskbar icon automatically.
+                </p>
+              </div>
+              <div class="os-dl-item">
+                <strong>Windows 10 / 11 (Win32 GDI + Explorer Dialogs)</strong>
+                <p>
+                  Links standard OS <code>user32.dll</code>, <code>gdi32.dll</code>, and
+                  <code>comdlg32.dll</code> for HiDPI <code>StretchDIBits</code> blitting. Unsigned
+                  community builds show SmartScreen ("More info -&gt; Run anyway").
+                </p>
+              </div>
+              <div class="os-dl-item">
+                <strong>macOS &amp; Headless CI (CLI + Framebuffer Mode)</strong>
+                <p>
+                  All <code>convert</code>, <code>inspect</code>, <code>ocr</code>,
+                  <code>merge</code>, and <code>--render-preview</code> pipelines run natively on
+                  macOS, Linux, and Windows without a display server.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           PLATE 05 — ENGINEERING FAQ
+           ================================================================ -->
+      <section id="faq" class="plate" aria-labelledby="faq-heading">
+        <div class="plate-eyebrow">
+          <span class="plate-num">PLATE 05</span>
+          <span>TECHNICAL FAQ &amp; TROUBLESHOOTING</span>
+        </div>
+        <h2 id="faq-heading" class="plate-title">Common architectural and usage questions.</h2>
+
+        <div class="faq-list">
+          <details class="faq-item" open>
+            <summary>
+              <span>How is the entire Word &amp; PDF desktop app only 3.3 MB?</span>
+              <span class="faq-marker" aria-hidden="true">+</span>
+            </summary>
+            <div class="faq-answer">
+              RustPad embeds zero Chromium/WebView runtime and zero external widget toolkits. The
+              DEFLATE/PKZIP archiver (<code>rustpad_zip</code>), ECMA-376 OpenXML engine
+              (<code>docx_io</code>), ISO 32000 PDF 1.7 engine (<code>pdf_create</code> /
+              <code>pdf_engine</code>), TrueType glyph rasterizer (<code>rustpad_render</code>), and
+              OS window blitter (<code>rustpad_window</code>) compile with Thin-LTO and stripped
+              symbols into a single self-contained native executable (including 4 fallback TrueType
+              fonts).
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>
+              <span>Are .docx files saved by RustPad compatible with Microsoft Word and Google Docs?</span>
+              <span class="faq-marker" aria-hidden="true">+</span>
+            </summary>
+            <div class="faq-answer">
+              Yes. <code>crates/docx_io</code> writes standard ECMA-376 OpenXML packages containing
+              <code>[Content_Types].xml</code>, <code>_rels/.rels</code>,
+              <code>docProps/core.xml</code>, <code>word/document.xml</code>,
+              <code>word/styles.xml</code>, and <code>word/numbering.xml</code>. Download any sample
+              <code>.docx</code> in Plate 02 above to test directly in Word, LibreOffice Writer, or
+              Google Docs.
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>
+              <span>Does PDF Redaction merely draw a black rectangle over sensitive text?</span>
+              <span class="faq-marker" aria-hidden="true">+</span>
+            </summary>
+            <div class="faq-answer">
+              No. Drawing a black box over a PDF stream leaves confidential strings selectable
+              underneath. In <code>crates/pdf_engine/src/lib.rs</code>, applying a redaction region
+              physically purges intersecting <code>PdfTextItem</code> entries from the page model
+              before writing the permanent redaction bar into the regenerated PDF stream.
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary>
+              <span>Can I compile RustPad completely offline inside an air-gapped environment?</span>
+              <span class="faq-marker" aria-hidden="true">+</span>
+            </summary>
+            <div class="faq-answer">
+              Yes. None of the 9 crates in <code>Cargo.toml</code> pull dependencies from
+              <code>crates.io</code>, and the Linux backend dynamically loads
+              <code>libX11.so.6</code> at runtime so even C development headers are unnecessary. A
+              standard Rust <code>1.75+</code> toolchain builds and passes all 13 workspace tests
+              completely offline via <code>cargo test --workspace</code>.
+            </div>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer with Explicit Author Metadata -->
+    <footer class="site-footer">
+      <div class="proof-frame footer-grid">
+        <div>
+          <strong style="color:var(--fg);font-size:1rem;">RustPad — Word &amp; PDF Desktop Studio</strong>
+          <p style="margin:0.45rem 0 0.75rem;max-width:46ch;">
+            Designed and engineered in 100% pure Rust by <strong>Nour Yahyaoui</strong>. Released
+            under the MIT License with zero telemetry, zero accounts, and zero cloud lock-in.
+          </p>
+          <p class="mono" style="margin:0;font-size:var(--text-xs);">
+            Author: Nour Yahyaoui ·
+            <a href="https://github.com/Nour-yahyaoui" target="_blank" rel="noopener noreferrer">
+              github.com/Nour-yahyaoui
+            </a>
+            · <a href="mailto:nourryahyaoui@gmail.com">nourryahyaoui@gmail.com</a>
+          </p>
+        </div>
+
+        <div>
+          <strong class="mono" style="font-size:var(--text-xs);color:var(--fg);letter-spacing:0.06em;">
+            SPECIFICATION PLATES
+          </strong>
+          <ul class="footer-links" style="margin-top:0.5rem;">
+            <li><a href="#overview">00 · Studio Switchboard</a></li>
+            <li><a href="#capabilities">01 · Capability Matrix</a></li>
+            <li><a href="#specimens">02 · Live Byte Specimens</a></li>
+            <li><a href="#architecture">03 · 9-Crate Architecture</a></li>
+            <li><a href="#cli">04 · CLI &amp; Release Bench</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <strong class="mono" style="font-size:var(--text-xs);color:var(--fg);letter-spacing:0.06em;">
+            DELIVERABLES &amp; RELEASES
+          </strong>
+          <ul class="footer-links" style="margin-top:0.5rem;">
+            <li>
+              <a
+                href="https://github.com/Nour-yahyaoui/word/releases/tag/v1.0.0"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                GitHub Release v1.0.0
+              </a>
+            </li>
+            <li>
+              <a
+                href="https://github.com/Nour-yahyaoui/word"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Source Repository (Nour-yahyaoui/word)
+              </a>
+            </li>
+            <li><a href="/downloads/RustPad_Welcome_Guide.docx" download>Sample Welcome (.docx)</a></li>
+            <li><a href="/downloads/RustPad_Welcome_Guide.pdf" download>Sample Welcome (.pdf)</a></li>
+            <li><a href="/downloads/SHA256SUMS.txt">SHA256SUMS.txt</a></li>
+          </ul>
+        </div>
+      </div>
+    </footer>
+
+    <!-- Replayable / Skippable 3-Step Spotlight Tour -->
+    <div id="tour-backdrop" class="tour-backdrop" hidden>
+      <div
+        class="tour-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tour-title"
+        aria-describedby="tour-body"
+      >
+        <div class="tour-step-meta">
+          <span id="tour-step-counter">STEP 01 OF 03</span>
+          <button type="button" id="tour-skip-btn" class="copy-mini-btn">Skip (Esc)</button>
+        </div>
+        <h2 id="tour-title" class="cap-heading" style="margin-bottom:0.4rem;">
+          Inspect all 4 Native Studio Modes
+        </h2>
+        <p id="tour-body" style="margin:0;color:var(--fg-secondary);font-size:var(--text-sm);">
+          Switch between genuine 1440x900 framebuffer captures of Word Studio (.docx), Vector PDF
+          Studio (.pdf), 50/50 Split Workspace, and the Template Hub.
+        </p>
+        <div class="tour-actions">
+          <button type="button" id="tour-prev-btn" class="btn" hidden>&lt;- Previous</button>
+          <button type="button" id="tour-next-btn" class="btn btn-primary" style="margin-left:auto;">
+            Next Plate -&gt;
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

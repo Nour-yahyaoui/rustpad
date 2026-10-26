@@ -1,0 +1,2 @@
+d5cc67190a838a6a03af94a0f7da64decfc4e432ff2e0f39d1fe47b4f4f84f2a  rustpad-v1.0.0-linux-x86_64
+2841a7b1d30deecc1b8c43dc21616223767f01e4a09f045c98238b776653ba90  rustpad-v1.0.0-linux-x86_64.tar.gz

@@ -2,6 +2,11 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [@Nour-yahyaoui](https://github.com/Nour-yahyaoui), `nourryahyaoui@gmail.com`) follow our continuous micro-release workflow (`Commit → Tag → GitHub Release`).
 
+## [v1.1.0] - 2026-10-26
+### Added
+- **RustPad Project Landing Page & Live Specimen Showcase** (`index.html`, `src/`, `public/`): Swiss Typesetter's Proof Sheet × Technical Datasheet web showcase (`docs/STYLE.md`) featuring the 4-Mode Native Studio Switchboard, Live `.docx`/`.pdf` Binary Header & Hex Specimen Inspector with downloadable deliverables, searchable 9-Crate Pure-Rust Architecture Ledger, interactive CLI Command Builder, zero-FOUC Daylight/Darkroom theme toggle, 3-step Spotlight Tour, and full Open Graph / JSON-LD SEO metadata.
+- **Documentation & UX Verification Suite**: `docs/STYLE.md`, `docs/UI-REFORMAT-INVENTORY.md`, `docs/UI-REFORMAT-REPORT.md`, `docs/DOCS-INVENTORY.md`, and comprehensive usage-first `README.md`.
+
 ## [v1.0.0] - 2026-10-26
 ### Added
 - **RustPad v1.0.0 Production Milestone**: First complete 100% pure-Rust native desktop release uniting Microsoft Word (`.docx`) authoring, vector PDF (`.pdf`) creation & editing, bidirectional converters, offline OCR & spellcheck, Side-by-Side Split Workspace, and standalone CLI (`rustpad`).
