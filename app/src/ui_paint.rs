@@ -1628,14 +1628,12 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
 fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, screen: Rect) {
     surface.fill_rect(screen, DaylightTheme::SCRIM);
 
-    let Some(modal_ref) = &mut app.modal else {
+    let Some(modal_snapshot) = app.modal.clone() else {
         return;
     };
 
-    match modal_ref {
-        ActiveModal::CommandPalette { query, selected } => {
-            let q = query.clone();
-            let sel = *selected;
+    match modal_snapshot {
+        ActiveModal::CommandPalette { query: q, selected: sel } => {
             let items = filter_commands(&q);
             let mw = (580.0 * s).min(screen.w - 32.0);
             let mh = (390.0 * s).min(screen.h - 48.0);
@@ -1734,18 +1732,17 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
         }
 
         ActiveModal::SignaturePad {
-            strokes,
-            signer_name,
-            pad_rect,
+            strokes: strokes_clone,
+            signer_name: signer,
             ..
         } => {
-            let strokes_clone = strokes.clone();
-            let signer = signer_name.clone();
             let mw = (520.0 * s).min(screen.w - 32.0);
             let mh = 330.0 * s;
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
             let pad = Rect::new(card.x + 20.0 * s, card.y + 64.0 * s, card.w - 40.0 * s, 180.0 * s);
-            *pad_rect = pad;
+            if let Some(ActiveModal::SignaturePad { pad_rect, .. }) = &mut app.modal {
+                *pad_rect = pad;
+            }
 
             surface.draw_paper_shadow(card, 8.0, 18.0, 32);
             surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
@@ -1802,13 +1799,10 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
         }
 
         ActiveModal::FilePrompt {
-            kind,
-            input_path,
-            recent_candidates,
+            kind: k,
+            input_path: inp,
+            recent_candidates: cands,
         } => {
-            let k = *kind;
-            let inp = input_path.clone();
-            let cands = recent_candidates.clone();
             let mw = (540.0 * s).min(screen.w - 32.0);
             let mh = 340.0 * s;
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
@@ -1882,15 +1876,11 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
         }
 
         ActiveModal::FindReplace {
-            find_text,
-            replace_text,
-            editing_replace,
-            matches_count,
+            find_text: ft,
+            replace_text: rt,
+            editing_replace: repl_focus,
+            matches_count: mc,
         } => {
-            let ft = find_text.clone();
-            let rt = replace_text.clone();
-            let repl_focus = *editing_replace;
-            let mc = *matches_count;
             let mw = (480.0 * s).min(screen.w - 32.0);
             let mh = 256.0 * s;
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);

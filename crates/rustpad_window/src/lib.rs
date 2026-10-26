@@ -11,6 +11,7 @@ use rustpad_render::Surface;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -122,38 +123,50 @@ fn internal_clipboard() -> &'static Mutex<String> {
     CLIP.get_or_init(|| Mutex::new(String::new()))
 }
 
+static OS_CLIP_SYNCED: AtomicBool = AtomicBool::new(false);
+
 /// Writes UTF-8 text to the native OS clipboard (with in-process mirror for headless/test use).
 pub fn set_clipboard_text(text: &str) -> bool {
+    let mut mem_ok = false;
     if let Ok(mut guard) = internal_clipboard().lock() {
         *guard = text.to_string();
+        mem_ok = true;
     }
     #[cfg(target_os = "windows")]
     {
-        return win32::set_win32_clipboard_text(text);
+        let os_ok = win32::set_win32_clipboard_text(text);
+        OS_CLIP_SYNCED.store(os_ok, Ordering::Relaxed);
+        return os_ok || mem_ok;
     }
     #[cfg(target_os = "linux")]
     {
-        for (bin, args) in [
-            ("wl-copy", &[][..]),
-            ("xclip", &["-selection", "clipboard"][..]),
-            ("xsel", &["--clipboard", "--input"][..]),
-        ] {
-            if let Ok(mut child) = Command::new(bin)
-                .args(args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-            {
-                if let Some(mut stdin) = child.stdin.take() {
-                    let _ = stdin.write_all(text.as_bytes());
-                }
-                if child.wait().map(|s| s.success()).unwrap_or(false) {
-                    return true;
+        let has_display = std::env::var_os("DISPLAY").is_some()
+            || std::env::var_os("WAYLAND_DISPLAY").is_some();
+        if has_display {
+            for (bin, args) in [
+                ("wl-copy", &[][..]),
+                ("xclip", &["-selection", "clipboard"][..]),
+                ("xsel", &["--clipboard", "--input"][..]),
+            ] {
+                if let Ok(mut child) = Command::new(bin)
+                    .args(args)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        let _ = stdin.write_all(text.as_bytes());
+                    }
+                    if child.wait().map(|s| s.success()).unwrap_or(false) {
+                        OS_CLIP_SYNCED.store(true, Ordering::Relaxed);
+                        return true;
+                    }
                 }
             }
         }
-        true
+        OS_CLIP_SYNCED.store(false, Ordering::Relaxed);
+        mem_ok
     }
     #[cfg(target_os = "macos")]
     {
@@ -161,54 +174,61 @@ pub fn set_clipboard_text(text: &str) -> bool {
             if let Some(mut stdin) = child.stdin.take() {
                 let _ = stdin.write_all(text.as_bytes());
             }
-            let _ = child.wait();
+            let os_ok = child.wait().map(|s| s.success()).unwrap_or(false);
+            OS_CLIP_SYNCED.store(os_ok, Ordering::Relaxed);
         }
-        true
+        mem_ok
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
-        true
+        mem_ok
     }
 }
 
 /// Reads UTF-8 text from the native OS clipboard (falling back to the in-process clipboard buffer).
 pub fn get_clipboard_text() -> Option<String> {
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(s) = win32::get_win32_clipboard_text() {
-            if !s.is_empty() {
-                return Some(s);
+    if OS_CLIP_SYNCED.load(Ordering::Relaxed) || internal_clipboard().lock().map(|g| g.is_empty()).unwrap_or(true) {
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(s) = win32::get_win32_clipboard_text() {
+                if !s.is_empty() {
+                    return Some(s);
+                }
             }
         }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        for (bin, args) in [
-            ("wl-paste", &["--no-newline"][..]),
-            ("xclip", &["-selection", "clipboard", "-o"][..]),
-            ("xsel", &["--clipboard", "--output"][..]),
-        ] {
-            if let Ok(out) = Command::new(bin)
-                .args(args)
-                .stderr(Stdio::null())
-                .output()
-            {
+        #[cfg(target_os = "linux")]
+        {
+            let has_display = std::env::var_os("DISPLAY").is_some()
+                || std::env::var_os("WAYLAND_DISPLAY").is_some();
+            if has_display {
+                for (bin, args) in [
+                    ("wl-paste", &["--no-newline"][..]),
+                    ("xclip", &["-selection", "clipboard", "-o"][..]),
+                    ("xsel", &["--clipboard", "--output"][..]),
+                ] {
+                    if let Ok(out) = Command::new(bin)
+                        .args(args)
+                        .stderr(Stdio::null())
+                        .output()
+                    {
+                        if out.status.success() {
+                            let s = String::from_utf8_lossy(&out.stdout).to_string();
+                            if !s.is_empty() {
+                                return Some(s);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(out) = Command::new("pbpaste").output() {
                 if out.status.success() {
                     let s = String::from_utf8_lossy(&out.stdout).to_string();
                     if !s.is_empty() {
                         return Some(s);
                     }
-                }
-            }
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(out) = Command::new("pbpaste").output() {
-            if out.status.success() {
-                let s = String::from_utf8_lossy(&out.stdout).to_string();
-                if !s.is_empty() {
-                    return Some(s);
                 }
             }
         }

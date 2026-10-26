@@ -202,6 +202,7 @@ pub enum FileModalKind {
     MergePdf,
 }
 
+#[derive(Clone)]
 pub enum ActiveModal {
     CommandPalette {
         query: String,
@@ -2501,73 +2502,86 @@ impl RustPadApp {
             }
         }
 
-        // Modal keyboard navigation
-        if let Some(modal) = &mut self.modal {
-            match modal {
-                ActiveModal::CommandPalette { query, selected } => match key {
-                    Key::Backspace => {
-                        query.pop();
-                        *selected = 0;
-                    }
-                    Key::Down => {
-                        let count = filter_commands(query).len().max(1);
-                        *selected = (*selected + 1) % count;
-                    }
-                    Key::Up => {
-                        let count = filter_commands(query).len().max(1);
-                        *selected = if *selected == 0 {
-                            count - 1
-                        } else {
-                            *selected - 1
-                        };
-                    }
-                    Key::Enter => self.confirm_active_modal(),
-                    _ => {}
-                },
-                ActiveModal::FilePrompt { input_path, .. } => match key {
-                    Key::Backspace => {
-                        input_path.pop();
-                    }
-                    Key::Enter => self.confirm_active_modal(),
-                    _ => {}
-                },
-                ActiveModal::SplitRange { range_spec } => match key {
-                    Key::Backspace => {
-                        range_spec.pop();
-                    }
-                    Key::Enter => self.confirm_active_modal(),
-                    _ => {}
-                },
-                ActiveModal::Watermark { text } => match key {
-                    Key::Backspace => {
-                        text.pop();
-                    }
-                    Key::Enter => self.confirm_active_modal(),
-                    _ => {}
-                },
-                ActiveModal::FindReplace {
-                    find_text,
-                    replace_text,
-                    editing_replace,
-                    ..
-                } => match key {
-                    Key::Tab => *editing_replace = !*editing_replace,
-                    Key::Backspace => {
-                        if *editing_replace {
-                            replace_text.pop();
-                        } else {
-                            find_text.pop();
+        // Modal keyboard navigation (extract follow-up action first so `&mut self.modal` drops cleanly)
+        if self.modal.is_some() {
+            enum ModalKeyFollowUp {
+                None,
+                Confirm,
+                ReplaceAll,
+            }
+            let mut follow_up = ModalKeyFollowUp::None;
+            if let Some(modal) = &mut self.modal {
+                match modal {
+                    ActiveModal::CommandPalette { query, selected } => match key {
+                        Key::Backspace => {
+                            query.pop();
+                            *selected = 0;
+                        }
+                        Key::Down => {
+                            let count = filter_commands(query).len().max(1);
+                            *selected = (*selected + 1) % count;
+                        }
+                        Key::Up => {
+                            let count = filter_commands(query).len().max(1);
+                            *selected = if *selected == 0 {
+                                count - 1
+                            } else {
+                                *selected - 1
+                            };
+                        }
+                        Key::Enter => follow_up = ModalKeyFollowUp::Confirm,
+                        _ => {}
+                    },
+                    ActiveModal::FilePrompt { input_path, .. } => match key {
+                        Key::Backspace => {
+                            input_path.pop();
+                        }
+                        Key::Enter => follow_up = ModalKeyFollowUp::Confirm,
+                        _ => {}
+                    },
+                    ActiveModal::SplitRange { range_spec } => match key {
+                        Key::Backspace => {
+                            range_spec.pop();
+                        }
+                        Key::Enter => follow_up = ModalKeyFollowUp::Confirm,
+                        _ => {}
+                    },
+                    ActiveModal::Watermark { text } => match key {
+                        Key::Backspace => {
+                            text.pop();
+                        }
+                        Key::Enter => follow_up = ModalKeyFollowUp::Confirm,
+                        _ => {}
+                    },
+                    ActiveModal::FindReplace {
+                        find_text,
+                        replace_text,
+                        editing_replace,
+                        ..
+                    } => match key {
+                        Key::Tab => *editing_replace = !*editing_replace,
+                        Key::Backspace => {
+                            if *editing_replace {
+                                replace_text.pop();
+                            } else {
+                                find_text.pop();
+                            }
+                        }
+                        Key::Enter => follow_up = ModalKeyFollowUp::ReplaceAll,
+                        _ => {}
+                    },
+                    ActiveModal::SignaturePad { .. } => {
+                        if key == Key::Enter {
+                            follow_up = ModalKeyFollowUp::Confirm;
                         }
                     }
-                    Key::Enter => self.dispatch_ui_action(UiAction::FindReplaceAll),
-                    _ => {}
-                },
-                ActiveModal::SignaturePad { .. } => {
-                    if key == Key::Enter {
-                        self.confirm_active_modal();
-                    }
+                    ActiveModal::SnapshotsDrawer | ActiveModal::About => {}
                 }
-                ActiveModal::SnapshotsDrawer | ActiveModal::About => {}
+            }
+            match follow_up {
+                ModalKeyFollowUp::None => {}
+                ModalKeyFollowUp::Confirm => self.confirm_active_modal(),
+                ModalKeyFollowUp::ReplaceAll => self.dispatch_ui_action(UiAction::FindReplaceAll),
             }
             return;
         }
