@@ -476,11 +476,175 @@ function initGuidedTour(
   closeBtn?.addEventListener('click', stopTour);
 }
 
+function initUxSandbox(): void {
+  const shell = document.getElementById('ux-sandbox-shell');
+  if (!shell) return;
+
+  const phraseBtns = Array.from(
+    shell.querySelectorAll<HTMLButtonElement>('[data-ux-phrase]'),
+  );
+  const fmtBtns = Array.from(
+    shell.querySelectorAll<HTMLButtonElement>('[data-ux-fmt]'),
+  );
+  const aiPolishBtn = document.getElementById('ux-ai-polish');
+  const focusToggleBtn = document.getElementById('ux-focus-toggle');
+  const exitFocusBtn = document.getElementById('ux-exit-focus') as HTMLButtonElement | null;
+  const acceptBtn = document.getElementById('ux-accept-clause') as HTMLButtonElement | null;
+  const rejectBtn = document.getElementById('ux-reject-clause') as HTMLButtonElement | null;
+  const resetBtn = document.getElementById('ux-reset-clause') as HTMLButtonElement | null;
+  const delRun = document.getElementById('ux-del-run');
+  const insRun = document.getElementById('ux-ins-run');
+  const gutterBar = document.getElementById('ux-gutter-bar');
+  const redlineStatus = document.getElementById('ux-redline-status');
+  const toastEl = document.getElementById('ux-sheet-toast');
+
+  let activeIdx = 0;
+  let focusMode = false;
+  const polishedAlts: [string, string][] = [
+    [
+      'sub-millisecond native TrueType sheets',
+      'zero-jitter 120Hz subpixel TrueType pages',
+    ],
+    [
+      'every AI prompt strictly air-gapped on localhost',
+      '100% sovereign inference locked to 127.0.0.1',
+    ],
+  ];
+  const toggleIdx = [0, 0];
+
+  const syncToolbarState = () => {
+    const active = phraseBtns[activeIdx];
+    if (!active) return;
+    phraseBtns.forEach((btn, idx) => {
+      btn.classList.toggle('is-selected', idx === activeIdx);
+    });
+    const map: Record<string, boolean> = {
+      bold: active.classList.contains('is-bold'),
+      italic: active.classList.contains('is-italic'),
+      underline: active.classList.contains('is-under'),
+      highlight: active.classList.contains('is-hl'),
+    };
+    fmtBtns.forEach((btn) => {
+      const k = btn.dataset.uxFmt || '';
+      btn.setAttribute('aria-pressed', map[k] ? 'true' : 'false');
+    });
+  };
+
+  phraseBtns.forEach((btn, idx) => {
+    btn.addEventListener('click', () => {
+      activeIdx = idx;
+      syncToolbarState();
+      const words = (btn.textContent || '').trim().split(/\s+/).length;
+      if (toastEl) {
+        toastEl.textContent = `Selected ${words} words — Floating Ivory Bar synced to TextSpan #${idx + 1}`;
+      }
+    });
+  });
+
+  fmtBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const active = phraseBtns[activeIdx];
+      if (!active) return;
+      const fmt = btn.dataset.uxFmt;
+      if (fmt === 'bold') active.classList.toggle('is-bold');
+      if (fmt === 'italic') active.classList.toggle('is-italic');
+      if (fmt === 'underline') active.classList.toggle('is-under');
+      if (fmt === 'highlight') active.classList.toggle('is-hl');
+      syncToolbarState();
+      if (toastEl) {
+        toastEl.textContent = `Applied ${fmt?.toUpperCase()} strictly to selected substring (Paragraph::transform_range)`;
+      }
+    });
+  });
+
+  aiPolishBtn?.addEventListener('click', () => {
+    const active = phraseBtns[activeIdx];
+    if (!active) return;
+    toggleIdx[activeIdx] = toggleIdx[activeIdx] === 0 ? 1 : 0;
+    const pair = polishedAlts[activeIdx];
+    if (pair) {
+      active.textContent = pair[toggleIdx[activeIdx]];
+    }
+    if (toastEl) {
+      toastEl.textContent =
+        'Polished selected substring via local nour-code / Ollama (0 cloud bytes)';
+    }
+  });
+
+  const setFocus = (next: boolean) => {
+    focusMode = next;
+    shell.classList.toggle('is-focus-mode', focusMode);
+    if (exitFocusBtn) exitFocusBtn.hidden = !focusMode;
+    if (toastEl) {
+      toastEl.textContent = focusMode
+        ? 'Entered Distraction-Free Writer Focus Mode — calm Linen & Paper'
+        : 'Restored Studio Chrome & Legal Redline Review Bar';
+    }
+  };
+
+  focusToggleBtn?.addEventListener('click', () => setFocus(!focusMode));
+  exitFocusBtn?.addEventListener('click', () => setFocus(false));
+
+  acceptBtn?.addEventListener('click', () => {
+    if (delRun) delRun.hidden = true;
+    insRun?.classList.add('is-committed');
+    if (gutterBar) gutterBar.hidden = true;
+    if (acceptBtn) acceptBtn.hidden = true;
+    if (rejectBtn) rejectBtn.hidden = true;
+    if (resetBtn) resetBtn.hidden = false;
+    if (redlineStatus) {
+      redlineStatus.textContent = 'LEGAL REDLINE · Clause #1 accepted ("fourteen (14) business days")';
+    }
+    if (toastEl) {
+      toastEl.textContent = 'Accepted revision clause #1 — logged to SHA-256 AuditTrail';
+    }
+  });
+
+  rejectBtn?.addEventListener('click', () => {
+    if (insRun) insRun.hidden = true;
+    delRun?.classList.add('is-restored');
+    if (gutterBar) gutterBar.hidden = true;
+    if (acceptBtn) acceptBtn.hidden = true;
+    if (rejectBtn) rejectBtn.hidden = true;
+    if (resetBtn) resetBtn.hidden = false;
+    if (redlineStatus) {
+      redlineStatus.textContent = 'LEGAL REDLINE · Clause #1 rejected (reverted to "thirty (30) calendar days")';
+    }
+    if (toastEl) {
+      toastEl.textContent = 'Rejected revision clause #1 — original counterparty text restored';
+    }
+  });
+
+  resetBtn?.addEventListener('click', () => {
+    if (delRun) {
+      delRun.hidden = false;
+      delRun.classList.remove('is-restored');
+    }
+    if (insRun) {
+      insRun.hidden = false;
+      insRun.classList.remove('is-committed');
+    }
+    if (gutterBar) gutterBar.hidden = false;
+    if (acceptBtn) acceptBtn.hidden = false;
+    if (rejectBtn) rejectBtn.hidden = false;
+    resetBtn.hidden = true;
+    if (redlineStatus) {
+      redlineStatus.textContent = 'LEGAL REDLINE · Clause #1 pending review';
+    }
+    if (toastEl) {
+      toastEl.textContent = 'Restored ECMA-376 <w:del> + <w:ins> redline clause #1';
+    }
+  });
+
+  syncToolbarState();
+}
+
 function bootstrap(): void {
   initTheme();
   const closeMobileMenu = initMobileTopMenu();
   initOsSmartDownload();
   renderMetrics();
+  initUxSandbox();
   renderEnterpriseMatrix();
   const selectSpecimen = initStudioSwitchboard();
   renderCraftPillars();

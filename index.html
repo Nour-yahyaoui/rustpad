@@ -3,25 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>RustPad v2.0 Enterprise — Offline Pure-Rust Word (.docx), Forensic PDF &amp; Local AI Suite</title>
+    <title>RustPad v2.1 — Ultra-Smooth 60–120Hz Offline Native Word (.docx), Forensic PDF &amp; Local AI Studio</title>
     <meta
       name="description"
-      content="Offline-first enterprise desktop Word (.docx), Forensic PDF/A-2b, and DLP-governed Local AI Suite in Pure Rust. ECMA-376 Track Changes &amp; Redlines, PDF Stream Sanitization, SHA-256 Seals, CycloneDX SBOM, and 0 crates.io runtime dependencies. Engineered by Nour Yahyaoui."
+      content="Ultra-smooth 60–120Hz native desktop UX meets offline enterprise Word (.docx), Forensic PDF/A-2b, and DLP-governed Local AI in Pure Rust. Live range selection, floating selection bar, 1-click per-clause redlines, spring scroll, Focus Mode, and 0 crates.io runtime dependencies. Engineered by Nour Yahyaoui."
     />
     <meta name="author" content="Nour Yahyaoui" />
     <meta name="theme-color" content="#090a0d" />
 
     <!-- Open Graph / LinkedIn / X -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="RustPad v2.0 Enterprise — Offline Word Redlines, Forensic PDF &amp; Local AI in Pure Rust" />
+    <meta property="og:title" content="RustPad v2.1 — Ultra-Smooth 60–120Hz Native Word, Forensic PDF &amp; Local AI in Pure Rust" />
     <meta
       property="og:description"
-      content="Zero-WebView, 0 crates.io dependency desktop suite (~3.8 MB) with ECMA-376 Track Changes, Forensic PDF Redaction Sanitization, PDF/A-2b SHA-256 Seals, and MDM Air-Gapped AI DLP."
+      content="Where silky-smooth 60–120Hz native responsiveness &amp; human UX are the #1 feature: floating selection popover, 1-click clause redlines, forensic PDF sanitization, and 0 crates.io deps."
     />
     <meta property="og:url" content="https://rustpad-studio.vercel.app" />
     <meta property="og:image" content="https://rustpad-studio.vercel.app/og.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="RustPad v2.0 Enterprise — Offline Document &amp; Forensic PDF Suite" />
+    <meta name="twitter:title" content="RustPad v2.1 — Ultra-Smooth 60–120Hz Offline Document &amp; PDF Studio" />
     <meta name="twitter:image" content="https://rustpad-studio.vercel.app/og.png" />
 
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -51,7 +51,7 @@
     <!-- Sticky Mobile-First Top Bar -->
     <header class="site-header" id="site-header">
       <div class="container header-inner">
-        <a href="#hero" class="brand" aria-label="RustPad v2.0.0 Enterprise Home">
+        <a href="#hero" class="brand" aria-label="RustPad v2.1.0 Studio Home">
           <span class="brand-mark" aria-hidden="true">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
               <rect x="3" y="2.5" width="15" height="19" rx="2.5" stroke="currentColor" stroke-width="1.9" />
@@ -62,14 +62,15 @@
             </svg>
           </span>
           <span class="brand-name">RustPad</span>
-          <span class="brand-badge">v2.0</span>
+          <span class="brand-badge">v2.1</span>
         </a>
 
         <!-- Desktop Navigation (>= 1024px) -->
         <nav class="desktop-nav" aria-label="Primary sections">
+          <a href="#ux-playground" class="nav-link">Smooth UX</a>
           <a href="#enterprise-matrix" class="nav-link">vs. Suites</a>
           <a href="#studio" class="nav-link">Studio</a>
-          <a href="#craft" class="nav-link">Redline &amp; PDF</a>
+          <a href="#craft" class="nav-link">Craft &amp; PDF</a>
           <a href="#ai-studio" class="nav-link">Air-Gap AI</a>
           <a href="#architecture" class="nav-link">9 Crates</a>
           <a href="#cli" class="nav-link">Ent CLI</a>
@@ -103,11 +104,11 @@
             GitHub ↗
           </a>
           <a
-            href="https://github.com/Nour-yahyaoui/rustpad/releases/tag/v2.0.0"
+            href="https://github.com/Nour-yahyaoui/rustpad/releases/tag/v2.1.0"
             class="desktop-dl-btn"
             id="header-download-cta"
           >
-            Download v2.0.0
+            Download v2.1.0
           </a>
 
           <!-- Mobile Top Menu Trigger (< 1024px) -->
@@ -133,38 +134,43 @@
         <div class="container mobile-menu-inner">
           <div class="mobile-menu-telemetry">
             <span class="telemetry-dot" aria-hidden="true"></span>
-            <span>v2.0 ENTERPRISE · 0 DEPS · OFFLINE</span>
+            <span>v2.1 · 60–120HZ SMOOTH UX · OFFLINE</span>
             <button type="button" class="mobile-tour-pill" data-start-tour>5-Step Tour</button>
           </div>
 
           <nav class="mobile-nav-list" aria-label="Mobile top menu">
-            <a href="#enterprise-matrix" class="mobile-nav-item" data-close-menu>
+            <a href="#ux-playground" class="mobile-nav-item" data-close-menu>
               <span class="m-idx">01</span>
-              <span class="m-title">Enterprise Suite Benchmark</span>
+              <span class="m-title">Interactive Smooth UX Sandbox</span>
+              <span class="m-arrow" aria-hidden="true">→</span>
+            </a>
+            <a href="#enterprise-matrix" class="mobile-nav-item" data-close-menu>
+              <span class="m-idx">02</span>
+              <span class="m-title">60–120Hz vs. Legacy Suites</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
             <a href="#studio" class="mobile-nav-item" data-close-menu>
-              <span class="m-idx">02</span>
-              <span class="m-title">Live v2.0 Studio Switchboard</span>
+              <span class="m-idx">03</span>
+              <span class="m-title">Live v2.1 Studio Switchboard</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
             <a href="#craft" class="mobile-nav-item" data-close-menu>
-              <span class="m-idx">03</span>
-              <span class="m-title">Legal Redlines &amp; PDF Forensics</span>
+              <span class="m-idx">04</span>
+              <span class="m-title">Smooth UX, Redlines &amp; PDF</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
             <a href="#ai-studio" class="mobile-nav-item" data-close-menu>
-              <span class="m-idx">04</span>
-              <span class="m-title">Air-Gapped DLP &amp; Local AI</span>
+              <span class="m-idx">05</span>
+              <span class="m-title">Selection AI &amp; Air-Gap DLP</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
             <a href="#architecture" class="mobile-nav-item" data-close-menu>
-              <span class="m-idx">05</span>
+              <span class="m-idx">06</span>
               <span class="m-title">9-Crate Zero-Dep Architecture</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
             <a href="#cli" class="mobile-nav-item" data-close-menu>
-              <span class="m-idx">06</span>
+              <span class="m-idx">07</span>
               <span class="m-title">Enterprise CLI &amp; Governance</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
@@ -172,15 +178,15 @@
 
           <div class="mobile-menu-actions">
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-windows-x86_64.exe"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.1.0/rustpad-v2.1.0-windows-x86_64.exe"
               class="btn btn-primary btn-block"
               id="mobile-primary-dl"
             >
-              Download Windows x64 (.exe) — v2.0.0
+              Download Windows x64 (.exe) — v2.1.0
             </a>
             <div class="mobile-menu-subgrid">
               <a
-                href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-linux-x86_64"
+                href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.1.0/rustpad-v2.1.0-linux-x86_64"
                 class="btn btn-secondary"
               >
                 Linux x86_64
@@ -209,26 +215,26 @@
           <div class="hero-eyebrow-row">
             <span class="eyebrow-pill">
               <span class="pulse-dot" aria-hidden="true"></span>
-              <span>RUSTPAD v2.0 ENTERPRISE · 100% OFFLINE · 0 CRATES.IO DEPS</span>
+              <span>RUSTPAD v2.1 · ULTRA-SMOOTH 60–120HZ UX · 100% OFFLINE · 0 DEPS</span>
             </span>
           </div>
 
           <h1 class="hero-title">
-            Enterprise Document &amp; PDF Sovereignty.<br />
-            <span class="hero-serif">Offline-First in Pure Rust.</span>
+            Silky-Smooth 60–120Hz Craft.<br />
+            <span class="hero-serif">Offline Word &amp; PDF in Pure Rust.</span>
           </h1>
 
           <p class="hero-lead">
-            The open-source desktop challenger to bloated multi-gigabyte suites and cloud-locked SaaS.
-            Author &amp; redline ECMA-376 <code>.docx</code> contracts (<code>&lt;w:ins&gt;</code> /
-            <code>&lt;w:del&gt;</code>), forensically sanitize &amp; SHA-256 seal archival
-            <code>PDF/A-2b</code> files, and enforce MDM <code>policy.json</code> air-gapped local AI
-            in one <strong>~3.8 MB</strong> native executable with <strong>zero external dependencies</strong>.
+            <strong>Human UX and instant responsiveness are the #1 feature of RustPad.</strong>
+            Select any phrase for a Warm Ivory floating toolbar, glide through A4 sheets &amp; PDFs with
+            60Hz spring scrolling, review ECMA-376 <code>&lt;w:ins&gt;</code> / <code>&lt;w:del&gt;</code>
+            redlines in 1 click, forensically sanitize <code>PDF/A-2b</code> files, and run air-gapped local AI
+            in one <strong>~3.9 MB</strong> native binary with <strong>0 crates.io dependencies</strong>.
           </p>
 
           <div class="hero-cta-group">
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-windows-x86_64.exe"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.1.0/rustpad-v2.1.0-windows-x86_64.exe"
               class="btn btn-primary btn-lg"
               id="hero-primary-dl"
             >
@@ -236,11 +242,11 @@
                 <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 19h16" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
               <span id="hero-primary-dl-label">Download Windows x64 (.exe)</span>
-              <span class="btn-tag">v2.0.0</span>
+              <span class="btn-tag">v2.1.0</span>
             </a>
 
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-linux-x86_64"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.1.0/rustpad-v2.1.0-linux-x86_64"
               class="btn btn-secondary btn-lg"
               id="hero-secondary-dl"
             >
@@ -273,7 +279,7 @@
           </div>
 
           <div class="hero-meta-links">
-            <a href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/SHA256SUMS.txt">SHA256SUMS.txt</a>
+            <a href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.1.0/SHA256SUMS.txt">SHA256SUMS.txt</a>
             <span aria-hidden="true">·</span>
             <a href="https://github.com/Nour-yahyaoui/rustpad/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer">SECURITY.md</a>
             <span aria-hidden="true">·</span>
@@ -287,16 +293,113 @@
         </div>
       </section>
 
+      <!-- 01B · INTERACTIVE v2.1 SMOOTH UX & HUMAN CRAFT SANDBOX -->
+      <section class="section" id="ux-playground">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">01 · FLAGSHIP HUMAN UX SANDBOX · TRY IT LIVE</div>
+            <h2 class="section-title">Feel Why Smooth UX Is RustPad’s #1 Feature</h2>
+            <p class="section-desc">
+              Tap a phrase below to summon the Warm Ivory Floating Selection Toolbar, style individual
+              <code>TextSpan</code> substrings, commit or revert a legal redline clause in 1 click, or
+              dissolve the chrome with <code>Ctrl+Shift+F</code> Focus Mode.
+            </p>
+          </div>
+
+          <div class="ux-sandbox-shell" id="ux-sandbox-shell">
+            <div class="ux-sandbox-chrome" id="ux-sandbox-chrome">
+              <div class="ux-chrome-left">
+                <span class="ux-dot"></span>
+                <span class="ux-doc-name">Master_Services_Agreement_v2.1.docx</span>
+                <span class="ux-fps-pill">60–120Hz VSync · 0.4ms Paint</span>
+              </div>
+              <div class="ux-chrome-actions">
+                <button type="button" class="ux-focus-btn" id="ux-focus-toggle">
+                  Focus Mode (Ctrl+Shift+F)
+                </button>
+              </div>
+            </div>
+
+            <div class="ux-redline-strip" id="ux-redline-strip">
+              <span class="ux-redline-summary" id="ux-redline-status">
+                LEGAL REDLINE · Clause #1 pending review
+              </span>
+              <div class="ux-redline-btns">
+                <button type="button" class="ux-clause-btn ux-accept" id="ux-accept-clause">
+                  ✓ Accept #1
+                </button>
+                <button type="button" class="ux-clause-btn ux-reject" id="ux-reject-clause">
+                  ✕ Reject #1
+                </button>
+                <button type="button" class="ux-clause-btn" id="ux-reset-clause" hidden>
+                  ↺ Reset Redline
+                </button>
+              </div>
+            </div>
+
+            <div class="ux-linen-desk">
+              <button type="button" class="ux-exit-focus-pill" id="ux-exit-focus" hidden>
+                Exit Focus · Ctrl+Shift+F
+              </button>
+
+              <!-- Floating Contextual Selection Mini-Toolbar -->
+              <div class="ux-floating-bar" role="toolbar" aria-label="Floating selection formatting toolbar">
+                <button type="button" class="ux-pop-btn" data-ux-fmt="bold" aria-pressed="true" title="Toggle Bold (Ctrl+B)">
+                  <strong>B</strong>
+                </button>
+                <button type="button" class="ux-pop-btn" data-ux-fmt="italic" aria-pressed="false" title="Toggle Italic (Ctrl+I)">
+                  <em>I</em>
+                </button>
+                <button type="button" class="ux-pop-btn" data-ux-fmt="underline" aria-pressed="false" title="Toggle Underline (Ctrl+U)">
+                  <span style="text-decoration: underline">U</span>
+                </button>
+                <button type="button" class="ux-pop-btn" data-ux-fmt="highlight" aria-pressed="true" title="Cycle Marker Highlight">
+                  Highlight
+                </button>
+                <button type="button" class="ux-pop-btn ux-pop-ai" id="ux-ai-polish" title="Rewrite selected phrase via Local AI">
+                  ✦ AI Polish
+                </button>
+              </div>
+
+              <!-- Warm Architectural Paper Sheet -->
+              <article class="ux-paper-sheet" aria-label="Interactive A4 sheet preview">
+                <div class="ux-sheet-kicker">SECTION 4.2 · PAYMENT &amp; DATA SOVEREIGNTY</div>
+                <p class="ux-sheet-para">
+                  Tap any highlighted phrase: RustPad renders
+                  <button type="button" class="ux-span-chip is-selected is-bold is-hl" data-ux-phrase="0">
+                    sub-millisecond native TrueType sheets
+                  </button>
+                  with zero Chromium bloat, while keeping
+                  <button type="button" class="ux-span-chip" data-ux-phrase="1">
+                    every AI prompt strictly air-gapped on localhost
+                  </button>
+                  under IT governance.
+                </p>
+                <p class="ux-sheet-para ux-redline-para" id="ux-redline-para">
+                  <span class="ux-gutter-bar" id="ux-gutter-bar" aria-hidden="true"></span>
+                  Undisputed invoices shall be settled within
+                  <span class="ux-del-run" id="ux-del-run">thirty (30) calendar days</span>
+                  <span class="ux-ins-run" id="ux-ins-run">fourteen (14) business days</span>
+                  of verified cryptographic receipt.
+                </p>
+                <div class="ux-sheet-toast" id="ux-sheet-toast">
+                  Selected 4 words — click B / I / U / Highlight / ✦ AI Polish above
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- 02 · ENTERPRISE SUITE BENCHMARK MATRIX -->
       <section class="section section-alt" id="enterprise-matrix">
         <div class="container">
           <div class="section-header">
-            <div class="section-kicker">01 · HEAD-TO-HEAD ENTERPRISE BENCHMARK</div>
-            <h2 class="section-title">Why Regulated Teams Choose Offline Native Rust</h2>
+            <div class="section-kicker">02 · HEAD-TO-HEAD UX &amp; ENTERPRISE BENCHMARK</div>
+            <h2 class="section-title">Why Teams Choose Smooth Offline Native Rust</h2>
             <p class="section-desc">
-              RustPad v2.0 delivers the legal redlining, forensic PDF sanitization, and MDM DLP governance
-              of heavyweight enterprise software — without cloud data egress, Chromium RAM bloat, or
-              hundreds of unverified supply-chain packages.
+              RustPad v2.1 combines 60–120Hz native responsiveness with legal redlining, forensic PDF
+              sanitization, and MDM DLP governance — without cloud egress or 300 MB Electron lag.
             </p>
           </div>
 
@@ -308,8 +411,8 @@
             <table class="crate-table">
               <thead>
                 <tr>
-                  <th>Enterprise Dimension</th>
-                  <th>RustPad v2.0 (Open Source)</th>
+                  <th>UX &amp; Enterprise Dimension</th>
+                  <th>RustPad v2.1 (Open Source)</th>
                   <th>Cloud SaaS Docs</th>
                   <th>Electron Wrappers</th>
                   <th>Legacy 2 GB Suites</th>
@@ -325,11 +428,11 @@
       <section class="section" id="studio">
         <div class="container">
           <div class="section-header">
-            <div class="section-kicker">02 · NATIVE WIN32 &amp; X11 FRAMEBUFFER</div>
-            <h2 class="section-title">Inspect the v2.0 Enterprise Desktop Studio</h2>
+            <div class="section-kicker">03 · NATIVE WIN32 &amp; X11 60–120HZ COMPOSITOR</div>
+            <h2 class="section-title">Inspect the v2.1 Smooth Desktop Studio</h2>
             <p class="section-desc">
-              Warm Architectural Paper &amp; Linen surfaces uniting ECMA-376 legal redlines, threaded
-              review comments, multi-line OpenXML tables, forensic PDF sealing, and live DLP audit inspection.
+              Warm Architectural Paper &amp; Linen surfaces uniting floating selection formatting,
+              1-click clause redlines, multi-line OpenXML tables, forensic PDF sealing, and DLP inspection.
             </p>
           </div>
 
@@ -343,16 +446,16 @@
                 <span></span><span></span><span></span>
               </div>
               <div class="window-title" id="specimen-window-title">
-                RustPad v2.0.0 Enterprise — Enterprise_MSA_Redline.docx · DLP Verified
+                RustPad v2.1.0 — Enterprise_MSA_Redline.docx · Smooth 60–120Hz UX
               </div>
-              <span class="window-badge" id="specimen-badge">ECMA-376 REDLINE</span>
+              <span class="window-badge" id="specimen-badge">60–120HZ + REDLINE</span>
             </div>
 
             <div class="studio-viewport">
               <img
                 id="specimen-image"
                 src="/screenshots/word-studio.png"
-                alt="RustPad v2.0.0 Enterprise Legal Redline Studio and Local AI Dock"
+                alt="RustPad v2.1.0 Smooth Word Studio, Legal Redlines and Local AI Dock"
                 width="1440"
                 height="900"
                 loading="eager"
@@ -371,11 +474,11 @@
       <section class="section section-alt" id="craft">
         <div class="container">
           <div class="section-header">
-            <div class="section-kicker">03 · LEGAL, FORENSIC &amp; SECURITY ENGINEERING</div>
-            <h2 class="section-title">Engineered for Counterparty Redlines &amp; CISO Audits</h2>
+            <div class="section-kicker">04 · SMOOTH UX, LEGAL REDLINES &amp; FORENSICS</div>
+            <h2 class="section-title">Engineered for Effortless Flow &amp; CISO Audits</h2>
             <p class="section-desc">
-              Major v2.0 upgrades across OpenXML lossless passthrough, physical PDF redaction stream
-              purging, bounded DEFLATE zip-bomb hardening, and SHA-256 crash-recovery journaling.
+              v2.1 pairs a 60–120Hz coalesced native compositor and floating selection UX with lossless
+              OpenXML passthrough, physical PDF redaction purging, and SHA-256 crash-recovery journaling.
             </p>
           </div>
 
@@ -492,8 +595,8 @@
 
           <div class="scope-grid">
             <article class="scope-card scope-positive">
-              <div class="scope-tag">ENTERPRISE PRODUCTION SCOPE · v2.0</div>
-              <h3>Where RustPad v2.0 Leads</h3>
+              <div class="scope-tag">SMOOTH UX &amp; ENTERPRISE SCOPE · v2.1</div>
+              <h3>Where RustPad v2.1 Leads</h3>
               <ul class="scope-list" id="scope-built-for"></ul>
             </article>
             <article class="scope-card scope-neutral">
@@ -514,8 +617,8 @@
             <div class="footer-kicker">ARCHITECTED &amp; MAINTAINED BY</div>
             <h2 class="footer-name">Nour Yahyaoui</h2>
             <p class="footer-bio">
-              Full-Stack &amp; Systems Software Engineer in Tunis, Tunisia — engineering offline-first
-              native Rust systems, enterprise document infrastructure, and high-reliability platforms.
+              Full-Stack &amp; Systems Software Engineer in Tunis, Tunisia — engineering ultra-smooth
+              offline-first Rust desktop systems, enterprise document infrastructure, and resilient platforms.
             </p>
             <a
               href="https://committers.top/tunisia#Nour-yahyaoui"
@@ -555,7 +658,7 @@
         </div>
 
         <div class="footer-bottom">
-          <span>MIT License · RustPad v2.0.0 Enterprise · Offline Pure-Rust Document, Forensic PDF &amp; Local AI Suite</span>
+          <span>MIT License · RustPad v2.1.0 · Ultra-Smooth 60–120Hz Offline Pure-Rust Document, Forensic PDF &amp; Local AI Studio</span>
           <a href="#hero">Back to top ↑</a>
         </div>
       </div>

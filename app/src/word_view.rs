@@ -3,13 +3,15 @@
 
 use crate::commands::CommandId;
 use crate::state::{
-    DragInteraction, HitRegion, ToolbarDropdown, UiAction, WordTabState,
+    DragInteraction, HitRegion, ToolbarDropdown, UiAction, WordLineHitBox, WordTabState,
 };
 use doc_model::{
     Alignment, Block, FontFamily, ListKind, Paragraph, ParagraphStyle, RevisionKind,
 };
 use power_tools::SpellChecker;
-use rustpad_render::{Color, DaylightTheme, FontBook, FontSlot, Rect, Surface, UiIcon};
+use rustpad_render::{
+    decode_png_rgba, Color, DaylightTheme, FontBook, FontSlot, Rect, Surface, UiIcon,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub fn paint_word_tab(
@@ -17,8 +19,11 @@ pub fn paint_word_tab(
     fonts: &mut FontBook,
     spellchecker: &SpellChecker,
     hit_regions: &mut Vec<HitRegion>,
+    word_line_boxes: &mut Vec<WordLineHitBox>,
     tab_idx: usize,
     is_focused: bool,
+    focus_mode: bool,
+    active_drag: DragInteraction,
     cursor_blink_on: bool,
     mouse_x: f32,
     mouse_y: f32,
@@ -29,49 +34,57 @@ pub fn paint_word_tab(
     w: &mut WordTabState,
 ) {
     let s = ui_scale.clamp(0.85, 1.6);
-    let ribbon_h = (44.0 * s).round();
+    let ribbon_h = if focus_mode { 0.0 } else { (44.0 * s).round() };
     let has_active_table = w.active_table_cell.is_some();
     let (rev_ins, rev_del) = w.doc.revision_counts();
-    let show_review_bar = is_focused
+    let show_review_bar = !focus_mode
+        && is_focused
         && !has_active_table
         && (w.doc.track_changes || rev_ins > 0 || rev_del > 0 || !w.doc.comments.is_empty());
-    let table_bar_h = if (has_active_table && is_focused) || show_review_bar {
+    let table_bar_h = if !focus_mode && ((has_active_table && is_focused) || show_review_bar) {
         (36.0 * s).round()
     } else {
         0.0
     };
 
-    // 1. Primary Formatting Ribbon
-    let ribbon_rect = Rect::new(area.x, area.y, area.w, ribbon_h);
-    surface.fill_rect(ribbon_rect, DaylightTheme::CHROME);
-    surface.fill_rect(
-        Rect::new(ribbon_rect.x, ribbon_rect.y + ribbon_rect.h - 1.0, ribbon_rect.w, 1.0),
-        DaylightTheme::BORDER,
-    );
-    if is_focused {
-        paint_word_ribbon(
-            surface,
-            fonts,
-            hit_regions,
-            mouse_x,
-            mouse_y,
-            s,
-            sidebar_open,
-            ribbon_rect,
-            w,
+    // 1. Primary Formatting Ribbon (hidden in Distraction-Free Focus Mode)
+    if ribbon_h > 0.0 {
+        let ribbon_rect = Rect::new(area.x, area.y, area.w, ribbon_h);
+        surface.fill_rect(ribbon_rect, DaylightTheme::CHROME);
+        surface.fill_rect(
+            Rect::new(
+                ribbon_rect.x,
+                ribbon_rect.y + ribbon_rect.h - 1.0,
+                ribbon_rect.w,
+                1.0,
+            ),
+            DaylightTheme::BORDER,
         );
-    } else {
-        let lbl = format!("WORD STUDIO · {}", w.doc.title);
-        surface.draw_text(
-            fonts,
-            FontSlot::SansBold,
-            12.0 * s,
-            ribbon_rect.x + 16.0 * s,
-            ribbon_rect.y + ribbon_h * 0.63,
-            DaylightTheme::WORD_ACCENT,
-            &lbl,
-        );
-        hit_regions.push(HitRegion::button(ribbon_rect, UiAction::SwitchTab(tab_idx)));
+        if is_focused {
+            paint_word_ribbon(
+                surface,
+                fonts,
+                hit_regions,
+                mouse_x,
+                mouse_y,
+                s,
+                sidebar_open,
+                ribbon_rect,
+                w,
+            );
+        } else {
+            let lbl = format!("WORD STUDIO · {}", w.doc.title);
+            surface.draw_text(
+                fonts,
+                FontSlot::SansBold,
+                12.0 * s,
+                ribbon_rect.x + 16.0 * s,
+                ribbon_rect.y + ribbon_h * 0.63,
+                DaylightTheme::WORD_ACCENT,
+                &lbl,
+            );
+            hit_regions.push(HitRegion::button(ribbon_rect, UiAction::SwitchTab(tab_idx)));
+        }
     }
 
     // 2. Contextual Table Studio OR Legal Redline Review Sub-Bar
@@ -84,6 +97,7 @@ pub fn paint_word_tab(
                 surface,
                 fonts,
                 hit_regions,
+                tab_idx,
                 mouse_x,
                 mouse_y,
                 s,
@@ -104,8 +118,8 @@ pub fn paint_word_tab(
     );
     surface.fill_rect(body_rect, DaylightTheme::DESK_BG);
 
-    // 3. Resizable + Collapsible Left Document Outline Rail
-    let can_fit_sidebar = sidebar_open && body_rect.w >= 640.0;
+    // 3. Resizable + Collapsible Left Document Outline Rail (hidden in Focus Mode)
+    let can_fit_sidebar = !focus_mode && sidebar_open && body_rect.w >= 640.0;
     let eff_sb_w = if can_fit_sidebar {
         (sidebar_w * s).clamp(160.0, body_rect.w * 0.42).round()
     } else {
@@ -166,13 +180,37 @@ pub fn paint_word_tab(
             let view_top = w.scroll_y + 56.0;
             let view_bot = w.scroll_y + canvas_rect.h - 72.0;
             if cy < view_top {
-                w.scroll_y = (cy - 56.0).max(0.0);
+                let next = (cy - 56.0).max(0.0);
+                w.target_scroll_y = next;
+                w.scroll_y = next;
             } else if cy > view_bot {
-                w.scroll_y = (cy - canvas_rect.h + 88.0).clamp(0.0, w.max_scroll_y);
+                let next = (cy - canvas_rect.h + 88.0).clamp(0.0, w.max_scroll_y);
+                w.target_scroll_y = next;
+                w.scroll_y = next;
             }
         }
     }
     w.scroll_y = w.scroll_y.clamp(0.0, w.max_scroll_y);
+    w.target_scroll_y = w.target_scroll_y.clamp(0.0, w.max_scroll_y);
+
+    // Lazily decode any embedded PNG figures once into `w.image_rgba_cache` for 0-alloc 60Hz scrolling
+    for (bi, blk) in w.doc.blocks.iter().enumerate() {
+        if let Block::Image(img) = blk {
+            if img.rgba_preview.is_none() && !img.png_bytes.is_empty() {
+                let already = w
+                    .image_rgba_cache
+                    .iter()
+                    .any(|(b, plen, _, _, _)| *b == bi && *plen == img.png_bytes.len());
+                if !already {
+                    if let Ok((iw, ih, rgba)) = decode_png_rgba(&img.png_bytes) {
+                        w.image_rgba_cache.retain(|(b, _, _, _, _)| *b != bi);
+                        w.image_rgba_cache
+                            .push((bi, img.png_bytes.len(), iw, ih, rgba));
+                    }
+                }
+            }
+        }
+    }
 
     // Paint Outline Sidebar now that exact `block_canvas_y` offsets are known!
     if can_fit_sidebar {
@@ -211,6 +249,7 @@ pub fn paint_word_tab(
     let scrollbar_reserve = if w.max_scroll_y > 4.0 { 14.0 } else { 0.0 };
     let sheet_x = canvas_rect.x
         + ((canvas_rect.w - scrollbar_reserve - page_w) * 0.5).max(18.0 * s);
+    let mut sel_bar_anchor: Option<Rect> = None;
 
     for (page_idx, page_items) in pages.iter().enumerate() {
         let sheet_y =
@@ -323,6 +362,8 @@ pub fn paint_word_tab(
                 fonts,
                 spellchecker,
                 hit_regions,
+                word_line_boxes,
+                &mut sel_bar_anchor,
                 tab_idx,
                 is_focused,
                 cursor_blink_on,
@@ -336,6 +377,64 @@ pub fn paint_word_tab(
                 scale,
             );
         }
+    }
+
+    // 5b. Floating Contextual Selection Mini-Toolbar (Warm Ivory Paper Popover)
+    if is_focused
+        && !matches!(active_drag, DragInteraction::WordTextSelection { .. })
+        && w.has_selection()
+    {
+        if let Some(sel_r) = sel_bar_anchor {
+            paint_floating_selection_bar(
+                surface,
+                fonts,
+                hit_regions,
+                mouse_x,
+                mouse_y,
+                s,
+                canvas_rect,
+                sel_r,
+                w,
+            );
+        }
+    }
+
+    // 5c. Distraction-Free Focus Mode subtle exit badge
+    if focus_mode {
+        let pill_w = (188.0 * s).round();
+        let pill_h = (26.0 * s).round();
+        let pill = Rect::new(
+            (canvas_rect.x + canvas_rect.w - pill_w - 18.0 * s).max(canvas_rect.x + 8.0),
+            canvas_rect.y + 12.0 * s,
+            pill_w,
+            pill_h,
+        );
+        let hov = pill.contains(mouse_x, mouse_y);
+        surface.fill_rounded_rect(
+            pill,
+            13.0,
+            if hov {
+                DaylightTheme::PAPER
+            } else {
+                Color::rgba(255, 255, 255, 228)
+            },
+        );
+        surface.stroke_rounded_rect(pill, 13.0, 1.0, DaylightTheme::BORDER_STRONG);
+        let lbl = "Exit Focus · Ctrl+Shift+F";
+        let tw = fonts.measure_text(FontSlot::SansBold, lbl, 10.6 * s);
+        surface.draw_text(
+            fonts,
+            FontSlot::SansBold,
+            10.6 * s,
+            pill.x + (pill.w - tw) * 0.5,
+            pill.y + pill_h * 0.67,
+            DaylightTheme::WORD_ACCENT,
+            lbl,
+        );
+        hit_regions.push(HitRegion::button(
+            pill,
+            UiAction::ExecCommand(CommandId::ToggleFocusMode),
+        ));
     }
 
     // 6. Interactive Vertical Scrollbar Thumb
@@ -354,6 +453,130 @@ pub fn paint_word_tab(
     }
 
     surface.reset_clip();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_floating_selection_bar(
+    surface: &mut Surface,
+    fonts: &mut FontBook,
+    hit_regions: &mut Vec<HitRegion>,
+    mouse_x: f32,
+    mouse_y: f32,
+    s: f32,
+    canvas_rect: Rect,
+    sel_r: Rect,
+    w: &WordTabState,
+) {
+    let bar_h = (34.0 * s).round();
+    let pad_x = (6.0 * s).round();
+    let gap = (3.0 * s).round();
+
+    let probe_style = match w.ordered_selection() {
+        Some(((b0, c0), _)) => match w.doc.blocks.get(b0) {
+            Some(Block::Paragraph(p)) => p.style_at_char(c0 + 1),
+            _ => doc_model::SpanStyle::default(),
+        },
+        None => doc_model::SpanStyle::default(),
+    };
+
+    let items: [(&str, FontSlot, bool, bool, CommandId); 7] = [
+        ("B", FontSlot::SansBold, probe_style.bold, false, CommandId::ToggleBold),
+        ("I", FontSlot::SerifRegular, probe_style.italic, false, CommandId::ToggleItalic),
+        ("U", FontSlot::SansBold, probe_style.underline, false, CommandId::ToggleUnderline),
+        (
+            "Highlight",
+            FontSlot::SansRegular,
+            probe_style.highlight.is_some(),
+            false,
+            CommandId::ToggleHighlight,
+        ),
+        ("Ink", FontSlot::SansRegular, false, false, CommandId::CycleTextColor),
+        ("+Note", FontSlot::SansRegular, false, false, CommandId::AddReviewComment),
+        ("AI Polish", FontSlot::SansBold, false, true, CommandId::AiRunFixGrammar),
+    ];
+
+    let mut total_w = pad_x * 2.0;
+    let mut btn_ws = [0.0f32; 7];
+    for (i, (lbl, slot, _, _, _)) in items.iter().enumerate() {
+        let tw = fonts.measure_text(*slot, lbl, 11.2 * s);
+        let bw = (tw + 14.0 * s).max(26.0 * s).round();
+        btn_ws[i] = bw;
+        total_w += bw;
+        if i + 1 < items.len() {
+            total_w += gap;
+        }
+    }
+
+    let min_x = canvas_rect.x + 10.0 * s;
+    let max_x = (canvas_rect.x + canvas_rect.w - total_w - 16.0 * s).max(min_x);
+    let pop_x = (sel_r.x + (sel_r.w - total_w) * 0.5).clamp(min_x, max_x).round();
+    let above_y = sel_r.y - bar_h - 8.0 * s;
+    let pop_y = if above_y >= canvas_rect.y + 8.0 * s {
+        above_y.round()
+    } else {
+        (sel_r.y + sel_r.h + 8.0 * s)
+            .min(canvas_rect.y + canvas_rect.h - bar_h - 8.0 * s)
+            .round()
+    };
+
+    let pop = Rect::new(pop_x, pop_y, total_w, bar_h);
+    surface.draw_paper_shadow(pop, 7.0, 12.0, 26);
+    surface.fill_rounded_rect(pop, 7.0, DaylightTheme::PAPER);
+    surface.stroke_rounded_rect(pop, 7.0, 1.0, DaylightTheme::BORDER_STRONG);
+
+    let bh = (24.0 * s).round();
+    let by = (pop.y + (bar_h - bh) * 0.5).round();
+    let mut bx = pop.x + pad_x;
+
+    for (i, (lbl, slot, active, ai_accent, cmd)) in items.iter().enumerate() {
+        let bw = btn_ws[i];
+        let br = Rect::new(bx, by, bw, bh);
+        let hov = br.contains(mouse_x, mouse_y);
+        if *ai_accent {
+            surface.fill_rounded_rect(
+                br,
+                4.5,
+                if hov {
+                    DaylightTheme::WORD_ACCENT
+                } else {
+                    DaylightTheme::WORD_SOFT
+                },
+            );
+            surface.stroke_rounded_rect(br, 4.5, 1.0, DaylightTheme::WORD_ACCENT);
+        } else if *active || hov {
+            surface.fill_rounded_rect(
+                br,
+                4.5,
+                if *active {
+                    DaylightTheme::WORD_SOFT
+                } else {
+                    DaylightTheme::HOVER
+                },
+            );
+            if *active {
+                surface.stroke_rounded_rect(br, 4.5, 1.0, DaylightTheme::WORD_ACCENT);
+            }
+        }
+        let fg = if *ai_accent && hov {
+            DaylightTheme::PAPER
+        } else if *ai_accent || *active {
+            DaylightTheme::WORD_ACCENT
+        } else {
+            DaylightTheme::INK
+        };
+        let tw = fonts.measure_text(*slot, lbl, 11.2 * s);
+        surface.draw_text(
+            fonts,
+            *slot,
+            11.2 * s,
+            br.x + (bw - tw) * 0.5,
+            br.y + bh * 0.70,
+            fg,
+            lbl,
+        );
+        hit_regions.push(HitRegion::button(br, UiAction::ExecCommand(*cmd)));
+        bx += bw + gap;
+    }
 }
 
 pub fn paint_canvas_scrollbar(
@@ -703,6 +926,8 @@ fn paint_laid_out_block(
     fonts: &mut FontBook,
     spellchecker: &SpellChecker,
     hit_regions: &mut Vec<HitRegion>,
+    word_line_boxes: &mut Vec<WordLineHitBox>,
+    sel_bar_anchor: &mut Option<Rect>,
     tab_idx: usize,
     is_focused: bool,
     cursor_blink_on: bool,
@@ -732,8 +957,20 @@ fn paint_laid_out_block(
             let r = Rect::new(x, y, (img.width_pt * scale).min(content_w), box_h);
             surface.fill_rounded_rect(r, 4.0, DaylightTheme::SIDEBAR);
             surface.stroke_rounded_rect(r, 4.0, 1.0, DaylightTheme::BORDER_STRONG);
+            let inner = Rect::new(
+                r.x + 3.0,
+                r.y + 3.0,
+                (r.w - 6.0).max(2.0),
+                (r.h - 6.0).max(2.0),
+            );
             if let Some((iw, ih, rgba)) = &img.rgba_preview {
-                surface.blit_rgba(r.x as i32 + 4, r.y as i32 + 4, *iw, *ih, rgba);
+                surface.blit_rgba_scaled(inner, *iw, *ih, rgba);
+            } else if let Some((_, _, iw, ih, rgba)) = w
+                .image_rgba_cache
+                .iter()
+                .find(|(b, _, _, _, _)| *b == item.block_idx)
+            {
+                surface.blit_rgba_scaled(inner, *iw, *ih, rgba);
             } else {
                 surface.draw_text(
                     fonts,
@@ -742,7 +979,7 @@ fn paint_laid_out_block(
                     r.x + 14.0,
                     r.y + 24.0,
                     DaylightTheme::INK,
-                    &format!("[Embedded Image: {}]", img.name),
+                    &format!("[Embedded Figure: {}]", img.name),
                 );
             }
         }
@@ -1018,6 +1255,8 @@ fn paint_laid_out_block(
                 fonts,
                 spellchecker,
                 hit_regions,
+                word_line_boxes,
+                sel_bar_anchor,
                 tab_idx,
                 is_focused,
                 cursor_blink_on,
@@ -1033,6 +1272,23 @@ fn paint_laid_out_block(
             );
         }
     }
+}
+
+fn compute_line_char_xs(
+    fonts: &mut FontBook,
+    slot: FontSlot,
+    px_size: f32,
+    draw_x: f32,
+    text: &str,
+) -> Vec<f32> {
+    let mut xs = Vec::with_capacity(text.chars().count() + 1);
+    let mut pen = draw_x;
+    xs.push(pen);
+    for ch in text.chars() {
+        pen += fonts.glyph(slot, ch, px_size).advance_px;
+        xs.push(pen);
+    }
+    xs
 }
 
 fn char_offset_from_x(
@@ -1062,6 +1318,8 @@ fn paint_paragraph_block(
     fonts: &mut FontBook,
     spellchecker: &SpellChecker,
     hit_regions: &mut Vec<HitRegion>,
+    word_line_boxes: &mut Vec<WordLineHitBox>,
+    sel_bar_anchor: &mut Option<Rect>,
     tab_idx: usize,
     is_focused: bool,
     cursor_blink_on: bool,
@@ -1174,6 +1432,12 @@ fn paint_paragraph_block(
 
     let is_checked_done = matches!(p.list_kind, ListKind::Checklist(true));
     let avail_w = (content_w - (text_x - x)).max(40.0);
+    let para_total_chars = p.plain_text().chars().count();
+    let block_sel = if is_focused {
+        w.block_selection_char_range(item.block_idx, para_total_chars)
+    } else {
+        None
+    };
     let mut cur_y = y;
 
     for (line_idx, ln) in item.lines.iter().enumerate() {
@@ -1189,9 +1453,39 @@ fn paint_paragraph_block(
             Alignment::Left | Alignment::Justify => text_x,
         };
         let baseline_y = cur_y + ln.px_size * 0.90;
+        let line_chars = ln.text.chars().count();
+        let use_rich_spans = !ln.text.is_empty() && (p.spans.len() > 1 || p.has_revisions());
 
-        if !ln.text.is_empty() && p.has_revisions() {
-            paint_revision_aware_line(
+        let char_xs = if use_rich_spans {
+            measure_rich_spans_char_xs(fonts, p, ln, draw_x, scale)
+        } else {
+            compute_line_char_xs(fonts, ln.slot, ln.px_size, draw_x, &ln.text)
+        };
+
+        // Paint silky Cobalt-Linen range selection pill behind selected glyphs!
+        if let Some((sel_s, sel_e)) = block_sel {
+            let line_end = ln.char_start + line_chars;
+            if sel_e >= ln.char_start && sel_s <= line_end {
+                let rel_s = sel_s.saturating_sub(ln.char_start).min(line_chars);
+                let rel_e = sel_e.saturating_sub(ln.char_start).min(line_chars);
+                let sx0 = char_xs.get(rel_s).copied().unwrap_or(draw_x);
+                let mut sx1 = char_xs.get(rel_e).copied().unwrap_or(sx0);
+                if sel_s < sel_e && rel_s == rel_e && line_chars == 0 {
+                    sx1 = sx0 + 6.0 * scale;
+                }
+                if sx1 > sx0 + 0.5 {
+                    let sel_rect =
+                        Rect::new(sx0 - 1.0, cur_y + 0.5, (sx1 - sx0) + 2.0, ln.line_h - 1.0);
+                    surface.fill_rounded_rect(sel_rect, 2.5, Color::rgba(35, 92, 184, 44));
+                    if sel_bar_anchor.is_none() {
+                        *sel_bar_anchor = Some(sel_rect);
+                    }
+                }
+            }
+        }
+
+        if use_rich_spans {
+            paint_rich_spans_line(
                 surface,
                 fonts,
                 p,
@@ -1237,7 +1531,7 @@ fn paint_paragraph_block(
                     draw_x,
                     baseline_y,
                     DaylightTheme::INK_MUTED,
-                    "Start writing on this A4 sheet, press Ctrl+J for AI Assistant, or Ctrl+K for tools…",
+                    "Start writing on this A4 sheet, double-click/drag to style words, or press Ctrl+J for AI…",
                 );
             }
 
@@ -1262,32 +1556,28 @@ fn paint_paragraph_block(
 
         if w.spellcheck && !ln.text.is_empty() {
             for (c0, c1, _word) in spellchecker.check_paragraph(&ln.text) {
-                let pre: String = ln.text.chars().take(c0).collect();
-                let bad: String = ln.text.chars().skip(c0).take(c1 - c0).collect();
-                let wx = draw_x + fonts.measure_text(ln.slot, &pre, ln.px_size);
-                let ww = fonts.measure_text(ln.slot, &bad, ln.px_size);
+                let wx = char_xs.get(c0).copied().unwrap_or(draw_x);
+                let wx1 = char_xs.get(c1).copied().unwrap_or(wx);
                 surface.fill_rect(
-                    Rect::new(wx, baseline_y + 2.5, ww, 1.5),
+                    Rect::new(wx, baseline_y + 2.5, (wx1 - wx).max(2.0), 1.5),
                     DaylightTheme::PDF_ACCENT,
                 );
             }
         }
 
-        // Blinking Caret
-        let line_chars = ln.text.chars().count();
+        // Blinking Caret (using exact `char_xs` so mixed bold/font spans align to the sub-pixel!)
         let is_last_line = line_idx + 1 == item.lines.len();
         let cursor_in_block =
             is_focused && w.active_table_cell.is_none() && w.cursor_block == item.block_idx;
-        if cursor_in_block && cursor_blink_on {
+        if cursor_in_block && cursor_blink_on && !w.has_selection() {
             let in_this_line = if is_last_line {
                 w.cursor_char >= ln.char_start && w.cursor_char <= ln.char_start + line_chars
             } else {
                 w.cursor_char >= ln.char_start && w.cursor_char < ln.char_start + line_chars
             };
             if in_this_line {
-                let offset = w.cursor_char.saturating_sub(ln.char_start);
-                let prefix: String = ln.text.chars().take(offset).collect();
-                let cx = draw_x + fonts.measure_text(ln.slot, &prefix, ln.px_size);
+                let offset = w.cursor_char.saturating_sub(ln.char_start).min(line_chars);
+                let cx = char_xs.get(offset).copied().unwrap_or(draw_x);
                 surface.fill_rect(
                     Rect::new(cx, cur_y + 1.0, 2.0, ln.line_h - 2.0),
                     DaylightTheme::WORD_ACCENT,
@@ -1295,13 +1585,21 @@ fn paint_paragraph_block(
             }
         }
 
-        // Character-accurate hit region using live `mouse_x` glyph advance measurement!
+        // Character-accurate hit region + cached `WordLineHitBox` for 60-120Hz zero-lag drag selection!
         let line_hit = Rect::new(x, cur_y, content_w, ln.line_h.max(16.0));
+        let line_box = WordLineHitBox {
+            tab_idx,
+            block_idx: item.block_idx,
+            rect: line_hit,
+            start_char: ln.char_start,
+            char_xs,
+        };
         let click_char = if line_hit.contains(mouse_x, mouse_y) {
-            ln.char_start + char_offset_from_x(fonts, ln.slot, ln.px_size, &ln.text, mouse_x - draw_x)
+            line_box.hit_test_char(mouse_x)
         } else {
             ln.char_start + line_chars
         };
+        word_line_boxes.push(line_box);
         hit_regions.push(HitRegion::text(
             line_hit,
             UiAction::ClickWordParagraph {
@@ -1315,8 +1613,55 @@ fn paint_paragraph_block(
     }
 }
 
+fn span_slot_and_px(sp: &doc_model::TextSpan, p: &Paragraph, scale: f32) -> (FontSlot, f32) {
+    let slot = match (
+        sp.style.font_family,
+        sp.style.bold || p.style.is_bold_by_default(),
+    ) {
+        (FontFamily::Mono, _) => FontSlot::MonoRegular,
+        (FontFamily::Serif, _) => FontSlot::SerifRegular,
+        (FontFamily::Sans, true) => FontSlot::SansBold,
+        (FontFamily::Sans, false) => FontSlot::SansRegular,
+    };
+    let px = (sp.style.font_size_pt * scale).clamp(9.5, 58.0);
+    (slot, px)
+}
+
+fn measure_rich_spans_char_xs(
+    fonts: &mut FontBook,
+    p: &Paragraph,
+    ln: &LaidOutLine,
+    draw_x: f32,
+    scale: f32,
+) -> Vec<f32> {
+    let line_len = ln.text.chars().count();
+    let line_end = ln.char_start + line_len;
+    let mut xs = Vec::with_capacity(line_len + 1);
+    let mut pen = draw_x;
+    xs.push(pen);
+    let mut span_cursor = 0usize;
+
+    for sp in &p.spans {
+        let sp_len = sp.text.chars().count();
+        let sp_start = span_cursor;
+        let sp_end = span_cursor + sp_len;
+        span_cursor = sp_end;
+        if sp_end <= ln.char_start || sp_start >= line_end {
+            continue;
+        }
+        let ov_start = sp_start.max(ln.char_start) - sp_start;
+        let ov_end = sp_end.min(line_end) - sp_start;
+        let (slot, px) = span_slot_and_px(sp, p, scale);
+        for ch in sp.text.chars().skip(ov_start).take(ov_end - ov_start) {
+            pen += fonts.glyph(slot, ch, px).advance_px;
+            xs.push(pen);
+        }
+    }
+    xs
+}
+
 #[allow(clippy::too_many_arguments)]
-fn paint_revision_aware_line(
+fn paint_rich_spans_line(
     surface: &mut Surface,
     fonts: &mut FontBook,
     p: &Paragraph,
@@ -1356,7 +1701,8 @@ fn paint_revision_aware_line(
             continue;
         }
 
-        let sw = fonts.measure_text(ln.slot, &slice_str, ln.px_size);
+        let (sp_slot, sp_px) = span_slot_and_px(sp, p, scale);
+        let sw = fonts.measure_text(sp_slot, &slice_str, sp_px);
         let rev_kind = sp.revision.as_ref().map(|r| r.kind);
 
         match rev_kind {
@@ -1369,8 +1715,8 @@ fn paint_revision_aware_line(
                 let ins_col = Color::rgb(21, 114, 67);
                 surface.draw_text(
                     fonts,
-                    ln.slot,
-                    ln.px_size,
+                    sp_slot,
+                    sp_px,
                     seg_x,
                     baseline_y,
                     ins_col,
@@ -1390,8 +1736,8 @@ fn paint_revision_aware_line(
                 let del_col = Color::rgb(178, 42, 38);
                 surface.draw_text(
                     fonts,
-                    ln.slot,
-                    ln.px_size,
+                    sp_slot,
+                    sp_px,
                     seg_x,
                     baseline_y,
                     del_col,
@@ -1400,7 +1746,7 @@ fn paint_revision_aware_line(
                 surface.fill_rect(
                     Rect::new(
                         seg_x,
-                        baseline_y - ln.px_size * 0.30,
+                        baseline_y - sp_px * 0.30,
                         sw,
                         (1.3 * scale).max(1.1),
                     ),
@@ -1420,7 +1766,7 @@ fn paint_revision_aware_line(
                 } else {
                     Color::rgb(sp.style.color.r, sp.style.color.g, sp.style.color.b)
                 };
-                surface.draw_text(fonts, ln.slot, ln.px_size, seg_x, baseline_y, col, &slice_str);
+                surface.draw_text(fonts, sp_slot, sp_px, seg_x, baseline_y, col, &slice_str);
                 if sp.style.underline {
                     surface.fill_rect(
                         Rect::new(seg_x, baseline_y + 2.0, sw, (1.1 * scale).max(1.0)),
@@ -1431,7 +1777,7 @@ fn paint_revision_aware_line(
                     surface.fill_rect(
                         Rect::new(
                             seg_x,
-                            baseline_y - ln.px_size * 0.30,
+                            baseline_y - sp_px * 0.30,
                             sw,
                             (1.1 * scale).max(1.0),
                         ),
@@ -1460,35 +1806,26 @@ fn paint_word_ribbon(
         Block::Paragraph(p) => Some(p),
         _ => None,
     });
-    let is_bold = cur_para
-        .and_then(|p| p.spans.first())
-        .map(|sp| sp.style.bold)
-        .unwrap_or(false);
-    let is_italic = cur_para
-        .and_then(|p| p.spans.first())
-        .map(|sp| sp.style.italic)
-        .unwrap_or(false);
-    let is_under = cur_para
-        .and_then(|p| p.spans.first())
-        .map(|sp| sp.style.underline)
-        .unwrap_or(false);
-    let has_hl = cur_para
-        .and_then(|p| p.spans.first())
-        .and_then(|sp| sp.style.highlight)
-        .is_some();
-    let cur_pt = cur_para
-        .and_then(|p| p.spans.first())
-        .map(|sp| sp.style.font_size_pt)
-        .unwrap_or(12.5);
-    let style_lbl = cur_para.map(|p| p.style.label()).unwrap_or("Body");
-    let fam_lbl = cur_para
-        .and_then(|p| p.spans.first())
-        .map(|sp| match sp.style.font_family {
-            FontFamily::Sans => "Sans",
-            FontFamily::Serif => "Serif",
-            FontFamily::Mono => "Mono",
+    let active_sp_style = cur_para
+        .map(|p| {
+            let probe = w
+                .ordered_selection()
+                .map(|((_, c0), _)| c0 + 1)
+                .unwrap_or(w.cursor_char);
+            p.style_at_char(probe)
         })
-        .unwrap_or("Sans");
+        .unwrap_or_default();
+    let is_bold = active_sp_style.bold;
+    let is_italic = active_sp_style.italic;
+    let is_under = active_sp_style.underline;
+    let has_hl = active_sp_style.highlight.is_some();
+    let cur_pt = active_sp_style.font_size_pt;
+    let style_lbl = cur_para.map(|p| p.style.label()).unwrap_or("Body");
+    let fam_lbl = match active_sp_style.font_family {
+        FontFamily::Sans => "Sans",
+        FontFamily::Serif => "Serif",
+        FontFamily::Mono => "Mono",
+    };
     let cur_align = cur_para.map(|p| p.alignment).unwrap_or(Alignment::Left);
     let is_bullet = cur_para
         .map(|p| p.list_kind == ListKind::Bullet)
@@ -1713,6 +2050,7 @@ fn paint_contextual_review_bar(
     surface: &mut Surface,
     fonts: &mut FontBook,
     hit_regions: &mut Vec<HitRegion>,
+    tab_idx: usize,
     mouse_x: f32,
     mouse_y: f32,
     s: f32,
@@ -1747,8 +2085,81 @@ fn paint_contextual_review_bar(
     let summary_w = fonts.measure_text(FontSlot::SansBold, &summary, 10.8 * s);
     let bh = (25.0 * s).round();
     let by = (bar.y + (bar.h - bh) * 0.5).round();
-    let mut bx = bar.x + summary_w + 26.0 * s;
+    let mut bx = bar.x + summary_w + 22.0 * s;
     let max_x = bar.x + bar.w - 10.0 * s;
+
+    // 1-Click Per-Clause Accept / Reject when cursor or paragraph sits on a tracked revision!
+    let cur_clause = w
+        .doc
+        .blocks
+        .get(w.cursor_block)
+        .and_then(|b| match b {
+            Block::Paragraph(p) => p.revision_at_char(w.cursor_char),
+            _ => None,
+        });
+    if let Some(rev) = cur_clause {
+        let acc_lbl = format!("Accept #{}", rev.id);
+        let rej_lbl = format!("Reject #{}", rev.id);
+        for (lbl, is_accept, action) in [
+            (
+                acc_lbl.as_str(),
+                true,
+                UiAction::AcceptRevisionById {
+                    tab_idx,
+                    rev_id: rev.id,
+                },
+            ),
+            (
+                rej_lbl.as_str(),
+                false,
+                UiAction::RejectRevisionById {
+                    tab_idx,
+                    rev_id: rev.id,
+                },
+            ),
+        ] {
+            let tw = fonts.measure_text(FontSlot::SansBold, lbl, 10.8 * s);
+            let bw = (tw + 16.0 * s).round();
+            if bx + bw <= max_x {
+                let r = Rect::new(bx, by, bw, bh);
+                let hov = r.contains(mouse_x, mouse_y);
+                let (bg, border, fg) = if is_accept {
+                    (
+                        if hov {
+                            Color::rgba(26, 127, 75, 42)
+                        } else {
+                            Color::rgba(26, 127, 75, 22)
+                        },
+                        DaylightTheme::SUCCESS,
+                        DaylightTheme::SUCCESS,
+                    )
+                } else {
+                    (
+                        if hov {
+                            DaylightTheme::PDF_SOFT
+                        } else {
+                            Color::rgba(185, 48, 42, 18)
+                        },
+                        DaylightTheme::PDF_ACCENT,
+                        DaylightTheme::PDF_ACCENT,
+                    )
+                };
+                surface.fill_rounded_rect(r, 4.0, bg);
+                surface.stroke_rounded_rect(r, 4.0, 1.0, border);
+                surface.draw_text(
+                    fonts,
+                    FontSlot::SansBold,
+                    10.8 * s,
+                    r.x + 8.0 * s,
+                    r.y + bh * 0.68,
+                    fg,
+                    lbl,
+                );
+                hit_regions.push(HitRegion::button(r, action));
+                bx += bw + 5.0 * s;
+            }
+        }
+    }
 
     let track_lbl = if w.doc.track_changes {
         "Track: ON"

@@ -33,7 +33,7 @@ impl TemplateKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Blank => "Blank Document",
-            Self::WelcomeGuide => "Welcome to RustPad v2.0",
+            Self::WelcomeGuide => "Welcome to RustPad v2.1",
             Self::EnterpriseContract => "Enterprise MSA Redline",
             Self::ModernResume => "Modern Resume / CV",
             Self::AcademicReport => "Technical Architecture Spec",
@@ -81,14 +81,14 @@ fn checklist(text: &str, done: bool) -> Block {
 
 fn build_welcome_guide() -> Document {
     let mut setup = PageSetup::default();
-    setup.header_text = "RustPad v2.0 — Pure-Rust Offline Enterprise Document & PDF Suite".into();
+    setup.header_text = "RustPad v2.1 — Ultra-Smooth 60–120Hz Offline Document & PDF Studio".into();
     setup.footer_text = "Open-Source MIT · github.com/Nour-yahyaoui/rustpad".into();
 
     let mut intro = Paragraph::new(ParagraphStyle::Normal, "");
     intro.spans = vec![
         TextSpan::plain("Welcome to "),
         TextSpan::styled(
-            "RustPad v2.0 Enterprise",
+            "RustPad v2.1",
             SpanStyle {
                 bold: true,
                 color: RgbColor::COBALT,
@@ -96,7 +96,7 @@ fn build_welcome_guide() -> Document {
             },
         ),
         TextSpan::plain(
-            " — an air-gapped, zero-dependency native desktop suite for authoring ",
+            " — crafted from the ground up so ultra-smooth 60–120Hz responsiveness and human UX are the #1 feature across ",
         ),
         TextSpan::styled(
             "ECMA-376 Word (.docx)",
@@ -105,7 +105,7 @@ fn build_welcome_guide() -> Document {
                 ..SpanStyle::default()
             },
         ),
-        TextSpan::plain(" with legal Track Changes and "),
+        TextSpan::plain(" with live range selection, floating popover formatting & Track Changes, and "),
         TextSpan::styled(
             "ISO 32000 PDF (.pdf)",
             SpanStyle {
@@ -119,29 +119,29 @@ fn build_welcome_guide() -> Document {
 
     let mut table = TableBlock::new(5, 3);
     table.rows[0] = vec![
-        TableCell::header("Enterprise Subsystem"),
-        TableCell::header("v2.0 Capabilities"),
+        TableCell::header("Core Pillar"),
+        TableCell::header("v2.1 Smooth UX & Enterprise Craft"),
         TableCell::header("Shortcut / CLI"),
     ];
     table.rows[1] = vec![
-        TableCell::plain("OOXML Word Studio (.docx)"),
-        TableCell::plain("Lossless ZIP passthrough, Track Changes (w:ins/w:del), comments & tables"),
-        TableCell::plain("Ctrl+Shift+E"),
+        TableCell::plain("60–120Hz Smooth UX"),
+        TableCell::plain("Live drag/double-click selection, floating popover bar, spring scroll & Focus Mode"),
+        TableCell::plain("Ctrl+Shift+F"),
     ];
     table.rows[2] = vec![
+        TableCell::plain("OOXML Word Studio (.docx)"),
+        TableCell::plain("Lossless ZIP passthrough, per-clause Accept/Reject redlines, comments & tables"),
+        TableCell::plain("Ctrl+Shift+E"),
+    ];
+    table.rows[3] = vec![
         TableCell::plain("Forensic PDF Studio (.pdf)"),
         TableCell::plain("ObjStm parser, forensic glyph-scrub redaction, PDF/A-2b & SHA-256 seal"),
         TableCell::plain("rustpad sanitize"),
     ];
-    table.rows[3] = vec![
-        TableCell::plain("Air-Gapped AI + DLP Policy"),
-        TableCell::plain("Local Ollama / nour-code + MDM policy.json cloud lockout & WinHTTP TLS"),
-        TableCell::plain("Ctrl+J / policy"),
-    ];
     table.rows[4] = vec![
-        TableCell::plain("Crash WAL & Supply Chain"),
-        TableCell::plain("SHA-256 WAL journal, SMB lockfiles, 0 crates.io deps & CycloneDX SBOM"),
-        TableCell::plain("rustpad sbom"),
+        TableCell::plain("Air-Gapped AI + DLP Policy"),
+        TableCell::plain("Selection AI Polish via Ollama / nour-code + MDM policy.json cloud lockout"),
+        TableCell::plain("Ctrl+J / policy"),
     ];
 
     Document {
@@ -157,7 +157,7 @@ fn build_welcome_guide() -> Document {
             )),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Subtitle,
-                "v2.0 Offline Enterprise Suite · Zero External Dependencies · Paper & Daylight Studio",
+                "v2.1 Ultra-Smooth 60–120Hz UX · Zero External Dependencies · Paper & Daylight Studio",
             )),
             Block::Paragraph(intro),
             Block::Paragraph(Paragraph::new(
