@@ -517,6 +517,8 @@ fn paint_pdf_toolbar(
         ("Stamp", CommandId::StampApproved, false),
         ("Merge", CommandId::PdfMergeFile, false),
         ("Split", CommandId::PdfSplitModal, false),
+        ("Sanitize", CommandId::PdfSanitizeRedactions, false),
+        ("Seal SHA-256", CommandId::PdfSealDocument, false),
         ("Rotate", CommandId::PdfRotatePage, false),
         ("+ Page", CommandId::PdfAddBlankPage, false),
         ("Compress", CommandId::PdfCompress, false),
@@ -813,6 +815,8 @@ fn paint_pdf_inspector(
 
     y += 6.0 * s;
     let quick: &[(&str, CommandId)] = &[
+        ("Forensic Sanitize Redactions", CommandId::PdfSanitizeRedactions),
+        ("Embed SHA-256 Seal & PDF/A-2b", CommandId::PdfSealDocument),
         ("Draw & Place Signature", CommandId::OpenSignaturePad),
         ("Stamp [APPROVED]", CommandId::StampApproved),
         ("Set Diagonal Watermark", CommandId::OpenWatermarkModal),

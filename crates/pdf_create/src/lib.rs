@@ -2,8 +2,8 @@
 //! Converts `doc_model::Document` (and custom PDF Studio pages) into crisp, multi-page vector PDFs.
 
 use doc_model::{
-    Alignment, Block, Document, FontFamily, ListKind, Paragraph, ParagraphStyle, RgbColor,
-    SpanStyle, TableBlock,
+    Alignment, Block, Document, FontFamily, ListKind, Paragraph, ParagraphStyle, RevisionKind,
+    RgbColor, SpanStyle, TableBlock,
 };
 use rustpad_zip::zlib_compress;
 use std::fmt::Write as _;
@@ -13,6 +13,8 @@ use std::path::Path;
 pub struct PdfCreateOptions {
     pub compress_streams: bool,
     pub watermark_override: Option<String>,
+    pub pdfa_conformance: bool,
+    pub show_revisions: bool,
 }
 
 impl Default for PdfCreateOptions {
@@ -20,6 +22,8 @@ impl Default for PdfCreateOptions {
         Self {
             compress_streams: true,
             watermark_override: None,
+            pdfa_conformance: false,
+            show_revisions: true,
         }
     }
 }
@@ -76,6 +80,7 @@ pub fn export_document_to_pdf_bytes(doc: &Document, opts: &PdfCreateOptions) -> 
             Block::Paragraph(p) => {
                 render_paragraph_pdf(
                     p,
+                    opts.show_revisions && doc.track_changes,
                     m_left,
                     content_w,
                     page_h,
@@ -207,13 +212,14 @@ pub fn export_document_to_pdf_bytes(doc: &Document, opts: &PdfCreateOptions) -> 
         final_streams.push(full);
     }
 
-    assemble_pdf_binary(
+    assemble_pdf_binary_ext(
         &doc.title,
         &doc.author,
         page_w,
         page_h,
         &final_streams,
         opts.compress_streams,
+        opts.pdfa_conformance,
     )
 }
 
@@ -226,6 +232,7 @@ struct WordToken {
 
 fn render_paragraph_pdf(
     p: &Paragraph,
+    show_revisions: bool,
     m_left: f32,
     content_w: f32,
     page_h: f32,
@@ -256,31 +263,49 @@ fn render_paragraph_pdf(
         };
     let avail_w = (content_w - indent_pt).max(80.0);
 
-    // Tokenize into words preserving SpanStyle
+    // Tokenize into words preserving SpanStyle (and redline markup if enabled)
     let mut tokens: Vec<WordToken> = Vec::new();
     for span in &p.spans {
+        let mut span_style = span.style.clone();
+        if let Some(rev) = &span.revision {
+            match rev.kind {
+                RevisionKind::Deletion => {
+                    if !show_revisions {
+                        continue;
+                    }
+                    span_style.color = RgbColor::CORAL;
+                    span_style.strikethrough = true;
+                }
+                RevisionKind::Insertion => {
+                    if show_revisions {
+                        span_style.color = RgbColor::EMERALD;
+                        span_style.underline = true;
+                    }
+                }
+            }
+        }
         let mut current = String::new();
         for ch in span.text.chars() {
             if ch == '\n' {
                 if !current.is_empty() {
-                    let w = estimate_text_width(&current, span.style.font_size_pt, span.style.font_family);
+                    let w = estimate_text_width(&current, span_style.font_size_pt, span_style.font_family);
                     tokens.push(WordToken {
                         text: std::mem::take(&mut current),
-                        style: span.style.clone(),
+                        style: span_style.clone(),
                         width_pt: w,
                     });
                 }
                 tokens.push(WordToken {
                     text: "\n".into(),
-                    style: span.style.clone(),
+                    style: span_style.clone(),
                     width_pt: 0.0,
                 });
             } else if ch == ' ' {
                 current.push(' ');
-                let w = estimate_text_width(&current, span.style.font_size_pt, span.style.font_family);
+                let w = estimate_text_width(&current, span_style.font_size_pt, span_style.font_family);
                 tokens.push(WordToken {
                     text: std::mem::take(&mut current),
-                    style: span.style.clone(),
+                    style: span_style.clone(),
                     width_pt: w,
                 });
             } else {
@@ -288,10 +313,10 @@ fn render_paragraph_pdf(
             }
         }
         if !current.is_empty() {
-            let w = estimate_text_width(&current, span.style.font_size_pt, span.style.font_family);
+            let w = estimate_text_width(&current, span_style.font_size_pt, span_style.font_family);
             tokens.push(WordToken {
                 text: current,
-                style: span.style.clone(),
+                style: span_style,
                 width_pt: w,
             });
         }
@@ -327,6 +352,17 @@ fn render_paragraph_pdf(
         *cursor_y -= base_size;
         let baseline_y = *cursor_y;
         let s = streams.last_mut().unwrap();
+
+        if show_revisions && p.has_revisions() {
+            let _ = writeln!(
+                s,
+                "q 0.88 0.11 0.28 RG 1.8 w {:.2} {:.2} m {:.2} {:.2} l S Q",
+                (m_left - 8.0).max(8.0),
+                baseline_y - 3.0,
+                (m_left - 8.0).max(8.0),
+                baseline_y + base_size
+            );
+        }
 
         if p.style == ParagraphStyle::Quote {
             let _ = writeln!(
@@ -636,6 +672,18 @@ pub fn assemble_pdf_binary(
     page_streams: &[String],
     compress: bool,
 ) -> Vec<u8> {
+    assemble_pdf_binary_ext(title, author, page_w, page_h, page_streams, compress, false)
+}
+
+pub fn assemble_pdf_binary_ext(
+    title: &str,
+    author: &str,
+    page_w: f32,
+    page_h: f32,
+    page_streams: &[String],
+    compress: bool,
+    pdfa_conformance: bool,
+) -> Vec<u8> {
     const FONT_NAMES: [(&str, &str); 12] = [
         ("F1", "Helvetica"),
         ("F2", "Helvetica-Bold"),
@@ -666,7 +714,14 @@ pub fn assemble_pdf_binary(
         let _ = write!(kids_refs, "{page_obj_id} 0 R ");
     }
 
-    objects.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
+    let xmp_obj_id = 17 + page_count * 2;
+    if pdfa_conformance {
+        objects.push(
+            format!("<< /Type /Catalog /Pages 2 0 R /Metadata {xmp_obj_id} 0 R >>").into_bytes(),
+        );
+    } else {
+        objects.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
+    }
     objects.push(
         format!("<< /Type /Pages /Kids [ {kids_refs}] /Count {page_count} >>").into_bytes(),
     );
@@ -714,6 +769,18 @@ pub fn assemble_pdf_binary(
         objects.push(stream_obj);
     }
 
+    if pdfa_conformance {
+        let xmp = build_pdfa_xmp_packet(title, author);
+        let mut meta_obj = format!(
+            "<< /Type /Metadata /Subtype /XML /Length {} >>\nstream\n",
+            xmp.len()
+        )
+        .into_bytes();
+        meta_obj.extend_from_slice(xmp.as_bytes());
+        meta_obj.extend_from_slice(b"\nendstream");
+        objects.push(meta_obj);
+    }
+
     let mut out: Vec<u8> = Vec::with_capacity(4096);
     out.extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
 
@@ -741,6 +808,27 @@ pub fn assemble_pdf_binary(
         .as_bytes(),
     );
     out
+}
+
+pub fn build_pdfa_xmp_packet(title: &str, author: &str) -> String {
+    let clean_title = title.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let clean_author = author.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    format!(
+        r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about=""
+      xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"
+      xmlns:dc="http://purl.org/dc/elements/1.1/">
+      <pdfaid:part>2</pdfaid:part>
+      <pdfaid:conformance>B</pdfaid:conformance>
+      <dc:title><rdf:Alt><rdf:li xml:lang="x-default">{clean_title}</rdf:li></rdf:Alt></dc:title>
+      <dc:creator><rdf:Seq><rdf:li>{clean_author}</rdf:li></rdf:Seq></dc:creator>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"#
+    )
 }
 
 #[cfg(test)]

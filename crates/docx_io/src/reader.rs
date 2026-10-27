@@ -1,13 +1,15 @@
-//! ECMA-376 OpenXML (`.docx`) Reader & Document Reconstructor.
+//! ECMA-376 OpenXML (`.docx`) Reader, Track Changes (`<w:ins>`/`<w:del>`), Threaded Comments
+//! (`word/comments.xml`), Security Classification, and Lossless Archive Passthrough Reconstructor.
 
 use crate::xml_lite::{parse_xml, XmlChild, XmlNode};
 use crate::DocxError;
 use doc_model::{
-    Alignment, Block, Document, FontFamily, ImageBlock, ListKind, PageSetup, PaperSize, Paragraph,
-    ParagraphStyle, RgbColor, SpanStyle, TableBlock, TableCell, TextSpan,
+    Alignment, Block, DocComment, Document, FontFamily, ImageBlock, ListKind, PageSetup, PaperSize,
+    Paragraph, ParagraphStyle, RevisionKind, RevisionMeta, RgbColor, SecurityClassification,
+    SpanStyle, TableBlock, TableCell, TextSpan,
 };
 use rustpad_zip::ZipArchive;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub fn load_docx_file(path: impl AsRef<Path>) -> Result<Document, DocxError> {
@@ -46,6 +48,7 @@ pub fn load_docx_bytes(bytes: &[u8]) -> Result<Document, DocxError> {
 
     let mut title = "Untitled Document".to_string();
     let mut author = "Nour Yahyaoui".to_string();
+    let mut classification = SecurityClassification::Unclassified;
     if let Some(core_xml) = archive.get_str("docProps/core.xml") {
         if let Some(core_root) = parse_xml(&core_xml) {
             if let Some(t) = core_root.child("title") {
@@ -60,6 +63,16 @@ pub fn load_docx_bytes(bytes: &[u8]) -> Result<Document, DocxError> {
                     author = txt;
                 }
             }
+            if let Some(cat) = core_root.child("category") {
+                classification = SecurityClassification::from_slug(&cat.text_content());
+            }
+        }
+    }
+
+    let mut track_changes = false;
+    if let Some(settings_xml) = archive.get_str("word/settings.xml") {
+        if settings_xml.contains("trackRevisions") {
+            track_changes = true;
         }
     }
 
@@ -85,6 +98,9 @@ pub fn load_docx_bytes(bytes: &[u8]) -> Result<Document, DocxError> {
 
     let mut blocks = Vec::new();
     let mut num_counter = 0u32;
+    let mut consumed_media_paths = BTreeSet::new();
+    // Map comment_id -> block_index from `<w:commentRangeStart w:id="..."/>` or `<w:commentReference w:id="..."/>`
+    let mut comment_anchors: BTreeMap<u32, usize> = BTreeMap::new();
 
     for child in &body.children {
         let XmlChild::Element(el) = child else {
@@ -92,7 +108,15 @@ pub fn load_docx_bytes(bytes: &[u8]) -> Result<Document, DocxError> {
         };
         match el.local_name() {
             "p" => {
-                parse_paragraph_or_special(el, &archive, &rels, &mut num_counter, &mut blocks);
+                parse_paragraph_or_special(
+                    el,
+                    &archive,
+                    &rels,
+                    &mut num_counter,
+                    &mut blocks,
+                    &mut consumed_media_paths,
+                    &mut comment_anchors,
+                );
             }
             "tbl" => {
                 if let Some(tbl) = parse_table(el) {
@@ -106,12 +130,76 @@ pub fn load_docx_bytes(bytes: &[u8]) -> Result<Document, DocxError> {
         }
     }
 
+    // Parse `word/comments.xml` if present
+    let mut comments = Vec::new();
+    if let Some(comments_xml) = archive.get_str("word/comments.xml") {
+        if let Some(c_root) = parse_xml(&comments_xml) {
+            for c_el in c_root.children_named("comment") {
+                let id = c_el
+                    .attr("id")
+                    .and_then(|v| v.parse::<u32>().ok())
+                    .unwrap_or((comments.len() + 1) as u32);
+                let c_author = c_el.attr("author").unwrap_or("Reviewer").to_string();
+                let date_iso = c_el.attr("date").unwrap_or("").to_string();
+                let resolved = matches!(c_el.attr("done"), Some("1") | Some("true"));
+                let text = c_el.text_content().trim().to_string();
+                let block_index = comment_anchors.get(&id).copied().unwrap_or(0);
+                if !text.is_empty() {
+                    comments.push(DocComment {
+                        id,
+                        block_index: block_index.min(blocks.len().saturating_sub(1)),
+                        author: c_author,
+                        date_iso,
+                        text,
+                        resolved,
+                    });
+                }
+            }
+        }
+    }
+
+    // Preserve unmodeled enterprise archive entries (`customXml/*`, `word/theme/*`, `docProps/app.xml`, etc.)
+    let managed_parts: [&str; 11] = [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "docProps/core.xml",
+        "word/_rels/document.xml.rels",
+        "word/styles.xml",
+        "word/numbering.xml",
+        "word/settings.xml",
+        "word/header1.xml",
+        "word/footer1.xml",
+        "word/document.xml",
+        "word/comments.xml",
+    ];
+    let mut passthrough_parts = BTreeMap::new();
+    for (entry_name, raw_bytes) in archive.entries() {
+        if managed_parts.contains(&entry_name.as_str()) {
+            continue;
+        }
+        if consumed_media_paths.contains(entry_name) {
+            continue;
+        }
+        passthrough_parts.insert(entry_name.clone(), raw_bytes.clone());
+    }
+
+    // Enable track_changes automatically if loaded spans carry revisions
+    if !track_changes {
+        track_changes = blocks.iter().any(|b| match b {
+            Block::Paragraph(p) => p.has_revisions(),
+            _ => false,
+        });
+    }
+
     let mut doc = Document {
         title,
         author,
+        classification,
+        track_changes,
         page_setup,
         blocks,
-        comments: Vec::new(),
+        comments,
+        passthrough_parts,
     };
     doc.ensure_non_empty();
     Ok(doc)
@@ -157,8 +245,9 @@ fn parse_paragraph_or_special(
     rels: &BTreeMap<String, String>,
     num_counter: &mut u32,
     blocks: &mut Vec<Block>,
+    consumed_media_paths: &mut BTreeSet<String>,
+    comment_anchors: &mut BTreeMap<u32, usize>,
 ) {
-    // Detect horizontal rule paragraph border
     if let Some(p_pr) = p_node.child("pPr") {
         if p_pr.child("pBdr").is_some() && p_node.text_content().trim().is_empty() {
             blocks.push(Block::HorizontalRule);
@@ -166,7 +255,6 @@ fn parse_paragraph_or_special(
         }
     }
 
-    // Detect page break or embedded drawing
     for r in p_node.children_named("r") {
         for br in r.children_named("br") {
             if br.attr("type") == Some("page") {
@@ -175,7 +263,8 @@ fn parse_paragraph_or_special(
             }
         }
         if let Some(drawing) = r.child("drawing") {
-            if let Some(img) = extract_drawing_image(drawing, archive, rels) {
+            if let Some((img, media_path)) = extract_drawing_image(drawing, archive, rels) {
+                consumed_media_paths.insert(media_path);
                 blocks.push(Block::Image(img));
                 return;
             }
@@ -250,27 +339,67 @@ fn parse_paragraph_or_special(
         *num_counter = 0;
     }
 
+    let target_block_idx = blocks.len();
     let mut spans = Vec::new();
     for child in &p_node.children {
         let XmlChild::Element(el) = child else {
             continue;
         };
-        if el.local_name() == "r" {
-            if let Some(span) = parse_run(el, style) {
-                spans.push(span);
-            }
-        } else if el.local_name() == "hyperlink" {
-            for r in el.children_named("r") {
-                if let Some(mut span) = parse_run(r, style) {
-                    span.style.underline = true;
-                    span.style.color = RgbColor::COBALT;
+        match el.local_name() {
+            "r" => {
+                for cref in el.children_named("commentReference") {
+                    if let Some(cid) = cref.attr("id").and_then(|v| v.parse::<u32>().ok()) {
+                        comment_anchors.entry(cid).or_insert(target_block_idx);
+                    }
+                }
+                if let Some(span) = parse_run(el, style, None) {
                     spans.push(span);
                 }
             }
+            "ins" => {
+                let rev = RevisionMeta {
+                    id: el.attr("id").and_then(|v| v.parse().ok()).unwrap_or(1),
+                    kind: RevisionKind::Insertion,
+                    author: el.attr("author").unwrap_or("Reviewer").to_string(),
+                    date_iso: el.attr("date").unwrap_or("").to_string(),
+                };
+                for r in el.children_named("r") {
+                    if let Some(span) = parse_run(r, style, Some(rev.clone())) {
+                        spans.push(span);
+                    }
+                }
+            }
+            "del" => {
+                let rev = RevisionMeta {
+                    id: el.attr("id").and_then(|v| v.parse().ok()).unwrap_or(1),
+                    kind: RevisionKind::Deletion,
+                    author: el.attr("author").unwrap_or("Reviewer").to_string(),
+                    date_iso: el.attr("date").unwrap_or("").to_string(),
+                };
+                for r in el.children_named("r") {
+                    if let Some(span) = parse_run(r, style, Some(rev.clone())) {
+                        spans.push(span);
+                    }
+                }
+            }
+            "commentRangeStart" => {
+                if let Some(cid) = el.attr("id").and_then(|v| v.parse::<u32>().ok()) {
+                    comment_anchors.entry(cid).or_insert(target_block_idx);
+                }
+            }
+            "hyperlink" => {
+                for r in el.children_named("r") {
+                    if let Some(mut span) = parse_run(r, style, None) {
+                        span.style.underline = true;
+                        span.style.color = RgbColor::COBALT;
+                        spans.push(span);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
-    // Detect checklist prefix exported by RustPad
     if let Some(first) = spans.first_mut() {
         if let Some(rest) = first.text.strip_prefix("☑ ") {
             list_kind = ListKind::Checklist(true);
@@ -293,12 +422,16 @@ fn parse_paragraph_or_special(
     blocks.push(Block::Paragraph(para));
 }
 
-fn parse_run(r_node: &XmlNode, para_style: ParagraphStyle) -> Option<TextSpan> {
+fn parse_run(
+    r_node: &XmlNode,
+    para_style: ParagraphStyle,
+    revision: Option<RevisionMeta>,
+) -> Option<TextSpan> {
     let mut text = String::new();
     for child in &r_node.children {
         if let XmlChild::Element(el) = child {
             match el.local_name() {
-                "t" => text.push_str(&el.text_content()),
+                "t" | "delText" => text.push_str(&el.text_content()),
                 "tab" => text.push('\t'),
                 "br" if el.attr("type") != Some("page") => text.push('\n'),
                 _ => {}
@@ -370,7 +503,11 @@ fn parse_run(r_node: &XmlNode, para_style: ParagraphStyle) -> Option<TextSpan> {
         }
     }
 
-    Some(TextSpan { text, style })
+    Some(TextSpan {
+        text,
+        style,
+        revision,
+    })
 }
 
 fn parse_table(tbl_node: &XmlNode) -> Option<TableBlock> {
@@ -448,7 +585,7 @@ fn extract_drawing_image(
     drawing: &XmlNode,
     archive: &ZipArchive,
     rels: &BTreeMap<String, String>,
-) -> Option<ImageBlock> {
+) -> Option<(ImageBlock, String)> {
     let inline = drawing.child("inline").or_else(|| drawing.child("anchor"))?;
     let mut width_pt = 240.0f32;
     let mut height_pt = 160.0f32;
@@ -475,14 +612,17 @@ fn extract_drawing_image(
     };
     let png_bytes = archive.get(&full_path)?.to_vec();
 
-    Some(ImageBlock {
-        name,
-        width_pt,
-        height_pt,
-        png_bytes,
-        rgba_preview: None,
-        caption: String::new(),
-    })
+    Some((
+        ImageBlock {
+            name,
+            width_pt,
+            height_pt,
+            png_bytes,
+            rgba_preview: None,
+            caption: String::new(),
+        },
+        full_path,
+    ))
 }
 
 fn find_attr_recursive(node: &XmlNode, local_tag: &str, attr_key: &str) -> Option<String> {

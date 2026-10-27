@@ -3,25 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>RustPad v1.3.0 — Pure-Rust Native Word (.docx), Vector PDF &amp; Pluggable AI Studio</title>
+    <title>RustPad v2.0 Enterprise — Offline Pure-Rust Word (.docx), Forensic PDF &amp; Local AI Suite</title>
     <meta
       name="description"
-      content="Pure-Rust native desktop Word (.docx), ISO 32000 PDF, and Pluggable Local/Cloud AI Studio (Ollama, nour-code, OpenAI, Claude). Zero WebView, ~3.8 MB binary, < 90 ms cold boot. Engineered by Nour Yahyaoui."
+      content="Offline-first enterprise desktop Word (.docx), Forensic PDF/A-2b, and DLP-governed Local AI Suite in Pure Rust. ECMA-376 Track Changes &amp; Redlines, PDF Stream Sanitization, SHA-256 Seals, CycloneDX SBOM, and 0 crates.io runtime dependencies. Engineered by Nour Yahyaoui."
     />
     <meta name="author" content="Nour Yahyaoui" />
     <meta name="theme-color" content="#090a0d" />
 
     <!-- Open Graph / LinkedIn / X -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="RustPad v1.3.0 — Native Word, Vector PDF &amp; Local AI in Pure Rust" />
+    <meta property="og:title" content="RustPad v2.0 Enterprise — Offline Word Redlines, Forensic PDF &amp; Local AI in Pure Rust" />
     <meta
       property="og:description"
-      content="Zero-WebView Win32 &amp; X11 document studio (~3.8 MB binary, 9 pure-Rust crates) with interactive multi-line .docx tables, vector PDF ink signing, and pluggable local/cloud AI agents."
+      content="Zero-WebView, 0 crates.io dependency desktop suite (~3.8 MB) with ECMA-376 Track Changes, Forensic PDF Redaction Sanitization, PDF/A-2b SHA-256 Seals, and MDM Air-Gapped AI DLP."
     />
     <meta property="og:url" content="https://rustpad-studio.vercel.app" />
     <meta property="og:image" content="https://rustpad-studio.vercel.app/og.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="RustPad v1.3.0 — Pure-Rust Word, Vector PDF &amp; Local AI Studio" />
+    <meta name="twitter:title" content="RustPad v2.0 Enterprise — Offline Document &amp; Forensic PDF Suite" />
     <meta name="twitter:image" content="https://rustpad-studio.vercel.app/og.png" />
 
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -51,7 +51,7 @@
     <!-- Sticky Mobile-First Top Bar -->
     <header class="site-header" id="site-header">
       <div class="container header-inner">
-        <a href="#hero" class="brand" aria-label="RustPad v1.3.0 Home">
+        <a href="#hero" class="brand" aria-label="RustPad v2.0.0 Enterprise Home">
           <span class="brand-mark" aria-hidden="true">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
               <rect x="3" y="2.5" width="15" height="19" rx="2.5" stroke="currentColor" stroke-width="1.9" />
@@ -62,16 +62,17 @@
             </svg>
           </span>
           <span class="brand-name">RustPad</span>
-          <span class="brand-badge">v1.3</span>
+          <span class="brand-badge">v2.0</span>
         </a>
 
         <!-- Desktop Navigation (>= 1024px) -->
         <nav class="desktop-nav" aria-label="Primary sections">
+          <a href="#enterprise-matrix" class="nav-link">vs. Suites</a>
           <a href="#studio" class="nav-link">Studio</a>
-          <a href="#craft" class="nav-link">Tables &amp; UX</a>
-          <a href="#ai-studio" class="nav-link">Pluggable AI</a>
+          <a href="#craft" class="nav-link">Redline &amp; PDF</a>
+          <a href="#ai-studio" class="nav-link">Air-Gap AI</a>
           <a href="#architecture" class="nav-link">9 Crates</a>
-          <a href="#cli" class="nav-link">CLI &amp; Scope</a>
+          <a href="#cli" class="nav-link">Ent CLI</a>
           <button type="button" class="nav-tour-btn" data-start-tour>Guided Tour</button>
         </nav>
 
@@ -102,11 +103,11 @@
             GitHub ↗
           </a>
           <a
-            href="https://github.com/Nour-yahyaoui/rustpad/releases/tag/v1.3.0"
+            href="https://github.com/Nour-yahyaoui/rustpad/releases/tag/v2.0.0"
             class="desktop-dl-btn"
             id="header-download-cta"
           >
-            Download v1.3.0
+            Download v2.0.0
           </a>
 
           <!-- Mobile Top Menu Trigger (< 1024px) -->
@@ -132,49 +133,54 @@
         <div class="container mobile-menu-inner">
           <div class="mobile-menu-telemetry">
             <span class="telemetry-dot" aria-hidden="true"></span>
-            <span>PURE RUST · 0 WEBVIEW · MIT</span>
+            <span>v2.0 ENTERPRISE · 0 DEPS · OFFLINE</span>
             <button type="button" class="mobile-tour-pill" data-start-tour>5-Step Tour</button>
           </div>
 
           <nav class="mobile-nav-list" aria-label="Mobile top menu">
-            <a href="#studio" class="mobile-nav-item" data-close-menu>
+            <a href="#enterprise-matrix" class="mobile-nav-item" data-close-menu>
               <span class="m-idx">01</span>
-              <span class="m-title">Live Studio Switchboard</span>
+              <span class="m-title">Enterprise Suite Benchmark</span>
+              <span class="m-arrow" aria-hidden="true">→</span>
+            </a>
+            <a href="#studio" class="mobile-nav-item" data-close-menu>
+              <span class="m-idx">02</span>
+              <span class="m-title">Live v2.0 Studio Switchboard</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
             <a href="#craft" class="mobile-nav-item" data-close-menu>
-              <span class="m-idx">02</span>
-              <span class="m-title">Wrapped Tables &amp; Smooth UX</span>
+              <span class="m-idx">03</span>
+              <span class="m-title">Legal Redlines &amp; PDF Forensics</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
             <a href="#ai-studio" class="mobile-nav-item" data-close-menu>
-              <span class="m-idx">03</span>
-              <span class="m-title">Local &amp; Cloud AI Agent Bridge</span>
+              <span class="m-idx">04</span>
+              <span class="m-title">Air-Gapped DLP &amp; Local AI</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
             <a href="#architecture" class="mobile-nav-item" data-close-menu>
-              <span class="m-idx">04</span>
-              <span class="m-title">9-Crate Zero-Bloat Architecture</span>
+              <span class="m-idx">05</span>
+              <span class="m-title">9-Crate Zero-Dep Architecture</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
             <a href="#cli" class="mobile-nav-item" data-close-menu>
-              <span class="m-idx">05</span>
-              <span class="m-title">Headless CLI &amp; Scope Matrix</span>
+              <span class="m-idx">06</span>
+              <span class="m-title">Enterprise CLI &amp; Governance</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
           </nav>
 
           <div class="mobile-menu-actions">
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.3.0/rustpad-v1.3.0-windows-x86_64.exe"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-windows-x86_64.exe"
               class="btn btn-primary btn-block"
               id="mobile-primary-dl"
             >
-              Download Windows x64 (.exe) — v1.3.0
+              Download Windows x64 (.exe) — v2.0.0
             </a>
             <div class="mobile-menu-subgrid">
               <a
-                href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.3.0/rustpad-v1.3.0-linux-x86_64"
+                href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-linux-x86_64"
                 class="btn btn-secondary"
               >
                 Linux x86_64
@@ -203,26 +209,26 @@
           <div class="hero-eyebrow-row">
             <span class="eyebrow-pill">
               <span class="pulse-dot" aria-hidden="true"></span>
-              <span>RELEASE v1.3.0 · WIN32 + LINUX X11 · PLUGGABLE AI</span>
+              <span>RUSTPAD v2.0 ENTERPRISE · 100% OFFLINE · 0 CRATES.IO DEPS</span>
             </span>
           </div>
 
           <h1 class="hero-title">
-            Native Word, Vector PDF &amp; Local AI.<br />
-            <span class="hero-serif">Engineered in Pure Rust.</span>
+            Enterprise Document &amp; PDF Sovereignty.<br />
+            <span class="hero-serif">Offline-First in Pure Rust.</span>
           </h1>
 
           <p class="hero-lead">
-            A single <strong>~3.8 MB</strong> native desktop binary with <strong>zero WebView</strong> and
-            <strong>zero <code>crates.io</code> runtime bloat</strong>. Draft paginated ECMA-376
-            <code>.docx</code> documents with interactive multi-line tables, sign ISO 32000 vector PDFs,
-            and run local or cloud AI agents (<code>nour-code</code>, <code>Ollama</code>,
-            <code>OpenAI</code>, <code>Claude</code>) offline-first.
+            The open-source desktop challenger to bloated multi-gigabyte suites and cloud-locked SaaS.
+            Author &amp; redline ECMA-376 <code>.docx</code> contracts (<code>&lt;w:ins&gt;</code> /
+            <code>&lt;w:del&gt;</code>), forensically sanitize &amp; SHA-256 seal archival
+            <code>PDF/A-2b</code> files, and enforce MDM <code>policy.json</code> air-gapped local AI
+            in one <strong>~3.8 MB</strong> native executable with <strong>zero external dependencies</strong>.
           </p>
 
           <div class="hero-cta-group">
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.3.0/rustpad-v1.3.0-windows-x86_64.exe"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-windows-x86_64.exe"
               class="btn btn-primary btn-lg"
               id="hero-primary-dl"
             >
@@ -230,11 +236,11 @@
                 <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 19h16" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
               <span id="hero-primary-dl-label">Download Windows x64 (.exe)</span>
-              <span class="btn-tag">v1.3.0</span>
+              <span class="btn-tag">v2.0.0</span>
             </a>
 
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.3.0/rustpad-v1.3.0-linux-x86_64"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-linux-x86_64"
               class="btn btn-secondary btn-lg"
               id="hero-secondary-dl"
             >
@@ -247,31 +253,33 @@
               rel="noopener noreferrer"
               class="btn btn-ghost btn-lg"
             >
-              <span>Inspect Source on GitHub ↗</span>
+              <span>Audit Source &amp; SBOM ↗</span>
             </a>
           </div>
 
-          <!-- Quick Copyable Cargo Build Strip -->
+          <!-- Quick Copyable Enterprise CLI Strip -->
           <div class="hero-cmd-strip">
             <div class="cmd-scroll">
               <span class="cmd-prompt" aria-hidden="true">$</span>
-              <code id="hero-cargo-cmd">git clone https://github.com/Nour-yahyaoui/rustpad.git &amp;&amp; cd rustpad &amp;&amp; cargo run --release</code>
+              <code id="hero-cargo-cmd">rustpad redline Base_MSA.docx Counterparty.docx -o Redline.docx &amp;&amp; rustpad sbom -o sbom.cdx.json</code>
             </div>
             <button
               type="button"
               class="copy-chip"
-              data-copy="git clone https://github.com/Nour-yahyaoui/rustpad.git && cd rustpad && cargo run --release"
+              data-copy="rustpad redline Base_MSA.docx Counterparty.docx -o Redline.docx && rustpad sbom -o sbom.cdx.json"
             >
               Copy
             </button>
           </div>
 
           <div class="hero-meta-links">
-            <a href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.3.0/SHA256SUMS.txt">SHA256SUMS.txt</a>
+            <a href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/SHA256SUMS.txt">SHA256SUMS.txt</a>
             <span aria-hidden="true">·</span>
-            <a href="https://github.com/Nour-yahyaoui/rustpad/releases">All GitHub Releases</a>
+            <a href="https://github.com/Nour-yahyaoui/rustpad/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer">SECURITY.md</a>
             <span aria-hidden="true">·</span>
-            <button type="button" class="text-action-btn" data-start-tour>Take Interactive 5-Step Tour →</button>
+            <a href="https://github.com/Nour-yahyaoui/rustpad/blob/main/docs/ENTERPRISE_POLICY.md" target="_blank" rel="noopener noreferrer">MDM Policy Guide</a>
+            <span aria-hidden="true">·</span>
+            <button type="button" class="text-action-btn" data-start-tour>Interactive 5-Step Tour →</button>
           </div>
 
           <!-- 2x2 Mobile -> 4-Col Desktop Telemetry Bento -->
@@ -279,15 +287,49 @@
         </div>
       </section>
 
-      <!-- 02 · INTERACTIVE STUDIO SWITCHBOARD -->
+      <!-- 02 · ENTERPRISE SUITE BENCHMARK MATRIX -->
+      <section class="section section-alt" id="enterprise-matrix">
+        <div class="container">
+          <div class="section-header">
+            <div class="section-kicker">01 · HEAD-TO-HEAD ENTERPRISE BENCHMARK</div>
+            <h2 class="section-title">Why Regulated Teams Choose Offline Native Rust</h2>
+            <p class="section-desc">
+              RustPad v2.0 delivers the legal redlining, forensic PDF sanitization, and MDM DLP governance
+              of heavyweight enterprise software — without cloud data egress, Chromium RAM bloat, or
+              hundreds of unverified supply-chain packages.
+            </p>
+          </div>
+
+          <!-- Mobile (< 768px): Zero-Overflow Stacked Benchmark Cards -->
+          <div class="crate-cards-mobile" id="benchmark-cards-mobile"></div>
+
+          <!-- Tablet/Desktop (>= 768px): 5-Column Benchmark Matrix -->
+          <div class="crate-table-wrap">
+            <table class="crate-table">
+              <thead>
+                <tr>
+                  <th>Enterprise Dimension</th>
+                  <th>RustPad v2.0 (Open Source)</th>
+                  <th>Cloud SaaS Docs</th>
+                  <th>Electron Wrappers</th>
+                  <th>Legacy 2 GB Suites</th>
+                </tr>
+              </thead>
+              <tbody id="benchmark-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 03 · INTERACTIVE STUDIO SWITCHBOARD -->
       <section class="section" id="studio">
         <div class="container">
           <div class="section-header">
-            <div class="section-kicker">01 · NATIVE WIN32 &amp; X11 FRAMEBUFFER</div>
-            <h2 class="section-title">Inspect the v1.3.0 Desktop Studio</h2>
+            <div class="section-kicker">02 · NATIVE WIN32 &amp; X11 FRAMEBUFFER</div>
+            <h2 class="section-title">Inspect the v2.0 Enterprise Desktop Studio</h2>
             <p class="section-desc">
-              Warm Architectural Paper &amp; Linen surfaces designed for zero eye strain, character-exact
-              hit-testing, contextual table controls, and non-blocking AI assistance.
+              Warm Architectural Paper &amp; Linen surfaces uniting ECMA-376 legal redlines, threaded
+              review comments, multi-line OpenXML tables, forensic PDF sealing, and live DLP audit inspection.
             </p>
           </div>
 
@@ -301,16 +343,16 @@
                 <span></span><span></span><span></span>
               </div>
               <div class="window-title" id="specimen-window-title">
-                RustPad v1.3.0 — Architecture_Spec_v1.3.docx · AI Studio Active
+                RustPad v2.0.0 Enterprise — Enterprise_MSA_Redline.docx · DLP Verified
               </div>
-              <span class="window-badge" id="specimen-badge">DOCX + AI DOCK</span>
+              <span class="window-badge" id="specimen-badge">ECMA-376 REDLINE</span>
             </div>
 
             <div class="studio-viewport">
               <img
                 id="specimen-image"
                 src="/screenshots/word-studio.png"
-                alt="RustPad v1.3.0 Word Studio and AI Agent Dock"
+                alt="RustPad v2.0.0 Enterprise Legal Redline Studio and Local AI Dock"
                 width="1440"
                 height="900"
                 loading="eager"
@@ -325,16 +367,15 @@
         </div>
       </section>
 
-      <!-- 03 · DEEP UX & INTERACTIVE TABLES OVERHAUL -->
+      <!-- 04 · ENTERPRISE CAPABILITY PILLARS -->
       <section class="section section-alt" id="craft">
         <div class="container">
           <div class="section-header">
-            <div class="section-kicker">02 · HUMAN-GRADE DESKTOP ERGONOMICS</div>
-            <h2 class="section-title">Built for Smooth Daily Writing &amp; Real Tables</h2>
+            <div class="section-kicker">03 · LEGAL, FORENSIC &amp; SECURITY ENGINEERING</div>
+            <h2 class="section-title">Engineered for Counterparty Redlines &amp; CISO Audits</h2>
             <p class="section-desc">
-              Every friction point audited and resolved in v1.3.0 — from wrapped multi-line
-              <code>.docx</code> tables with on-canvas <code>+ Add Row</code> rails to OS clipboard
-              integration and automatic HiDPI scaling.
+              Major v2.0 upgrades across OpenXML lossless passthrough, physical PDF redaction stream
+              purging, bounded DEFLATE zip-bomb hardening, and SHA-256 crash-recovery journaling.
             </p>
           </div>
 
@@ -342,17 +383,17 @@
         </div>
       </section>
 
-      <!-- 04 · PLUGGABLE LOCAL & CLOUD AI AGENT BRIDGE -->
+      <!-- 05 · DLP-GOVERNED LOCAL & WINHTTP AI BRIDGE -->
       <section class="section" id="ai-studio">
         <div class="container">
           <div class="section-header">
-            <div class="section-kicker">03 · ZERO-LOCK-IN INTELLIGENCE</div>
-            <h2 class="section-title">Pluggable Local &amp; Cloud AI Agent Bridge</h2>
+            <div class="section-kicker">04 · AIR-GAPPED SOVEREIGN INTELLIGENCE</div>
+            <h2 class="section-title">MDM Policy-Governed Local &amp; Corporate AI</h2>
             <p class="section-desc">
-              Connect your own local model server (<code>nour-code</code>, <code>Ollama</code>,
-              <code>LM Studio</code>, <code>llama.cpp</code>) over pure-Rust <code>TcpStream</code> HTTP,
-              or plug in <code>OpenAI</code>, <code>Groq</code>, or <code>Anthropic Claude</code>.
-              Runs on a background worker thread so 60 fps typing never stalls.
+              Bind <code>/etc/rustpad/policy.json</code> or <code>%ProgramData%\RustPad\policy.json</code>
+              to hard-lock AI inference to <code>127.0.0.1</code> (<code>Ollama</code>,
+              <code>nour-code</code>, <code>LM Studio</code>), or allowlist Sovereign VPC HTTPS gateways
+              via native Windows Schannel <code>winhttp.dll</code>.
             </p>
           </div>
 
@@ -365,7 +406,7 @@
                   <span class="ai-mode-pill" id="ai-mode-pill">LOCAL HTTP</span>
                   <span class="ai-model-tag" id="ai-model-tag">Model: nour-code</span>
                 </div>
-                <h3 class="ai-provider-heading" id="ai-provider-name">nour-code (Local)</h3>
+                <h3 class="ai-provider-heading" id="ai-provider-name">nour-code / vLLM (Air-Gapped)</h3>
                 <p class="ai-provider-notes" id="ai-provider-notes"></p>
 
                 <dl class="ai-kv-list">
@@ -374,12 +415,12 @@
                     <dd><code id="ai-endpoint-val">http://127.0.0.1:8000/v1/chat/completions</code></dd>
                   </div>
                   <div class="ai-kv-item">
-                    <dt>Transport Layer</dt>
-                    <dd id="ai-transport-val">Pure-Rust std::net::TcpStream HTTP/1.1</dd>
+                    <dt>Transport &amp; DLP Layer</dt>
+                    <dd id="ai-transport-val">Pure-Rust std::net::TcpStream + MDM EnterprisePolicy DLP check</dd>
                   </div>
                   <div class="ai-kv-item">
-                    <dt>Built-in Actions</dt>
-                    <dd>Fix Grammar · Summarize File · Write Description · Draft Sections · Custom Ask</dd>
+                    <dt>Governance &amp; Safety</dt>
+                    <dd>Pre-DNS Air-Gap Lockout · Isolated &lt;document_context&gt; · SHA-256 Audit Log</dd>
                   </div>
                 </dl>
               </div>
@@ -387,13 +428,13 @@
               <div class="ai-terminal-col">
                 <div class="terminal-card">
                   <div class="terminal-top">
-                    <span class="terminal-label">HEADLESS CLI &amp; GUI BRIDGE</span>
+                    <span class="terminal-label">ENTERPRISE CLI &amp; DLP BRIDGE</span>
                     <button type="button" class="copy-chip" id="ai-copy-btn" data-copy="">Copy Command</button>
                   </div>
                   <pre class="terminal-pre"><code id="ai-cli-code"></code></pre>
                   <div class="terminal-foot">
-                    <span>✓ Isolated <code>&lt;document_context&gt;</code> prompt-injection guard</span>
-                    <span>✓ Preview before Insert / Replace</span>
+                    <span>✓ Native Win32 WinHTTP Root CA &amp; PAC Proxy</span>
+                    <span>✓ Zero Cloud Egress in Air-Gap Mode</span>
                   </div>
                 </div>
               </div>
@@ -402,16 +443,15 @@
         </div>
       </section>
 
-      <!-- 05 · 9-CRATE ZERO-DEPENDENCY WORKSPACE ARCHITECTURE -->
+      <!-- 06 · 9-CRATE ZERO-DEPENDENCY WORKSPACE ARCHITECTURE -->
       <section class="section section-alt" id="architecture">
         <div class="container">
           <div class="section-header">
-            <div class="section-kicker">04 · SYSTEMS ARCHITECTURE</div>
-            <h2 class="section-title">9 Pure-Rust Crates. Zero External Dependencies.</h2>
+            <div class="section-kicker">05 · ZERO-SUPPLY-CHAIN-RISK ARCHITECTURE</div>
+            <h2 class="section-title">9 Pure-Rust Crates. 0 External Dependencies.</h2>
             <p class="section-desc">
-              Every layer — RFC 1951 DEFLATE/INFLATE, PKZIP archives, TrueType outline glyph rasterization,
-              ECMA-376 OpenXML, ISO 32000 PDF streams, and Win32/X11 windowing — is owned in-tree for
-              deterministic builds and sub-second startup.
+              Every cryptographic, compression, XML, PDF, font-rasterization, and OS windowing primitive
+              is owned in-tree — verifiable in one command via <code>rustpad sbom</code> (CycloneDX 1.5 JSON).
             </p>
           </div>
 
@@ -436,15 +476,15 @@
         </div>
       </section>
 
-      <!-- 06 · CLI AUTOMATION & HONEST ENGINEERING SCOPE -->
+      <!-- 07 · ENTERPRISE CLI AUTOMATION & SCOPE DISCIPLINE -->
       <section class="section" id="cli">
         <div class="container">
           <div class="section-header">
-            <div class="section-kicker">05 · AUTOMATION &amp; SCOPE DISCIPLINE</div>
-            <h2 class="section-title">Headless CLI &amp; Explicit Systems Trade-Offs</h2>
+            <div class="section-kicker">06 · LEGAL OPS, FORENSICS &amp; CISO CLI</div>
+            <h2 class="section-title">13-Command Enterprise CLI &amp; Explicit Boundaries</h2>
             <p class="section-desc">
-              The same binary powers interactive desktop editing and deterministic batch pipelines.
-              Real systems engineering means stating both what a tool nails and what it deliberately omits.
+              Automate contract redlining, e-discovery PDF sanitization, archival PDF/A-2b SHA-256 sealing,
+              and CycloneDX SBOM generation from the exact same offline binary.
             </p>
           </div>
 
@@ -452,13 +492,13 @@
 
           <div class="scope-grid">
             <article class="scope-card scope-positive">
-              <div class="scope-tag">BUILT FOR · DAILY SPEED &amp; OWNERSHIP</div>
-              <h3>Where RustPad Excels</h3>
+              <div class="scope-tag">ENTERPRISE PRODUCTION SCOPE · v2.0</div>
+              <h3>Where RustPad v2.0 Leads</h3>
               <ul class="scope-list" id="scope-built-for"></ul>
             </article>
             <article class="scope-card scope-neutral">
-              <div class="scope-tag">EXPLICIT NON-GOALS · SCOPE DISCIPLINE</div>
-              <h3>Deliberate Architectural Boundaries</h3>
+              <div class="scope-tag">SECURITY BOUNDARIES · DELIBERATE NON-GOALS</div>
+              <h3>Explicit Architectural Trade-Offs</h3>
               <ul class="scope-list" id="scope-non-goals"></ul>
             </article>
           </div>
@@ -471,11 +511,11 @@
       <div class="container">
         <div class="footer-card">
           <div class="footer-author">
-            <div class="footer-kicker">ENGINEERED BY</div>
+            <div class="footer-kicker">ARCHITECTED &amp; MAINTAINED BY</div>
             <h2 class="footer-name">Nour Yahyaoui</h2>
             <p class="footer-bio">
-              Full-Stack &amp; Systems Software Engineer in Tunis, Tunisia — building fast, local-first
-              native tools, full-stack platforms, and developer infrastructure.
+              Full-Stack &amp; Systems Software Engineer in Tunis, Tunisia — engineering offline-first
+              native Rust systems, enterprise document infrastructure, and high-reliability platforms.
             </p>
             <a
               href="https://committers.top/tunisia#Nour-yahyaoui"
@@ -495,7 +535,7 @@
           <div class="footer-links-col">
             <div class="footer-links-grid">
               <a href="https://github.com/Nour-yahyaoui/rustpad" target="_blank" rel="noopener noreferrer" class="footer-link-pill">
-                <span>Repository</span>
+                <span>Repository &amp; Governance</span>
                 <code>Nour-yahyaoui/rustpad ↗</code>
               </a>
               <a href="https://www.linkedin.com/in/nour-yahyaoui-86987b36b" target="_blank" rel="noopener noreferrer" class="footer-link-pill">
@@ -507,7 +547,7 @@
                 <code>nour-yahyaoui.vercel.app ↗</code>
               </a>
               <a href="mailto:nourryahyaoui@gmail.com" class="footer-link-pill">
-                <span>Direct Email</span>
+                <span>Security &amp; Enterprise Contact</span>
                 <code>nourryahyaoui@gmail.com</code>
               </a>
             </div>
@@ -515,7 +555,7 @@
         </div>
 
         <div class="footer-bottom">
-          <span>MIT License · RustPad v1.3.0 · Pure-Rust Word, Vector PDF &amp; AI Studio</span>
+          <span>MIT License · RustPad v2.0.0 Enterprise · Offline Pure-Rust Document, Forensic PDF &amp; Local AI Suite</span>
           <a href="#hero">Back to top ↑</a>
         </div>
       </div>

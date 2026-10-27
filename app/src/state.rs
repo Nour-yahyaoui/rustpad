@@ -4,22 +4,25 @@
 use crate::commands::{filter_commands, CommandId};
 use doc_model::{
     Alignment, Block, Document, FontFamily, ListKind, PaperSize, Paragraph, ParagraphStyle,
-    RgbColor, SpanStyle, TableBlock, TemplateKind, TextSpan, UndoHistory,
+    RevisionKind, RevisionMeta, RgbColor, SpanStyle, TableBlock, TemplateKind, TextSpan,
+    UndoHistory,
 };
 use docx_io::{load_docx_file, save_docx_file};
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
 use pdf_engine::{
-    compress_pdf_bytes, load_pdf_file, save_pdf_bytes, save_pdf_file, PdfAnnotation, PdfDocument,
+    compress_pdf_bytes, load_pdf_file, save_pdf_bytes, save_pdf_file, seal_pdf_bytes,
+    PdfAnnotation, PdfDocument,
 };
 use power_tools::{
     discover_local_ollama_models, markdown_to_word, parse_ai_output_to_blocks, pdf_to_word,
-    run_ai_task, word_to_markdown, word_to_pdf_document, AiAgentConfig, AiProviderPreset,
-    AiResponse, AiTask, SnapshotVault, SpellChecker,
+    run_ai_task_with_policy, word_to_markdown, word_to_pdf_document, AdvisoryFileLock,
+    AiAgentConfig, AiProviderPreset, AiResponse, AiTask, AuditTrail, EnterprisePolicy,
+    SnapshotVault, SpellChecker, WalJournal,
 };
 use rustpad_render::{FontBook, Rect};
 use rustpad_window::{
-    detect_dpi_scale, get_clipboard_text, set_clipboard_text, try_native_open_dialog,
-    try_native_save_dialog, CursorShape, Key, Modifiers,
+    detect_dpi_scale, get_clipboard_text, set_clipboard_text, spool_pdf_to_os_printer,
+    try_native_open_dialog, try_native_save_dialog, CursorShape, Key, Modifiers,
 };
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -231,7 +234,11 @@ pub enum ActiveModal {
     Watermark {
         text: String,
     },
+    AddComment {
+        text: String,
+    },
     SnapshotsDrawer,
+    Governance,
     About,
 }
 
@@ -442,6 +449,9 @@ impl HitRegion {
 pub struct RustPadApp {
     pub fonts: FontBook,
     pub spellchecker: SpellChecker,
+    pub policy: EnterprisePolicy,
+    pub policy_path: Option<PathBuf>,
+    pub audit_trail: AuditTrail,
     pub tabs: Vec<StudioTab>,
     pub active_tab: usize,
     pub split_secondary_tab: Option<usize>,
@@ -479,9 +489,17 @@ impl RustPadApp {
         let welcome_doc = TemplateKind::WelcomeGuide.build();
         let recent = discover_workspace_documents();
         let dpi_scale = detect_dpi_scale().clamp(0.95, 1.45);
+        let (policy, policy_path) = EnterprisePolicy::load_system_or_default();
+        let mut audit_trail = AuditTrail::default();
+        if policy.audit_log_enabled {
+            audit_trail.record("STUDIO_BOOT", &policy.organization, "Nour Yahyaoui");
+        }
         Self {
             fonts: FontBook::new(),
             spellchecker: SpellChecker::new(),
+            policy,
+            policy_path,
+            audit_trail,
             tabs: vec![
                 StudioTab::HomeHub,
                 StudioTab::Word(WordTabState::from_doc(welcome_doc, None)),
@@ -507,7 +525,7 @@ impl RustPadApp {
             mouse_x: -1.0,
             mouse_y: -1.0,
             cursor_blink_on: true,
-            status_toast: "Ready · Architectural Paper & Linen Native Rust Studio".into(),
+            status_toast: "Ready · RustPad v2.0 Enterprise Offline Document & PDF Suite".into(),
             recent_files: recent,
         }
     }
@@ -582,6 +600,21 @@ impl RustPadApp {
         }
 
         let cfg = self.ai_dock.config.clone();
+        if let Err(dlp_err) = self.policy.validate_ai_endpoint(&cfg.endpoint_url) {
+            if self.policy.audit_log_enabled {
+                self.audit_trail
+                    .record("AI_DLP_BLOCKED", &cfg.endpoint_url, "PolicyEngine");
+            }
+            self.ai_dock.is_error = true;
+            self.ai_dock.status_line = dlp_err.clone();
+            self.status_toast = dlp_err;
+            return;
+        }
+        if self.policy.audit_log_enabled {
+            self.audit_trail
+                .record("AI_TASK_DISPATCHED", cfg.preset.short_badge(), "Nour Yahyaoui");
+        }
+        let policy_snapshot = self.policy.clone();
         let prompt = self.ai_dock.custom_prompt.clone();
         let (tx, rx) = mpsc::channel();
         self.ai_dock.worker_rx = Some(rx);
@@ -599,7 +632,7 @@ impl RustPadApp {
         );
 
         std::thread::spawn(move || {
-            let res = run_ai_task(&cfg, task, &context, &prompt);
+            let res = run_ai_task_with_policy(&cfg, &policy_snapshot, task, &context, &prompt);
             let _ = tx.send(res);
         });
     }
@@ -737,16 +770,38 @@ impl RustPadApp {
             .to_ascii_lowercase();
         match ext.as_str() {
             "docx" => {
-                let doc = load_docx_file(&p).map_err(|e| e.0)?;
+                // Recover from SHA-256 verified WAL crash frame if a newer journal exists
+                let wal_p = WalJournal::journal_path_for(Some(&p), 0);
+                let (doc, recovered_from_wal) = if wal_p.exists() {
+                    match WalJournal::recover_frame(&wal_p) {
+                        Ok(wal_doc) => (wal_doc, true),
+                        Err(_) => (load_docx_file(&p).map_err(|e| e.0)?, false),
+                    }
+                } else {
+                    (load_docx_file(&p).map_err(|e| e.0)?, false)
+                };
+                let _ = AdvisoryFileLock::acquire(&p, "Nour Yahyaoui");
+                if self.policy.audit_log_enabled {
+                    self.audit_trail
+                        .record("DOC_OPENED", &p.display().to_string(), "Nour Yahyaoui");
+                }
                 self.tabs
                     .push(StudioTab::Word(WordTabState::from_doc(doc, Some(p.clone()))));
                 self.active_tab = self.tabs.len() - 1;
                 self.push_recent(p.clone());
-                self.status_toast = format!("Opened Word document '{}'", p.display());
+                self.status_toast = if recovered_from_wal {
+                    format!("Recovered WAL crash journal for '{}'", p.display())
+                } else {
+                    format!("Opened Word document '{}'", p.display())
+                };
                 Ok(())
             }
             "pdf" => {
                 let pdf = load_pdf_file(&p)?;
+                if self.policy.audit_log_enabled {
+                    self.audit_trail
+                        .record("PDF_OPENED", &p.display().to_string(), "Nour Yahyaoui");
+                }
                 self.tabs
                     .push(StudioTab::Pdf(PdfTabState::from_pdf(pdf, Some(p.clone()))));
                 self.active_tab = self.tabs.len() - 1;
@@ -809,9 +864,18 @@ impl RustPadApp {
                         w.doc.title = stem.to_string();
                     }
                     save_docx_file(&final_path, &w.doc).map_err(|e| e.0)?;
+                    WalJournal::clear_frame(&WalJournal::journal_path_for(Some(&final_path), self.active_tab));
+                    let _ = AdvisoryFileLock::acquire(&final_path, &w.doc.author);
                     w.path = Some(final_path.clone());
                     w.dirty = false;
                     w.snapshots.capture(&w.doc, "Saved to disk");
+                    if self.policy.audit_log_enabled {
+                        self.audit_trail.record(
+                            "DOC_SAVED",
+                            &final_path.display().to_string(),
+                            &w.doc.author,
+                        );
+                    }
                     self.push_recent(final_path.clone());
                     self.status_toast = format!("Saved Word (.docx) '{}'", final_path.display());
                 }
@@ -915,12 +979,31 @@ impl RustPadApp {
         self.open_dropdown = None;
         match cmd {
             CommandId::NewWordBlank => {
+                let mut doc = Document::blank();
+                doc.classification = self.policy.default_classification;
                 self.tabs.push(StudioTab::Word(WordTabState::from_doc(
-                    Document::blank(),
+                    doc,
                     None,
                 )));
                 self.active_tab = self.tabs.len() - 1;
                 self.status_toast = "Created blank A4 Word document".into();
+            }
+            CommandId::NewWordEnterpriseMsa => {
+                self.tabs.push(StudioTab::Word(WordTabState::from_doc(
+                    TemplateKind::EnterpriseContract.build(),
+                    None,
+                )));
+                self.active_tab = self.tabs.len() - 1;
+                if self.policy.audit_log_enabled {
+                    self.audit_trail.record(
+                        "TEMPLATE_CREATED",
+                        "Enterprise MSA Redline",
+                        "Nour Yahyaoui",
+                    );
+                }
+                self.status_toast =
+                    "Opened Enterprise MSA Contract with ECMA-376 Track Changes & Review Comments"
+                        .into();
             }
             CommandId::NewWordWelcome => {
                 self.tabs.push(StudioTab::Word(WordTabState::from_doc(
@@ -1240,10 +1323,171 @@ impl RustPadApp {
             CommandId::OpenSnapshotsDrawer => {
                 self.modal = Some(ActiveModal::SnapshotsDrawer);
             }
+            CommandId::PrintDocument => {
+                let spool_path = std::env::temp_dir().join("rustpad_print_spool.pdf");
+                let prep = match self.tabs.get(self.active_tab) {
+                    Some(StudioTab::Word(w)) => {
+                        export_document_to_pdf_file(&spool_path, &w.doc, &PdfCreateOptions::default())
+                    }
+                    Some(StudioTab::Pdf(p)) => save_pdf_file(&spool_path, &p.pdf, true),
+                    _ => Err("Open a Word or PDF document to print".into()),
+                };
+                match prep.and_then(|()| spool_pdf_to_os_printer(&spool_path)) {
+                    Ok(msg) => {
+                        if self.policy.audit_log_enabled {
+                            self.audit_trail
+                                .record("OS_PRINT_SPOOL", &spool_path.display().to_string(), "Nour Yahyaoui");
+                        }
+                        self.status_toast = msg;
+                    }
+                    Err(e) => self.status_toast = format!("Print error: {e}"),
+                }
+            }
+            CommandId::ToggleTrackChanges => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    w.doc.track_changes = !w.doc.track_changes;
+                    w.dirty = true;
+                    let state_lbl = if w.doc.track_changes { "ON" } else { "OFF" };
+                    if self.policy.audit_log_enabled {
+                        self.audit_trail.record(
+                            "TRACK_CHANGES_TOGGLED",
+                            &format!("{}: {state_lbl}", w.doc.title),
+                            &w.doc.author,
+                        );
+                    }
+                    self.status_toast = format!(
+                        "Legal Track Changes {state_lbl} — edits record ECMA-376 <w:ins> / <w:del>"
+                    );
+                }
+            }
+            CommandId::AcceptAllRevisions => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    w.history.record(&w.doc);
+                    let n = w.doc.accept_all_revisions();
+                    w.dirty = true;
+                    if self.policy.audit_log_enabled {
+                        self.audit_trail.record(
+                            "REVISIONS_ACCEPTED_ALL",
+                            &format!("{} ({n} changes)", w.doc.title),
+                            &w.doc.author,
+                        );
+                    }
+                    self.status_toast = format!("Accepted {n} tracked revision(s)");
+                }
+            }
+            CommandId::RejectAllRevisions => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    w.history.record(&w.doc);
+                    let n = w.doc.reject_all_revisions();
+                    w.dirty = true;
+                    if self.policy.audit_log_enabled {
+                        self.audit_trail.record(
+                            "REVISIONS_REJECTED_ALL",
+                            &format!("{} ({n} changes)", w.doc.title),
+                            &w.doc.author,
+                        );
+                    }
+                    self.status_toast = format!("Rejected {n} tracked revision(s)");
+                }
+            }
+            CommandId::AddReviewComment => {
+                if matches!(self.tabs.get(self.active_tab), Some(StudioTab::Word(_))) {
+                    self.modal = Some(ActiveModal::AddComment {
+                        text: String::new(),
+                    });
+                } else {
+                    self.status_toast = "Open a Word (.docx) tab to add threaded review comments".into();
+                }
+            }
+            CommandId::CycleClassification => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    w.doc.classification = w.doc.classification.cycle_next();
+                    w.dirty = true;
+                    if self.policy.audit_log_enabled {
+                        self.audit_trail.record(
+                            "CLASSIFICATION_CHANGED",
+                            &format!("{} -> {}", w.doc.title, w.doc.classification.label()),
+                            &w.doc.author,
+                        );
+                    }
+                    self.status_toast =
+                        format!("Security Classification: {}", w.doc.classification.label());
+                } else {
+                    self.policy.default_classification =
+                        self.policy.default_classification.cycle_next();
+                    self.status_toast = format!(
+                        "Default Policy Classification: {}",
+                        self.policy.default_classification.label()
+                    );
+                }
+            }
+            CommandId::PdfSanitizeRedactions => {
+                if let Some(StudioTab::Pdf(p)) = self.tabs.get_mut(self.active_tab) {
+                    let report = p.pdf.sanitize_redactions(true);
+                    p.dirty = true;
+                    if self.policy.audit_log_enabled {
+                        self.audit_trail.record(
+                            "PDF_FORENSIC_SANITIZE",
+                            &format!(
+                                "{} (purged {} text runs across {} box(es))",
+                                p.pdf.title, report.purged_text_runs, report.redaction_boxes
+                            ),
+                            "Legal Forensics",
+                        );
+                    }
+                    self.status_toast = format!(
+                        "Forensic Sanitize complete: purged {} underlying text run(s) & scrubbed metadata",
+                        report.purged_text_runs
+                    );
+                } else {
+                    self.status_toast = "Open a PDF tab to sanitize redactions".into();
+                }
+            }
+            CommandId::PdfSealDocument => {
+                if let Some(StudioTab::Pdf(p)) = self.tabs.get_mut(self.active_tab) {
+                    let (_sealed_bytes, manifest) =
+                        seal_pdf_bytes(&p.pdf, "Nour Yahyaoui", "2026-10-27T12:00:00Z", true);
+                    if let Some(target) = &p.path {
+                        let _ = std::fs::write(target, &_sealed_bytes);
+                        p.dirty = false;
+                    }
+                    if self.policy.audit_log_enabled {
+                        self.audit_trail.record(
+                            "PDF_SHA256_SEALED",
+                            &format!("{} ({})", p.pdf.title, &manifest.content_sha256[..16]),
+                            &manifest.signer,
+                        );
+                    }
+                    self.status_toast = format!(
+                        "Embedded PDF/A-2b + SHA-256 Tamper Seal [{}…]",
+                        &manifest.content_sha256[..16]
+                    );
+                } else {
+                    self.status_toast = "Open a PDF tab to embed SHA-256 seal".into();
+                }
+            }
+            CommandId::OpenGovernanceModal => {
+                self.modal = Some(ActiveModal::Governance);
+            }
+            CommandId::ToggleAirGappedDlp => {
+                self.policy.air_gapped_mode = !self.policy.air_gapped_mode;
+                self.policy.allow_cloud_ai = !self.policy.air_gapped_mode;
+                let mode_str = if self.policy.air_gapped_mode {
+                    "STRICT AIR-GAPPED (Cloud AI Locked)"
+                } else {
+                    "STANDARD HYBRID (Local + Allowlisted Cloud)"
+                };
+                self.audit_trail
+                    .record("DLP_MODE_SWITCHED", mode_str, "EnterpriseAdmin");
+                self.status_toast = format!("DLP Policy Mode: {mode_str}");
+            }
             CommandId::CaptureSnapshot => {
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
                     let id = w.snapshots.capture(&w.doc, "Manual checkpoint");
-                    self.status_toast = format!("Saved local Time-Machine Snapshot #{id}");
+                    let wal_p = WalJournal::journal_path_for(w.path.as_deref(), self.active_tab);
+                    let _ = WalJournal::write_frame(&wal_p, &w.doc);
+                    self.status_toast =
+                        format!("Saved Time-Machine Snapshot #{id} + SHA-256 WAL frame");
                 }
             }
             CommandId::OpenFindReplace => {
@@ -2226,8 +2470,32 @@ impl RustPadApp {
                     None => "Cleared page watermark".into(),
                 };
             }
+            ActiveModal::AddComment { text } => {
+                let body = text.trim();
+                if !body.is_empty() {
+                    if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                        let author = w.doc.author.clone();
+                        let blk = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+                        let cid =
+                            w.doc
+                                .add_comment(blk, &author, "2026-10-27T12:00:00Z", body);
+                        w.dirty = true;
+                        self.word_sidebar_open = true;
+                        if self.policy.audit_log_enabled {
+                            self.audit_trail.record(
+                                "COMMENT_ADDED",
+                                &format!("{} #{cid}", w.doc.title),
+                                &author,
+                            );
+                        }
+                        self.status_toast =
+                            format!("Added threaded review comment #{cid} to paragraph {}", blk + 1);
+                    }
+                }
+            }
             ActiveModal::FindReplace { .. }
             | ActiveModal::SnapshotsDrawer
+            | ActiveModal::Governance
             | ActiveModal::About => {}
         }
     }
@@ -2465,6 +2733,18 @@ impl RustPadApp {
                     self.execute_command(CommandId::SaveFile);
                     return;
                 }
+                Key::Char('p') => {
+                    self.execute_command(CommandId::PrintDocument);
+                    return;
+                }
+                Key::Char('e') if mods.shift => {
+                    self.execute_command(CommandId::ToggleTrackChanges);
+                    return;
+                }
+                Key::Char('m') if mods.shift => {
+                    self.execute_command(CommandId::AddReviewComment);
+                    return;
+                }
                 Key::Char('e') => {
                     self.execute_command(CommandId::ExportWordToPdf);
                     return;
@@ -2581,7 +2861,7 @@ impl RustPadApp {
                         Key::Enter => follow_up = ModalKeyFollowUp::Confirm,
                         _ => {}
                     },
-                    ActiveModal::Watermark { text } => match key {
+                    ActiveModal::Watermark { text } | ActiveModal::AddComment { text } => match key {
                         Key::Backspace => {
                             text.pop();
                         }
@@ -2610,7 +2890,7 @@ impl RustPadApp {
                             follow_up = ModalKeyFollowUp::Confirm;
                         }
                     }
-                    ActiveModal::SnapshotsDrawer | ActiveModal::About => {}
+                    ActiveModal::SnapshotsDrawer | ActiveModal::Governance | ActiveModal::About => {}
                 }
             }
             match follow_up {
@@ -2854,7 +3134,9 @@ impl RustPadApp {
                 }
                 ActiveModal::FilePrompt { input_path, .. } => input_path.push_str(single),
                 ActiveModal::SplitRange { range_spec } => range_spec.push_str(single),
-                ActiveModal::Watermark { text } => text.push_str(single),
+                ActiveModal::Watermark { text } | ActiveModal::AddComment { text } => {
+                    text.push_str(single)
+                }
                 ActiveModal::FindReplace {
                     find_text,
                     replace_text,
@@ -2936,7 +3218,7 @@ impl RustPadApp {
                 }
                 ActiveModal::FilePrompt { input_path, .. } => input_path.push(ch),
                 ActiveModal::SplitRange { range_spec } => range_spec.push(ch),
-                ActiveModal::Watermark { text } => text.push(ch),
+                ActiveModal::Watermark { text } | ActiveModal::AddComment { text } => text.push(ch),
                 ActiveModal::FindReplace {
                     find_text,
                     replace_text,
@@ -2951,6 +3233,7 @@ impl RustPadApp {
                 }
                 ActiveModal::SignaturePad { .. }
                 | ActiveModal::SnapshotsDrawer
+                | ActiveModal::Governance
                 | ActiveModal::About => {}
             }
             return;
@@ -3021,18 +3304,70 @@ fn word_insert_char(w: &mut WordTabState, ch: char) {
 }
 
 fn word_insert_char_no_record(w: &mut WordTabState, ch: char) {
+    let track = w.doc.track_changes;
+    let rev_author = w.doc.author.clone();
+    let next_rev_id = if track { w.doc.next_revision_id() } else { 1 };
     if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
         if p.spans.is_empty() {
+            if track {
+                p.spans.push(TextSpan::tracked(
+                    ch.to_string(),
+                    SpanStyle::default(),
+                    RevisionMeta {
+                        id: next_rev_id,
+                        kind: RevisionKind::Insertion,
+                        author: rev_author,
+                        date_iso: "2026-10-27T12:00:00Z".into(),
+                    },
+                ));
+                w.cursor_char = 1;
+                return;
+            }
             p.spans.push(TextSpan::plain(""));
         }
         let mut rem = w.cursor_char;
         let span_count = p.spans.len();
-        for (si, span) in p.spans.iter_mut().enumerate() {
-            let slen = span.text.chars().count();
+        for si in 0..span_count {
+            let slen = p.spans[si].text.chars().count();
             if rem <= slen || si + 1 == span_count {
                 let target_char = rem.min(slen);
-                let byte_idx = char_to_byte(&span.text, target_char);
-                span.text.insert(byte_idx, ch);
+                let byte_idx = char_to_byte(&p.spans[si].text, target_char);
+                let is_ins = p.spans[si]
+                    .revision
+                    .as_ref()
+                    .map(|r| r.kind == RevisionKind::Insertion)
+                    .unwrap_or(false);
+                if !track || is_ins {
+                    p.spans[si].text.insert(byte_idx, ch);
+                } else {
+                    let orig = p.spans[si].clone();
+                    let left = orig.text[..byte_idx].to_string();
+                    let right = orig.text[byte_idx..].to_string();
+                    let ins_span = TextSpan::tracked(
+                        ch.to_string(),
+                        orig.style.clone(),
+                        RevisionMeta {
+                            id: next_rev_id,
+                            kind: RevisionKind::Insertion,
+                            author: rev_author,
+                            date_iso: "2026-10-27T12:00:00Z".into(),
+                        },
+                    );
+                    let mut replacement = Vec::with_capacity(3);
+                    if !left.is_empty() {
+                        let mut l_sp = orig.clone();
+                        l_sp.text = left;
+                        replacement.push(l_sp);
+                    }
+                    replacement.push(ins_span);
+                    if !right.is_empty() {
+                        let mut r_sp = orig;
+                        r_sp.text = right;
+                        replacement.push(r_sp);
+                    }
+                    p.spans.splice(si..=si, replacement);
+                    p.normalize_spans();
+                }
                 w.cursor_char += 1;
                 return;
             }
@@ -3059,17 +3394,52 @@ fn word_backspace(w: &mut WordTabState) {
         }
     }
 
+    let track = w.doc.track_changes;
+    let rev_author = w.doc.author.clone();
+    let next_rev_id = if track { w.doc.next_revision_id() } else { 1 };
     let mut should_merge_prev = false;
     if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
         if w.cursor_char > 0 {
             let target = w.cursor_char - 1;
             let mut rem = target;
-            for span in &mut p.spans {
-                let slen = span.text.chars().count();
+            for si in 0..p.spans.len() {
+                let slen = p.spans[si].text.chars().count();
                 if rem < slen {
-                    let b0 = char_to_byte(&span.text, rem);
-                    let b1 = char_to_byte(&span.text, rem + 1);
-                    span.text.replace_range(b0..b1, "");
+                    let b0 = char_to_byte(&p.spans[si].text, rem);
+                    let b1 = char_to_byte(&p.spans[si].text, rem + 1);
+                    let rev_kind = p.spans[si].revision.as_ref().map(|r| r.kind);
+                    if !track || rev_kind == Some(RevisionKind::Insertion) {
+                        p.spans[si].text.replace_range(b0..b1, "");
+                        p.normalize_spans();
+                    } else if rev_kind.is_none() {
+                        let orig = p.spans[si].clone();
+                        let left = orig.text[..b0].to_string();
+                        let del_txt = orig.text[b0..b1].to_string();
+                        let right = orig.text[b1..].to_string();
+                        let mut replacement = Vec::with_capacity(3);
+                        if !left.is_empty() {
+                            let mut l_sp = orig.clone();
+                            l_sp.text = left;
+                            replacement.push(l_sp);
+                        }
+                        replacement.push(TextSpan::tracked(
+                            del_txt,
+                            orig.style.clone(),
+                            RevisionMeta {
+                                id: next_rev_id,
+                                kind: RevisionKind::Deletion,
+                                author: rev_author,
+                                date_iso: "2026-10-27T12:00:00Z".into(),
+                            },
+                        ));
+                        if !right.is_empty() {
+                            let mut r_sp = orig;
+                            r_sp.text = right;
+                            replacement.push(r_sp);
+                        }
+                        p.spans.splice(si..=si, replacement);
+                        p.normalize_spans();
+                    }
                     w.cursor_char -= 1;
                     w.dirty = true;
                     w.scroll_to_caret = true;
@@ -3459,6 +3829,54 @@ mod tests {
         if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
             if let Some(Block::Table(t)) = w.doc.blocks.get(w.cursor_block) {
                 assert_eq!(t.rows.len(), 4);
+            }
+        }
+    }
+
+    #[test]
+    fn test_enterprise_track_changes_dlp_and_audit_chain() {
+        let mut app = RustPadApp::new();
+        app.execute_command(CommandId::NewWordBlank);
+        for ch in "Net 30".chars() {
+            app.handle_text_input(ch);
+        }
+        // Enable Track Changes and replace "30" with "45"
+        app.execute_command(CommandId::ToggleTrackChanges);
+        app.handle_key_down(Key::Backspace, Modifiers::default());
+        app.handle_key_down(Key::Backspace, Modifiers::default());
+        if let Some(StudioTab::Word(w)) = app.tabs.get_mut(app.active_tab) {
+            w.cursor_char = w.doc.blocks[0].as_paragraph_len();
+        }
+        app.handle_text_input('4');
+        app.handle_text_input('5');
+
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            let (ins, del) = w.doc.revision_counts();
+            assert!(ins >= 1 && del >= 1);
+        }
+        app.execute_command(CommandId::AcceptAllRevisions);
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            assert_eq!(w.doc.revision_counts(), (0, 0));
+            assert_eq!(w.doc.to_plain_text().trim(), "Net 45");
+        }
+
+        // Verify Strict Air-Gapped DLP blocks external cloud endpoint & logs to SHA-256 Audit Chain
+        app.execute_command(CommandId::ToggleAirGappedDlp);
+        app.ai_dock.config.endpoint_url = "https://api.openai.com/v1/chat/completions".into();
+        app.start_ai_task(AiTask::SummarizeDocument);
+        assert!(app.ai_dock.is_error);
+        assert!(app.ai_dock.status_line.contains("DLP POLICY BLOCKED"));
+        assert!(app.audit_trail.verify_chain().is_ok());
+    }
+
+    trait BlockParaLen {
+        fn as_paragraph_len(&self) -> usize;
+    }
+    impl BlockParaLen for Block {
+        fn as_paragraph_len(&self) -> usize {
+            match self {
+                Block::Paragraph(p) => p.plain_text().chars().count(),
+                _ => 0,
             }
         }
     }

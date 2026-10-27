@@ -22,7 +22,7 @@ pub fn load_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument, String> {
         return Err("Not a valid PDF file (missing %PDF- header)".into());
     }
 
-    let objects = scan_pdf_objects(bytes);
+    let objects = scan_and_expand_objects(bytes);
     if objects.is_empty() {
         return Err("No PDF objects found in file".into());
     }
@@ -93,6 +93,63 @@ pub fn load_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument, String> {
         author,
         pages,
     })
+}
+
+pub(crate) fn scan_and_expand_objects(bytes: &[u8]) -> BTreeMap<u32, Vec<u8>> {
+    let mut objects = scan_pdf_objects(bytes);
+    expand_object_streams(&mut objects);
+    objects
+}
+
+/// Unpacks ISO 32000-1 §7.5.7 `/Type /ObjStm` compressed object streams into `objects`.
+fn expand_object_streams(objects: &mut BTreeMap<u32, Vec<u8>>) {
+    let mut unpacked: Vec<(u32, Vec<u8>)> = Vec::new();
+    for body in objects.values() {
+        let hdr = header_ascii(body);
+        if !hdr.contains("/ObjStm") {
+            continue;
+        }
+        let Some(n_objs) = extract_int_field(&hdr, "/N").map(|v| v.max(0) as usize) else {
+            continue;
+        };
+        let Some(first_off) = extract_int_field(&hdr, "/First").map(|v| v.max(0) as usize) else {
+            continue;
+        };
+        if n_objs == 0 || n_objs > 16_384 {
+            continue;
+        }
+        let Some(decoded) = decode_stream_object(body) else {
+            continue;
+        };
+        if first_off > decoded.len() {
+            continue;
+        }
+        let index_str = String::from_utf8_lossy(&decoded[..first_off]);
+        let nums: Vec<usize> = index_str
+            .split_whitespace()
+            .filter_map(|t| t.parse::<usize>().ok())
+            .collect();
+        let mut pairs: Vec<(u32, usize)> = Vec::with_capacity(n_objs);
+        let mut idx = 0usize;
+        while idx + 1 < nums.len() && pairs.len() < n_objs {
+            pairs.push((nums[idx] as u32, nums[idx + 1]));
+            idx += 2;
+        }
+        for (k, &(obj_id, rel_start)) in pairs.iter().enumerate() {
+            let abs_start = first_off.saturating_add(rel_start);
+            let abs_end = if k + 1 < pairs.len() {
+                first_off.saturating_add(pairs[k + 1].1).min(decoded.len())
+            } else {
+                decoded.len()
+            };
+            if abs_start <= abs_end && abs_end <= decoded.len() {
+                unpacked.push((obj_id, decoded[abs_start..abs_end].to_vec()));
+            }
+        }
+    }
+    for (id, data) in unpacked {
+        objects.entry(id).or_insert(data);
+    }
 }
 
 fn scan_pdf_objects(bytes: &[u8]) -> BTreeMap<u32, Vec<u8>> {
@@ -299,13 +356,60 @@ fn decode_stream_object(obj: &[u8]) -> Option<Vec<u8>> {
         data_end -= 1;
     }
     let slice = &obj[data_start..data_end];
-    if hdr.contains("/FlateDecode") {
+    let raw = if hdr.contains("/FlateDecode") {
         zlib_decompress(slice)
             .or_else(|_| deflate_decompress(slice))
-            .ok()
+            .ok()?
     } else {
-        Some(slice.to_vec())
+        slice.to_vec()
+    };
+
+    if let Some(pred) = extract_int_field(&hdr, "/Predictor") {
+        if pred >= 10 {
+            let cols = extract_int_field(&hdr, "/Columns")
+                .map(|c| c.max(1) as usize)
+                .unwrap_or(1);
+            if let Some(unfiltered) = undo_png_predictor(&raw, cols) {
+                return Some(unfiltered);
+            }
+        }
     }
+    Some(raw)
+}
+
+fn undo_png_predictor(data: &[u8], cols: usize) -> Option<Vec<u8>> {
+    let row_len = cols.checked_add(1)?;
+    if row_len <= 1 || data.is_empty() {
+        return None;
+    }
+    let rows = data.len() / row_len;
+    let mut out = Vec::with_capacity(rows * cols);
+    let mut prev_row = vec![0u8; cols];
+
+    for r in 0..rows {
+        let base = r * row_len;
+        let filter = data[base];
+        let src = &data[base + 1..base + row_len];
+        let mut cur = vec![0u8; cols];
+        match filter {
+            0 => cur.copy_from_slice(src),
+            1 => {
+                for i in 0..cols {
+                    let left = if i > 0 { cur[i - 1] } else { 0 };
+                    cur[i] = src[i].wrapping_add(left);
+                }
+            }
+            2 => {
+                for i in 0..cols {
+                    cur[i] = src[i].wrapping_add(prev_row[i]);
+                }
+            }
+            _ => cur.copy_from_slice(src),
+        }
+        out.extend_from_slice(&cur);
+        prev_row = cur;
+    }
+    Some(out)
 }
 
 fn extract_pdf_paren_field(text: &str, key: &str) -> Option<String> {

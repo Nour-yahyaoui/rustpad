@@ -9,6 +9,7 @@
 //!   and direct Markdown -> `doc_model::Block` AST conversion.
 
 use crate::converter::markdown_to_word;
+use crate::enterprise::EnterprisePolicy;
 use doc_model::{Block, Document};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -355,10 +356,21 @@ pub fn discover_local_ollama_models(base_or_chat_url: &str) -> Vec<String> {
     extract_all_json_string_values(&body, "name")
 }
 
-/// Runs a synchronous AI Agent completion request (call directly in CLI or inside a background
-/// `std::thread` in the GUI so window painting never blocks).
+/// Runs a synchronous AI Agent completion request enforcing system `EnterprisePolicy` DLP rules.
 pub fn run_ai_task(
     config: &AiAgentConfig,
+    task: AiTask,
+    document_text: &str,
+    custom_instruction: &str,
+) -> Result<AiResponse, String> {
+    let (policy, _) = EnterprisePolicy::load_system_or_default();
+    run_ai_task_with_policy(config, &policy, task, document_text, custom_instruction)
+}
+
+/// Runs an AI Agent completion request against an explicit `EnterprisePolicy` governance profile.
+pub fn run_ai_task_with_policy(
+    config: &AiAgentConfig,
+    policy: &EnterprisePolicy,
     task: AiTask,
     document_text: &str,
     custom_instruction: &str,
@@ -371,6 +383,7 @@ pub fn run_ai_task(
     if url.is_empty() {
         return Err("Endpoint URL cannot be empty.".into());
     }
+    policy.validate_ai_endpoint(url)?;
     let model = if config.model.trim().is_empty() {
         config.preset.default_model()
     } else {
@@ -547,7 +560,229 @@ fn dispatch_http_post(
     if !parsed.https {
         http_request_tcp("POST", url, headers, Some(body.as_bytes()), timeout)
     } else {
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(res) = winhttp_tls::post_https(
+                &parsed.host,
+                parsed.port,
+                &parsed.path,
+                headers,
+                body.as_bytes(),
+                timeout,
+            ) {
+                return Ok(res);
+            }
+        }
         https_post_via_curl(url, headers, body, timeout)
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod winhttp_tls {
+    use std::ffi::c_void;
+    use std::ptr::{null, null_mut};
+    use std::time::Duration;
+
+    type HInternet = *mut c_void;
+    type Bool = i32;
+    type Dword = u32;
+
+    const WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY: Dword = 4;
+    const WINHTTP_FLAG_SECURE: Dword = 0x0080_0000;
+    const WINHTTP_ADDREQ_FLAG_ADD: Dword = 0x2000_0000;
+    const WINHTTP_ADDREQ_FLAG_REPLACE: Dword = 0x8000_0000;
+    const WINHTTP_QUERY_STATUS_CODE: Dword = 19;
+    const WINHTTP_QUERY_FLAG_NUMBER: Dword = 0x2000_0000;
+
+    #[link(name = "winhttp")]
+    extern "system" {
+        fn WinHttpOpen(
+            psz_agent_w: *const u16,
+            dw_access_type: Dword,
+            psz_proxy_w: *const u16,
+            psz_proxy_bypass_w: *const u16,
+            dw_flags: Dword,
+        ) -> HInternet;
+        fn WinHttpSetTimeouts(
+            h_internet: HInternet,
+            n_resolve_timeout: i32,
+            n_connect_timeout: i32,
+            n_send_timeout: i32,
+            n_receive_timeout: i32,
+        ) -> Bool;
+        fn WinHttpConnect(
+            h_session: HInternet,
+            pswz_server_name: *const u16,
+            n_server_port: u16,
+            dw_reserved: Dword,
+        ) -> HInternet;
+        fn WinHttpOpenRequest(
+            h_connect: HInternet,
+            pwsz_verb: *const u16,
+            pwsz_object_name: *const u16,
+            pwsz_version: *const u16,
+            pwsz_referrer: *const u16,
+            ppwsz_accept_types: *const *const u16,
+            dw_flags: Dword,
+        ) -> HInternet;
+        fn WinHttpAddRequestHeaders(
+            h_request: HInternet,
+            lpsz_headers: *const u16,
+            dw_headers_length: Dword,
+            dw_modifiers: Dword,
+        ) -> Bool;
+        fn WinHttpSendRequest(
+            h_request: HInternet,
+            lpsz_headers: *const u16,
+            dw_headers_length: Dword,
+            lp_optional: *const c_void,
+            dw_optional_length: Dword,
+            dw_total_length: Dword,
+            dw_context: usize,
+        ) -> Bool;
+        fn WinHttpReceiveResponse(h_request: HInternet, lp_reserved: *mut c_void) -> Bool;
+        fn WinHttpQueryHeaders(
+            h_request: HInternet,
+            dw_info_level: Dword,
+            pwsz_name: *const u16,
+            lp_buffer: *mut c_void,
+            lpdw_buffer_length: *mut Dword,
+            lpdw_index: *mut Dword,
+        ) -> Bool;
+        fn WinHttpReadData(
+            h_file: HInternet,
+            lp_buffer: *mut c_void,
+            dw_number_of_bytes_to_read: Dword,
+            lpdw_number_of_bytes_read: *mut Dword,
+        ) -> Bool;
+        fn WinHttpCloseHandle(h_internet: HInternet) -> Bool;
+    }
+
+    struct HandleGuard(HInternet);
+    impl Drop for HandleGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe {
+                    let _ = WinHttpCloseHandle(self.0);
+                }
+            }
+        }
+    }
+
+    fn to_wide_nul(s: &str) -> Vec<u16> {
+        let mut w: Vec<u16> = s.encode_utf16().collect();
+        w.push(0);
+        w
+    }
+
+    pub fn post_https(
+        host: &str,
+        port: u16,
+        path: &str,
+        headers: &[(String, String)],
+        body: &[u8],
+        timeout: Duration,
+    ) -> Result<(u16, String), String> {
+        let agent = to_wide_nul(&format!("RustPad/{}", env!("CARGO_PKG_VERSION")));
+        let host_w = to_wide_nul(host);
+        let verb_w = to_wide_nul("POST");
+        let path_w = to_wide_nul(path);
+        let ms = (timeout.as_millis().min(180_000)) as i32;
+
+        unsafe {
+            let session = HandleGuard(WinHttpOpen(
+                agent.as_ptr(),
+                WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                null(),
+                null(),
+                0,
+            ));
+            if session.0.is_null() {
+                return Err("WinHttpOpen failed".into());
+            }
+            let _ = WinHttpSetTimeouts(session.0, 5_000, 8_000, 15_000, ms);
+
+            let connect = HandleGuard(WinHttpConnect(session.0, host_w.as_ptr(), port, 0));
+            if connect.0.is_null() {
+                return Err("WinHttpConnect failed".into());
+            }
+
+            let request = HandleGuard(WinHttpOpenRequest(
+                connect.0,
+                verb_w.as_ptr(),
+                path_w.as_ptr(),
+                null(),
+                null(),
+                null(),
+                WINHTTP_FLAG_SECURE,
+            ));
+            if request.0.is_null() {
+                return Err("WinHttpOpenRequest failed".into());
+            }
+
+            for (k, v) in headers {
+                let line_w = to_wide_nul(&format!("{k}: {v}\r\n"));
+                let _ = WinHttpAddRequestHeaders(
+                    request.0,
+                    line_w.as_ptr(),
+                    u32::MAX,
+                    WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE,
+                );
+            }
+
+            let body_len = body.len() as Dword;
+            let sent = WinHttpSendRequest(
+                request.0,
+                null(),
+                0,
+                if body.is_empty() {
+                    null()
+                } else {
+                    body.as_ptr() as *const c_void
+                },
+                body_len,
+                body_len,
+                0,
+            );
+            if sent == 0 {
+                return Err("WinHttpSendRequest failed".into());
+            }
+            if WinHttpReceiveResponse(request.0, null_mut()) == 0 {
+                return Err("WinHttpReceiveResponse failed".into());
+            }
+
+            let mut status_code: Dword = 200;
+            let mut status_size: Dword = std::mem::size_of::<Dword>() as Dword;
+            let _ = WinHttpQueryHeaders(
+                request.0,
+                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                null(),
+                (&mut status_code as *mut Dword) as *mut c_void,
+                &mut status_size,
+                null_mut(),
+            );
+
+            let mut resp_bytes: Vec<u8> = Vec::with_capacity(4096);
+            let mut buf = [0u8; 4096];
+            loop {
+                let mut read_n: Dword = 0;
+                let ok = WinHttpReadData(
+                    request.0,
+                    buf.as_mut_ptr() as *mut c_void,
+                    buf.len() as Dword,
+                    &mut read_n,
+                );
+                if ok == 0 || read_n == 0 {
+                    break;
+                }
+                resp_bytes.extend_from_slice(&buf[..(read_n as usize)]);
+            }
+
+            Ok((
+                status_code as u16,
+                String::from_utf8_lossy(&resp_bytes).into_owned(),
+            ))
+        }
     }
 }
 

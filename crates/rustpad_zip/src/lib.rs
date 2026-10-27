@@ -1,16 +1,18 @@
-//! Pure-Rust CRC32, Adler32, RFC 1951 DEFLATE, RFC 1950 Zlib, and PKZIP archive engine.
-//! Powers `.docx` OpenXML archives, `.pdf` `/FlateDecode` streams, PNG decoding/encoding,
-//! and compressed local Time-Machine snapshots with zero external C dependencies.
+//! Pure-Rust CRC32, Adler32, SHA-256, RFC 1951 DEFLATE, RFC 1950 Zlib, and hardened PKZIP engine.
+//! Powers `.docx` OpenXML archives, `.pdf` `/FlateDecode` & `/ObjStm` streams, PNG codecs,
+//! WAL crash-recovery frames, and cryptographic SHA-256 document seals with zero external dependencies.
 
 pub mod checksum;
 pub mod deflate;
 pub mod inflate;
 pub mod zip_archive;
 
-pub use checksum::{adler32, crc32};
+pub use checksum::{adler32, crc32, sha256, sha256_hex};
 pub use deflate::{deflate_compress, zlib_compress};
-pub use inflate::{deflate_decompress, zlib_decompress};
-pub use zip_archive::{ZipArchive, ZipWriter};
+pub use inflate::{
+    deflate_decompress, deflate_decompress_bounded, zlib_decompress, zlib_decompress_bounded,
+};
+pub use zip_archive::{ArchiveSecurityLimits, ZipArchive, ZipWriter};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ZipError(pub String);

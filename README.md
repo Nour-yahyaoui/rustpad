@@ -1,156 +1,150 @@
-# RustPad (`rustpad`)
+# RustPad Enterprise (`rustpad` v2.0)
 
 <p align="left">
   <img src="assets/icons/icon-256.png" alt="RustPad logo" width="84" height="84" />
 </p>
 
-**Create, edit, sign, redact, convert, and AI-assist Microsoft Word (`.docx`) and vector PDF (`.pdf`) documents offline-first in a single `~3.8 MB` pure-Rust desktop binary.**
+**The offline-first, zero-dependency pure-Rust enterprise desktop document & PDF suite.**  
+Author, redline, comment, forensically redact, cryptographically seal, convert, and run air-gapped local AI across **Microsoft Word (`.docx`)** and **ISO 32000 / PDF/A-2b (`.pdf`)** files in a single `~3.8 MB` native executable — with **`0` external `crates.io` runtime dependencies**.
 
 [![Committers.top Tunisia Badge](https://user-badge.committers.top/tunisia/Nour-yahyaoui.svg)](https://committers.top/tunisia#Nour-yahyaoui)
 
-- **Author**: Nour Yahyaoui — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [GitHub](https://github.com/Nour-yahyaoui) · [Portfolio](https://nour-yahyaoui.vercel.app) · `nourryahyaoui@gmail.com`
-- **Live Mobile-First Product Page**: [https://rustpad-studio.vercel.app](https://rustpad-studio.vercel.app)
-- **Current Release (`v1.3.0`)**: [Windows x64 `.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.3.0/rustpad-v1.3.0-windows-x86_64.exe) · [Linux x64](https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.3.0/rustpad-v1.3.0-linux-x86_64) · [SHA256SUMS.txt](https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.3.0/SHA256SUMS.txt) · [All Releases](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v1.3.0)
-- **Stack**: 100% Pure Rust (`~19,500` LOC across 9 workspace crates, zero WebView, zero external `crates.io` runtime dependencies) + Mobile-First Vite TypeScript Product Showcase
+- **Author & Lead Systems Architect**: **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [GitHub](https://github.com/Nour-yahyaoui) · [Portfolio](https://nour-yahyaoui.vercel.app) · `nourryahyaoui@gmail.com`
+- **Live Product & Enterprise Showcase**: [https://rustpad-studio.vercel.app](https://rustpad-studio.vercel.app)
+- **Latest Enterprise Release (`v2.0.0`)**: [Windows x64 `.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-windows-x86_64.exe) · [Linux x64](https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-linux-x86_64) · [SHA256SUMS.txt](https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/SHA256SUMS.txt) · [Release Notes](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v2.0.0)
+- **Governance & Security Docs**: [`ARCHITECTURE.md`](ARCHITECTURE.md) · [`SECURITY.md`](SECURITY.md) · [`docs/ENTERPRISE_POLICY.md`](docs/ENTERPRISE_POLICY.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`CHANGELOG.md`](CHANGELOG.md)
 
-![RustPad v1.3.0 Word Studio with Warm Architectural Paper & Linen chrome, contextual Table Studio bar, multi-line wrapped .docx table, and Pluggable AI Agent Studio Dock](docs/screenshots/word-studio.png)
+![RustPad v2.0 Enterprise Studio — Legal Redline Word (.docx) Contract, Threaded Review Comments, Warm Architectural Paper & Linen Chrome, and DLP-Governed Local AI Dock](docs/screenshots/word-studio.png)
 
 ---
 
-## Why RustPad Exists
+## Why RustPad v2.0 Competes with Enterprise Desktop Suites
 
-Desktop document tools routinely ship 180–400 MB Chromium wrappers or cloud-locked editors just to draft a `.docx` technical specification, adjust a table, or sign and merge a `.pdf`. **RustPad** compiles every subsystem—RFC 1951 DEFLATE/PKZIP compression, ECMA-376 OpenXML serialization, ISO 32000 PDF 1.7 vector streams, TrueType glyph rasterization, Win32/X11 native windowing, and a pluggable local/cloud AI HTTP bridge—into one standalone `~3.8 MB` executable with a calm **Warm Architectural Paper & Linen** interface.
+Modern legal, defense, healthcare, financial, and engineering teams face an uncomfortable choice: install **500 MB–3 GB legacy office suites**, trust sensitive contracts to **cloud-only SaaS editors**, or ship **Chromium/Electron wrappers** carrying 600+ third-party packages.
+
+**RustPad `v2.0`** takes a radically disciplined systems-engineering approach:
+1. **100% Offline Sovereignty:** Works on air-gapped workstations with zero telemetry, zero cloud account walls, and zero background daemons.
+2. **Zero Supply-Chain Sprawl (`0` `crates.io` Runtime Dependencies):** PKZIP, bounded RFC 1951 DEFLATE/Zlib, RFC 6234 SHA-256, ECMA-376 OpenXML, ISO 32000 PDF 1.5+ `/ObjStm` & PDF/A-2b, TrueType `.ttf` subpixel rasterization, Win32 GDI/WinHTTP, and Linux X11 live in-tree across 9 workspace crates — provable in one command via `rustpad sbom` (CycloneDX 1.5 JSON).
+3. **Enterprise Legal & Compliance Workflows:** Native ECMA-376 Track Changes (`<w:ins>` / `<w:del>`), word-level offline contract redlining (`rustpad redline`), lossless corporate `.docx` archive passthrough, physical PDF redaction stream sanitization (`rustpad sanitize`), SHA-256 tamper-evident PDF seals (`rustpad sign` / `rustpad verify`), and MDM `policy.json` AI Data Loss Prevention (DLP).
+
+| Capability | RustPad `v2.0` Enterprise | Cloud SaaS Docs | Electron Wrappers | Legacy Suites |
+| :--- | :--- | :--- | :--- | :--- |
+| **Offline Air-Gapped Operation** | **100% Native Offline** | Cloud-dependent | Partial | Native |
+| **Installer / Binary Footprint** | **`~3.8 MB` single binary** | Browser tab | `180–420 MB` | `850 MB – 3.2 GB` |
+| **3rd-Party Package Supply Chain** | **`0` `crates.io` deps + CycloneDX SBOM** | Proprietary SaaS | `500–1,100` npm/cargo | Dozens of C/C++ libs |
+| **ECMA-376 Track Changes & Redline** | **`<w:ins>` / `<w:del>` + `rustpad redline`** | Proprietary | Rare | Yes |
+| **Forensic PDF Redaction** | **Purges underlying glyph streams** | External add-on | Overlay-only risk | Paid Pro tier |
+| **MDM AI Data Loss Prevention** | **`policy.json` localhost lockout + Audit** | Cloud vendor lock | Manual | Copilot cloud |
 
 ---
 
 ## Quick Start
 
-### Option A — Download Prebuilt Native Binary (`v1.3.0`, Zero Install)
+### Option A — Prebuilt Standalone Executables (`v2.0.0`, Zero Install)
 
-- **Windows 10 / 11 (x86_64)**: Download [`rustpad-v1.3.0-windows-x86_64.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.3.0/rustpad-v1.3.0-windows-x86_64.exe) and double-click to launch.
-- **Linux (x86_64)**: Download [`rustpad-v1.3.0-linux-x86_64`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.3.0/rustpad-v1.3.0-linux-x86_64), then run `chmod +x rustpad-v1.3.0-linux-x86_64 && ./rustpad-v1.3.0-linux-x86_64`.
-- **SHA-256 Checksums**: [`SHA256SUMS.txt`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v1.3.0/SHA256SUMS.txt)
+- **Windows 10 / 11 (x86_64)**: Download [`rustpad-v2.0.0-windows-x86_64.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-windows-x86_64.exe) (portable Win32 GDI + native WinHTTP Schannel TLS — zero WebView2 or VC++ installer required).
+- **Linux (x86_64)**: Download [`rustpad-v2.0.0-linux-x86_64`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/rustpad-v2.0.0-linux-x86_64), then run:
+  ```bash
+  chmod +x rustpad-v2.0.0-linux-x86_64 && ./rustpad-v2.0.0-linux-x86_64
+  ```
+- **Verify Integrity**: Compare against [`SHA256SUMS.txt`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.0.0/SHA256SUMS.txt) (`sha256sum -c SHA256SUMS.txt`).
 
-### Option B — Build & Run from Source (Linux, Windows, macOS)
-
-Requires only a standard Rust toolchain (`rustc` + `cargo` 1.75+). Compiles offline with zero `crates.io` fetches:
+### Option B — Compile Offline from Source (`0` Registry Downloads)
 
 ```bash
 git clone https://github.com/Nour-yahyaoui/rustpad.git
 cd rustpad
 
-# Run workspace unit tests across all 9 crates
+# Run unit, round-trip & adversarial security tests across all 9 crates
 cargo test --workspace
 
-# Build stripped native release executable
-cargo build --release -p rustpad
-
-# Launch the native desktop studio
+# Build stripped native release binary
+cargo build --release --bin rustpad
 ./target/release/rustpad
 ```
 
-### Option C — Run Headless CLI & Local/Cloud AI Pipelines
+---
+
+## Enterprise Headless CLI Cookbook (`v2.0.0`)
+
+Every GUI capability in RustPad is available headlessly for legal-ops automation, CI pipelines, and security compliance audits:
 
 ```bash
-# Run a local AI agent (nour-code / Ollama / LM Studio) on any .docx, .pdf, or .md file
-./target/release/rustpad ai spec.docx --provider nour-code --task summarize -o summary.md
-./target/release/rustpad ai spec.docx --provider ollama --model qwen2.5:7b --task sections -o spec_v2.docx
+# 1. Offline Legal Contract Redline (ECMA-376 <w:ins>/<w:del> word-level diff)
+rustpad redline Base_MSA_v1.docx Counterparty_v2.docx -o MSA_Redline.docx --author "General Counsel"
 
-# Convert between .docx, .pdf, and .md offline
-./target/release/rustpad convert examples/RustPad_Welcome_Guide.docx Welcome_Export.pdf
+# 2. Forensic PDF Redaction Sanitizer (Physically purges redacted text runs + scrubs metadata)
+rustpad sanitize Exhibit_Marked.pdf -o Exhibit_Sanitized.pdf
 
-# Inspect OpenXML or PDF structure & word/page metrics
-./target/release/rustpad inspect examples/RustPad_Welcome_Guide.docx
+# 3. Archival PDF/A-2b + Cryptographic SHA-256 Tamper-Evident Seal
+rustpad sign Exhibit_Sanitized.pdf -o Exhibit_Sealed.pdf --signer "Nour Yahyaoui" --pdfa
+rustpad verify Exhibit_Sealed.pdf
+
+# 4. Supply-Chain Security & MDM DLP Governance
+rustpad sbom -o rustpad-v2.0.0.cdx.json
+rustpad policy --init-airgapped .rustpad-policy.json
+
+# 5. DLP-Governed Local AI Agent (Ollama / nour-code / LM Studio / Corporate WinHTTP)
+rustpad ai MSA_Redline.docx --provider nour-code --task summarize -o executive_brief.md
+
+# 6. Bidirectional Format Conversion & UIA/AT-SPI Accessibility Inspection
+rustpad convert MSA_Redline.docx MSA_Redline.pdf
+rustpad inspect --a11y MSA_Redline.docx
 ```
 
 ---
 
-## Core Capabilities (`v1.3.0`)
+## Core Studio Subsystems
 
-### 1. Word Studio (`.docx`) & Interactive Wrapped Tables
+### 1. Word Studio (`.docx`) — Lossless OpenXML, Legal Redlines & Wrapped Tables
 
-![RustPad v1.3.0 Asymmetric Editorial Home Launchpad](docs/screenshots/home-hub.png)
+![RustPad v2.0 Editorial Home Launchpad](docs/screenshots/home-hub.png)
 
-- **Comfortable HiDPI Typography & Smooth Input**: `12.5 pt` default body text at `112%` paper zoom, automatic OS DPI detection (`GetDpiForWindow` / `Xft.dpi`), live `UI- / 100% / UI+` scale steppers (`Ctrl+=` / `Ctrl+-` / `Ctrl+0`), character-exact glyph hit-testing, 1:1 non-inverted mouse wheel scrolling, draggable scrollbar, and native OS clipboard (`Ctrl+C` / `Ctrl+X` / `Ctrl+V`).
-- **First-Class Multi-Line Tables**: Cells word-wrap cleanly and grow row height automatically. Click inside any table cell to reveal the contextual **`TABLE` sub-bar** (`+ Row Below`, `+ Row Above`, `+ Col Right`, `+ Col Left`, `Header Bold`, `Cell Shade`, `Del Row`, `Del Col`), click the on-canvas **`+ Add Row`** bar or right **`+`** column rail, drag vertical column dividers (`ResizeEW`), or navigate cells with `Tab` / `Shift+Tab`.
-- **Drag-Resizable Outline & Time-Machine Snapshots**: Drag-resize or collapse the left Document Outline rail (`148px–380px`), click any heading to jump to its exact layout offset, and capture DEFLATE-compressed version snapshots in session memory.
+- **Lossless Corporate `.docx` Passthrough**: Preserves `word/theme/*`, `customXml/*`, custom styles, and embedded media byte-for-byte across save cycles.
+- **Live Legal Track Changes (`Ctrl+Shift+E`) & Threaded Comments (`Ctrl+Shift+M`)**: Edits record standards-compliant `<w:ins>` (emerald underline) and `<w:del>` (crimson strikethrough + left-gutter change bar) revisions compatible with Microsoft Word & LibreOffice Writer, with 1-click **Accept All** / **Reject All** and `word/comments.xml` sidebar navigation.
+- **Interactive Multi-Line Tables & RTL Typography**: Automatic word-wrapped cells, contextual `TABLE` sub-bar (`+Row`, `+Col`, `Cell Bold`, `Shade`), draggable column dividers, and automatic right-to-left (`Arabic` / `Hebrew`) alignment.
+- **Crash-Safe WAL & Advisory Locks**: SHA-256-verified Write-Ahead Recovery frames (`.~*.rustpad-wal`) and shared-drive `.~*.rustpad.lock` guards protect unsaved work.
 
-### 2. Pluggable Local & Cloud AI Agent Studio (`Ctrl+J` & `rustpad ai`)
+### 2. Forensic Vector PDF Studio (`.pdf`) — `/ObjStm`, Sanitization, PDF/A-2b & Seals
 
-- **Local-First Air-Gapped HTTP**: Connects over pure-Rust `std::net::TcpStream` HTTP/1.1 to **`nour-code`** (`127.0.0.1:8000`), **`Ollama`** (`127.0.0.1:11434` with live `/api/tags` model auto-discovery), **`LM Studio`** (`:1234`), or **`llama.cpp`**.
-- **BYO-Key Cloud HTTPS**: Supports **OpenAI**, **Groq**, **OpenRouter**, and **Anthropic Claude** (`/v1/messages`) with session-only API key memory (keys are never persisted to disk).
-- **Non-Blocking Worker & Safe Preview**: Executes on a background `std::thread` polled via `std::sync::mpsc` on `50 ms` ticks so typing stays responsive, isolates untrusted text inside `<document_context>`, strips `<think>` blocks, and previews output before **Insert Below** or **Replace**.
+![RustPad v2.0 Forensic PDF Studio](docs/screenshots/pdf-studio.png)
 
-### 3. Vector PDF Studio (`.pdf`) & Resizable Dual-Pane Split View
+- **Modern PDF 1.5+ `/Type /ObjStm` & PNG Predictor Support**: Unpacks compressed cross-reference object streams generated by Microsoft Word, Acrobat, Chrome, and macOS Quartz.
+- **True Forensic Redaction (`Sanitize`)**: Physically removes underlying glyph runs and annotations intersecting redaction boxes so sensitive text can never be copy-pasted or extracted from raw streams.
+- **Archival PDF/A-2b & SHA-256 Integrity Seals (`Seal SHA-256`)**: Embeds ISO 19005-2 XMP metadata and `/Type /RustPadSeal` SHA-256 digests alongside freehand Bezier ink signatures, `[APPROVED]` vector stamps, merge/split, and lossless `/FlateDecode` recompression.
 
-![RustPad v1.3.0 PDF Studio with Bezier ink signature, stamp, sticky note, and resizable sidebars](docs/screenshots/pdf-studio.png)
+### 3. Enterprise DLP Governance, SHA-256 Audit Chain & Pluggable AI (`Ctrl+J`)
 
-- **Inline Edit, Sign & Redact**: Edit PDF text lines in place, draw freehand vector signatures (`Sign Ink`), stamp `[APPROVED]`, add sticky notes/highlights, or run true content-stream security redaction.
-- **Drag-Resizable Split Workspace + `Ctrl+K` Palette**: Press `Ctrl+\` to view Word + PDF side-by-side with a draggable `24%–76%` center divider, or press `Ctrl+K` to search **69 studio commands**:
+![RustPad v2.0 Side-by-Side Split Workspace & Governance Inspector](docs/screenshots/split-command-palette.png)
 
-![RustPad v1.3.0 Split Workspace and Ctrl+K Command Palette](docs/screenshots/split-command-palette.png)
-
----
-
-## CLI Reference
-
-```text
-USAGE:
-  rustpad [FILE]                        Launch the native desktop studio (optionally opening FILE)
-  rustpad ai <FILE> [OPTIONS]           Run a local (Ollama, nour-code, LM Studio) or cloud AI task
-      --task <grammar|summarize|description|sections|ask>
-      --provider <ollama|nour-code|lm-studio|openai|claude>
-      --url <ENDPOINT_URL>              Override HTTP(S) chat/messages endpoint URL
-      --model <MODEL_NAME>              Override model identifier (e.g. qwen2.5:7b, nour-code)
-      --prompt <INSTRUCTION>            Optional focus instruction or custom question
-      -o, --out <OUTPUT.docx|.md>       Write AI-augmented document or Markdown output to file
-  rustpad convert <INPUT> <OUTPUT>      Convert between .docx, .pdf, and .md offline
-  rustpad inspect <FILE>                Print page, word, character, or PDF object metrics
-  rustpad ocr <FILE>                    Extract searchable text from a PDF or scanned image
-  rustpad merge <OUT.pdf> <IN1.pdf>...  Merge multiple PDFs into a single vector PDF
-  rustpad demo-files <OUT_DIR>          Generate showcase .docx, .pdf, and .md sample documents
-  rustpad --render-preview <OUT_DIR>    Render 1440x900 PNG studio screenshots & 1200x630 OG card
-```
+- **Air-Gapped MDM `policy.json` Enforcement**: Hard-locks AI sockets to `127.0.0.1` (`Ollama`, `nour-code`, `LM Studio`, `llama.cpp`) or allowlisted internal VPC gateways when `air_gapped_mode` is enabled.
+- **Native Windows Schannel TLS (`winhttp.dll`)**: Uses OS-native `WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY` on Windows 10/11 for seamless corporate proxy and Enterprise Root CA compatibility.
+- **Tamper-Evident SHA-256 Audit Trail**: Click the status-bar **Classification / DLP Pill** at any time to verify the live cryptographic hash chain of document, redaction, print, and policy events.
 
 ---
 
-## Keyboard Shortcuts
+## Nine-Crate Zero-Dependency Workspace
 
-| Shortcut | Action | Scope |
-|---|---|---|
-| `Ctrl+K` | Open fuzzy Command Palette (69 studio actions) | Global |
-| `Ctrl+J` | Toggle Pluggable AI Agent Studio Dock | Global |
-| `Ctrl+\` | Toggle Drag-Resizable Side-by-Side Split Workspace | Global |
-| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / Cut / Paste via OS & Studio Clipboard | Global |
-| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Increase / Decrease / Reset Interface Scale (HiDPI) | Global |
-| `Tab` / `Shift+Tab` | Next / Previous Table Cell (auto-adds row at end) | Word Tables |
-| `Ctrl+N` / `Ctrl+O` / `Ctrl+S` | New Word Tab / Open File / Save Active File | Global |
-| `Ctrl+E` | Export Word Document to Vector PDF (`.pdf`) | Word Studio |
-| `Ctrl+Z` / `Ctrl+Y` | Undo / Redo | Word Studio |
-
----
-
-## Pure-Rust 9-Crate Workspace Architecture
-
-| Crate | Path | Responsibility |
-|---|---|---|
-| `rustpad` (`app`) | `app/src/` | Multi-tab Word/PDF state, contextual Table ribbon, resizable AI dock, 69 commands & CLI |
-| `power_tools` | `crates/power_tools/` | Pluggable local/cloud AI Agent Bridge (`ai_agent.rs`), `DOCX <-> PDF <-> MD` converters, spellcheck & snapshots |
-| `doc_model` | `crates/doc_model/` | Structured Document AST, multi-line `TableBlock` row/col helpers, Undo/Redo & 6 templates |
-| `docx_io` | `crates/docx_io/` | ECMA-376 OpenXML `.docx` reader & writer (paragraphs, styles, lists, tables, headers/footers) |
-| `pdf_engine` | `crates/pdf_engine/` | PDF 1.4–1.7 parser, inline text edit, Bezier ink signatures, stamps, redaction, merge & split |
-| `pdf_create` | `crates/pdf_create/` | ISO 32000 PDF 1.7 vector generator, 12 Type1 font slots, tables & watermarks |
-| `rustpad_render` | `crates/rustpad_render/` | Pure-Rust TrueType (`.ttf`) rasterizer, `DaylightTheme`, SDF shapes, vector `UiIcon`s & PNG codec |
-| `rustpad_window` | `crates/rustpad_window/` | Win32 GDI + `libX11` native loop, HiDPI scaling, dynamic OS cursors, mouse capture & clipboard |
-| `rustpad_zip` | `crates/rustpad_zip/` | IEEE CRC-32, Adler-32, RFC 1951 DEFLATE/INFLATE & PKZIP archive engine |
+| Crate | Responsibility | External Deps |
+| :--- | :--- | :---: |
+| `crates/rustpad_zip` | PKZIP reader/writer, bounded DEFLATE/Zlib, zip-bomb & `ZipSlip` guards, CRC32, Adler32, RFC 6234 SHA-256 | `0` |
+| `crates/doc_model` | OpenXML AST, `RevisionMeta` Track Changes, word-level `diff_redline`, `SecurityClassification`, Undo/Redo | `0` |
+| `crates/docx_io` | Lossless ECMA-376 `.docx` reader/writer, `MAX_XML_DEPTH` guard, `<w:ins>`/`<w:del>`, `word/comments.xml` | `0` |
+| `crates/pdf_create` | ISO 32000 PDF 1.7 & PDF/A-2b vector generator, redline gutter bars, 12 Type1 fonts, XMP packets | `0` |
+| `crates/pdf_engine` | PDF 1.5+ `/ObjStm` parser, forensic `sanitize_redactions`, SHA-256 `/RustPadSeal` signer & verifier | `0` |
+| `crates/power_tools` | MDM `EnterprisePolicy` DLP, SHA-256 `AuditTrail`, `WalJournal`, CycloneDX 1.5 SBOM, WinHTTP/TCP AI | `0` |
+| `crates/rustpad_render` | TrueType (`.ttf`) SFNT parser, 4×4 supersampled glyph atlas, SDF 2D painter, PNG codec | `0` |
+| `crates/rustpad_window` | Native Win32 GDI & Linux X11 windowing, HiDPI scaling, clipboard, file dialogs & OS print spooler | `0` |
+| `app` (`rustpad`) | Unified native desktop studio + 13-command headless enterprise CLI | `0` |
 
 ---
 
-## Author & License
+## Author & Maintainer
 
-Created and maintained by **Nour Yahyaoui**
-- LinkedIn: [https://www.linkedin.com/in/nour-yahyaoui-86987b36b](https://www.linkedin.com/in/nour-yahyaoui-86987b36b)
-- GitHub: [https://github.com/Nour-yahyaoui](https://github.com/Nour-yahyaoui)
-- Portfolio: [https://nour-yahyaoui.vercel.app](https://nour-yahyaoui.vercel.app)
-- Email: [nourryahyaoui@gmail.com](mailto:nourryahyaoui@gmail.com)
-- License: [MIT](LICENSE)
+Built and architected from scratch in pure Rust by **Nour Yahyaoui** (Tunis, Tunisia):
+- **GitHub**: [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · Repository: [Nour-yahyaoui/rustpad](https://github.com/Nour-yahyaoui/rustpad)
+- **LinkedIn**: [linkedin.com/in/nour-yahyaoui-86987b36b](https://www.linkedin.com/in/nour-yahyaoui-86987b36b)
+- **Portfolio**: [nour-yahyaoui.vercel.app](https://nour-yahyaoui.vercel.app)
+- **Email**: [nourryahyaoui@gmail.com](mailto:nourryahyaoui@gmail.com)
+
+Licensed under the [MIT License](LICENSE).

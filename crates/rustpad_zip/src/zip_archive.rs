@@ -1,7 +1,50 @@
-//! PKZIP Archive Reader & Writer supporting both Stored (0) and DEFLATE (8) entries.
+//! Hardened PKZIP Archive Reader & Writer supporting Stored (0) and DEFLATE (8) entries
+//! with enterprise zip-bomb ratio ceilings, memory caps, and path-traversal rejection.
 
-use crate::{crc32, deflate_compress, deflate_decompress, ZipError};
+use crate::{crc32, deflate_compress, deflate_decompress_bounded, ZipError};
 use std::collections::BTreeMap;
+
+/// Enterprise parser hardening limits enforced when unpacking untrusted `.docx` / ZIP containers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveSecurityLimits {
+    pub max_entries: usize,
+    pub max_entry_unpacked_bytes: usize,
+    pub max_total_unpacked_bytes: usize,
+    /// Maximum allowed `unpacked_len / compressed_len` ratio for entries larger than 16 KiB.
+    pub max_compression_ratio: usize,
+    pub reject_path_traversal: bool,
+}
+
+impl Default for ArchiveSecurityLimits {
+    fn default() -> Self {
+        Self {
+            max_entries: 4_096,
+            max_entry_unpacked_bytes: 64 * 1024 * 1024,
+            max_total_unpacked_bytes: 256 * 1024 * 1024,
+            max_compression_ratio: 250,
+            reject_path_traversal: true,
+        }
+    }
+}
+
+fn validate_entry_path(name: &str) -> Result<(), ZipError> {
+    if name.contains('\0') {
+        return Err(ZipError("ZIP entry contains forbidden NUL byte".into()));
+    }
+    if name.starts_with('/') || (name.len() >= 2 && name.as_bytes()[1] == b':') {
+        return Err(ZipError(format!(
+            "ZIP path traversal rejected (absolute path '{name}')"
+        )));
+    }
+    for seg in name.split('/') {
+        if seg == ".." {
+            return Err(ZipError(format!(
+                "ZIP path traversal rejected ('..' segment in '{name}')"
+            )));
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 pub struct ZipArchive {
@@ -11,6 +54,13 @@ pub struct ZipArchive {
 
 impl ZipArchive {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ZipError> {
+        Self::from_bytes_with_limits(bytes, &ArchiveSecurityLimits::default())
+    }
+
+    pub fn from_bytes_with_limits(
+        bytes: &[u8],
+        limits: &ArchiveSecurityLimits,
+    ) -> Result<Self, ZipError> {
         // Locate End of Central Directory (EOCD) signature 0x06054b50 from the end
         if bytes.len() < 22 {
             return Err(ZipError("File too small to be a valid ZIP archive".into()));
@@ -25,6 +75,12 @@ impl ZipArchive {
         }
         let eocd = eocd_pos.ok_or_else(|| ZipError("Missing ZIP EOCD signature".into()))?;
         let total_entries = u16::from_le_bytes([bytes[eocd + 10], bytes[eocd + 11]]) as usize;
+        if total_entries > limits.max_entries {
+            return Err(ZipError(format!(
+                "ZIP entry count ({total_entries}) exceeds security ceiling ({})",
+                limits.max_entries
+            )));
+        }
         let cd_offset = u32::from_le_bytes([
             bytes[eocd + 16],
             bytes[eocd + 17],
@@ -33,8 +89,9 @@ impl ZipArchive {
         ]) as usize;
 
         let mut files = BTreeMap::new();
-        let mut order = Vec::with_capacity(total_entries);
+        let mut order = Vec::with_capacity(total_entries.min(512));
         let mut cursor = cd_offset;
+        let mut cumulative_unpacked = 0usize;
 
         for _ in 0..total_entries {
             if cursor + 46 > bytes.len()
@@ -55,6 +112,12 @@ impl ZipArchive {
                 bytes[cursor + 22],
                 bytes[cursor + 23],
             ]) as usize;
+            let uncomp_hint = u32::from_le_bytes([
+                bytes[cursor + 24],
+                bytes[cursor + 25],
+                bytes[cursor + 26],
+                bytes[cursor + 27],
+            ]) as usize;
             let name_len = u16::from_le_bytes([bytes[cursor + 28], bytes[cursor + 29]]) as usize;
             let extra_len = u16::from_le_bytes([bytes[cursor + 30], bytes[cursor + 31]]) as usize;
             let comment_len =
@@ -66,12 +129,26 @@ impl ZipArchive {
                 bytes[cursor + 45],
             ]) as usize;
 
+            if cursor + 46 + name_len > bytes.len() {
+                return Err(ZipError("ZIP Central Directory filename truncated".into()));
+            }
             let name_bytes = &bytes[cursor + 46..cursor + 46 + name_len];
             let raw_name = String::from_utf8_lossy(name_bytes).replace('\\', "/");
             cursor += 46 + name_len + extra_len + comment_len;
 
+            if limits.reject_path_traversal {
+                validate_entry_path(&raw_name)?;
+            }
+
             if raw_name.ends_with('/') {
                 continue;
+            }
+
+            if uncomp_hint > limits.max_entry_unpacked_bytes {
+                return Err(ZipError(format!(
+                    "ZIP entry '{raw_name}' declared size ({uncomp_hint} B) exceeds limit ({} B)",
+                    limits.max_entry_unpacked_bytes
+                )));
             }
 
             if local_offset + 30 > bytes.len()
@@ -89,9 +166,21 @@ impl ZipArchive {
             }
             let payload = &bytes[data_start..data_start + comp_size];
 
+            let remaining_budget = limits
+                .max_total_unpacked_bytes
+                .saturating_sub(cumulative_unpacked)
+                .min(limits.max_entry_unpacked_bytes);
+
             let unpacked = match method {
-                0 => payload.to_vec(),
-                8 => deflate_decompress(payload)?,
+                0 => {
+                    if payload.len() > remaining_budget {
+                        return Err(ZipError(format!(
+                            "ZIP stored entry '{raw_name}' exceeds unpacked memory budget"
+                        )));
+                    }
+                    payload.to_vec()
+                }
+                8 => deflate_decompress_bounded(payload, remaining_budget)?,
                 m => {
                     return Err(ZipError(format!(
                         "Unsupported ZIP compression method: {m}"
@@ -99,10 +188,23 @@ impl ZipArchive {
                 }
             };
 
+            // Enforce zip-bomb expansion ratio for non-trivial entries (> 16 KiB unpacked)
+            if unpacked.len() > 16 * 1024 && limits.max_compression_ratio > 0 {
+                let denom = comp_size.max(1);
+                if unpacked.len() / denom > limits.max_compression_ratio {
+                    return Err(ZipError(format!(
+                        "Potential zip-bomb detected in '{raw_name}' (ratio {}:1 exceeds {}:1)",
+                        unpacked.len() / denom,
+                        limits.max_compression_ratio
+                    )));
+                }
+            }
+
             if crc32(&unpacked) != expected_crc {
                 return Err(ZipError(format!("CRC32 mismatch in ZIP entry {raw_name}")));
             }
 
+            cumulative_unpacked = cumulative_unpacked.saturating_add(unpacked.len());
             order.push(raw_name.clone());
             files.insert(raw_name, unpacked);
         }
@@ -243,7 +345,10 @@ mod tests {
         let bytes = zw.finish();
 
         let archive = ZipArchive::from_bytes(&bytes).expect("parse zip");
-        assert_eq!(archive.get_str("[Content_Types].xml").unwrap(), "<Types></Types>");
+        assert_eq!(
+            archive.get_str("[Content_Types].xml").unwrap(),
+            "<Types></Types>"
+        );
         assert_eq!(
             archive.get_str("word/document.xml").unwrap(),
             "<w:document>".repeat(120)
@@ -252,12 +357,29 @@ mod tests {
 
     #[test]
     fn test_interop_with_python_zlib_dynamic_huffman() {
-        // Pre-generated Python zlib.compress(b"Dynamic Huffman test! " * 50, level=9)
-        // Verifies our Dynamic Huffman decoder against external standard compressors.
-        let mut py_zlib_like = zlib_compress(&b"Dynamic/Fixed test payload 0123456789 ".repeat(64));
+        let mut py_zlib_like =
+            zlib_compress(&b"Dynamic/Fixed test payload 0123456789 ".repeat(64));
         let out = zlib_decompress(&py_zlib_like).unwrap();
         assert_eq!(out, b"Dynamic/Fixed test payload 0123456789 ".repeat(64));
         py_zlib_like[10] ^= 0xFF;
         assert!(zlib_decompress(&py_zlib_like).is_err());
+    }
+
+    #[test]
+    fn test_security_rejects_path_traversal_and_zip_bomb_ratio() {
+        let mut evil = ZipWriter::new();
+        evil.add_file("../../etc/passwd", b"root:x:0:0".to_vec());
+        let evil_bytes = evil.finish();
+        assert!(ZipArchive::from_bytes(&evil_bytes).is_err());
+
+        // Highly repetitive 64 KiB payload triggers strict 10:1 custom ratio cap
+        let mut bomb = ZipWriter::new();
+        bomb.add_file("word/document.xml", vec![b'A'; 64 * 1024]);
+        let bomb_bytes = bomb.finish();
+        let strict = ArchiveSecurityLimits {
+            max_compression_ratio: 10,
+            ..ArchiveSecurityLimits::default()
+        };
+        assert!(ZipArchive::from_bytes_with_limits(&bomb_bytes, &strict).is_err());
     }
 }

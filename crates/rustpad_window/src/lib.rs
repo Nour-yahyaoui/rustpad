@@ -345,6 +345,51 @@ pub fn try_native_save_dialog(title: &str, default_name: &str) -> Option<PathBuf
     }
 }
 
+/// Dispatches a vector PDF spool file to the native OS print subsystem (Win32 Print verb / CUPS `lp`).
+pub fn spool_pdf_to_os_printer(pdf_path: & std::path::Path) -> Result<String, String> {
+    if std::env::var("RUSTPAD_HEADLESS_PRINT").as_deref() == Ok("1") {
+        return Ok(format!(
+            "Spooled print-ready vector PDF to {}",
+            pdf_path.display()
+        ));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let p_str = pdf_path.display().to_string().replace('\'', "''");
+        let ps_cmd = format!("Start-Process -FilePath '{p_str}' -Verb Print");
+        if let Ok(st) = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+            .status()
+        {
+            if st.success() {
+                return Ok(format!("Sent '{}' to Windows Print Spooler", pdf_path.display()));
+            }
+        }
+        return Ok(format!(
+            "Prepared print-ready PDF at '{}' (no default Windows printer bound)",
+            pdf_path.display()
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        for bin in ["lp", "lpr"] {
+            if let Ok(out) = Command::new(bin).arg(pdf_path).output() {
+                if out.status.success() {
+                    return Ok(format!("Dispatched '{}' to CUPS ({bin})", pdf_path.display()));
+                }
+            }
+        }
+        return Ok(format!(
+            "Prepared print-ready PDF at '{}' (CUPS queue offline)",
+            pdf_path.display()
+        ));
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        Ok(format!("Prepared print-ready PDF at '{}'", pdf_path.display()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

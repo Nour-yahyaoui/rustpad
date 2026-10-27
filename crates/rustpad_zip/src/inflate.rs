@@ -184,9 +184,19 @@ fn read_dynamic_trees(br: &mut BitReader<'_>) -> Result<(HuffmanTree, HuffmanTre
     Ok((lit_tree, dist_tree))
 }
 
+pub const DEFAULT_MAX_INFLATE_BYTES: usize = 128 * 1024 * 1024;
+
 pub fn deflate_decompress(input: &[u8]) -> Result<Vec<u8>, ZipError> {
+    deflate_decompress_bounded(input, DEFAULT_MAX_INFLATE_BYTES)
+}
+
+pub fn deflate_decompress_bounded(
+    input: &[u8],
+    max_output_bytes: usize,
+) -> Result<Vec<u8>, ZipError> {
     let mut br = BitReader::new(input);
-    let mut out = Vec::with_capacity(input.len().saturating_mul(2).max(256));
+    let initial_cap = input.len().saturating_mul(2).clamp(256, 65536);
+    let mut out = Vec::with_capacity(initial_cap.min(max_output_bytes.max(1)));
 
     loop {
         let bfinal = br.read_bits(1)?;
@@ -198,6 +208,11 @@ pub fn deflate_decompress(input: &[u8]) -> Result<Vec<u8>, ZipError> {
                 let nlen = br.read_u16_le()?;
                 if (len as u16) ^ 0xFFFF != nlen {
                     return Err(ZipError("Stored block LEN/NLEN mismatch".into()));
+                }
+                if out.len().saturating_add(len) > max_output_bytes {
+                    return Err(ZipError(format!(
+                        "DEFLATE output exceeded security limit ({max_output_bytes} bytes)"
+                    )));
                 }
                 for _ in 0..len {
                     out.push(br.read_bits(8)? as u8);
@@ -212,6 +227,11 @@ pub fn deflate_decompress(input: &[u8]) -> Result<Vec<u8>, ZipError> {
                 loop {
                     let sym = lit_tree.decode(&mut br)? as usize;
                     if sym < 256 {
+                        if out.len() >= max_output_bytes {
+                            return Err(ZipError(format!(
+                                "DEFLATE output exceeded security limit ({max_output_bytes} bytes)"
+                            )));
+                        }
                         out.push(sym as u8);
                     } else if sym == 256 {
                         break;
@@ -227,6 +247,11 @@ pub fn deflate_decompress(input: &[u8]) -> Result<Vec<u8>, ZipError> {
                             + br.read_bits(DIST_EXTRA[dist_sym])? as usize;
                         if distance == 0 || distance > out.len() {
                             return Err(ZipError("LZ77 distance out of bounds".into()));
+                        }
+                        if out.len().saturating_add(length) > max_output_bytes {
+                            return Err(ZipError(format!(
+                                "DEFLATE output exceeded security limit ({max_output_bytes} bytes)"
+                            )));
                         }
                         let start = out.len() - distance;
                         for i in 0..length {
@@ -250,6 +275,13 @@ pub fn deflate_decompress(input: &[u8]) -> Result<Vec<u8>, ZipError> {
 }
 
 pub fn zlib_decompress(input: &[u8]) -> Result<Vec<u8>, ZipError> {
+    zlib_decompress_bounded(input, DEFAULT_MAX_INFLATE_BYTES)
+}
+
+pub fn zlib_decompress_bounded(
+    input: &[u8],
+    max_output_bytes: usize,
+) -> Result<Vec<u8>, ZipError> {
     if input.len() < 6 {
         return Err(ZipError("Zlib stream too short".into()));
     }
@@ -267,7 +299,7 @@ pub fn zlib_decompress(input: &[u8]) -> Result<Vec<u8>, ZipError> {
     if trimmed.len() < payload_start + 4 {
         return Err(ZipError("Truncated Zlib payload".into()));
     }
-    let out = deflate_decompress(&trimmed[payload_start..trimmed.len() - 4])?;
+    let out = deflate_decompress_bounded(&trimmed[payload_start..trimmed.len() - 4], max_output_bytes)?;
     let expected = u32::from_be_bytes([
         trimmed[trimmed.len() - 4],
         trimmed[trimmed.len() - 3],

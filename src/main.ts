@@ -5,6 +5,7 @@ import {
   CRAFT_PILLARS,
   CRATE_LEDGER,
   DOWNLOADS,
+  ENTERPRISE_BENCHMARKS,
   HERO_METRICS,
   RELEASE_VERSION,
   SCOPE_MATRIX,
@@ -193,6 +194,40 @@ function initStudioSwitchboard(): (specimenId: string) => void {
 
   selectSpecimen(STUDIO_SPECIMENS[0].id);
   return selectSpecimen;
+}
+
+function renderEnterpriseMatrix(): void {
+  const mobileWrap = document.getElementById('benchmark-cards-mobile');
+  const tableBody = document.getElementById('benchmark-table-body');
+
+  if (mobileWrap) {
+    mobileWrap.innerHTML = ENTERPRISE_BENCHMARKS.map(
+      (row) => `
+        <article class="crate-card-m">
+          <div class="crate-card-m-head">
+            <span class="crate-name-pill">${escapeHtml(row.capability)}</span>
+            <span class="crate-std-pill">v2.0 ENTERPRISE</span>
+          </div>
+          <p><strong>RustPad v2.0:</strong> ${escapeHtml(row.rustpad)}</p>
+          <code class="crate-mod-path">Cloud: ${escapeHtml(row.cloudSaas)} · Electron: ${escapeHtml(row.electronApps)} · Legacy: ${escapeHtml(row.legacySuites)}</code>
+        </article>
+      `,
+    ).join('');
+  }
+
+  if (tableBody) {
+    tableBody.innerHTML = ENTERPRISE_BENCHMARKS.map(
+      (row) => `
+        <tr>
+          <td><strong>${escapeHtml(row.capability)}</strong></td>
+          <td><span class="crate-name-pill">${escapeHtml(row.rustpad)}</span></td>
+          <td>${escapeHtml(row.cloudSaas)}</td>
+          <td>${escapeHtml(row.electronApps)}</td>
+          <td>${escapeHtml(row.legacySuites)}</td>
+        </tr>
+      `,
+    ).join('');
+  }
 }
 
 function renderCraftPillars(): void {
@@ -446,6 +481,7 @@ function bootstrap(): void {
   const closeMobileMenu = initMobileTopMenu();
   initOsSmartDownload();
   renderMetrics();
+  renderEnterpriseMatrix();
   const selectSpecimen = initStudioSwitchboard();
   renderCraftPillars();
   initAiProviderConsole();

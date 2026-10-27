@@ -122,6 +122,8 @@ pub fn unescape_xml(input: &str) -> String {
     out
 }
 
+pub const MAX_XML_DEPTH: usize = 128;
+
 pub fn parse_xml(xml: &str) -> Option<XmlNode> {
     let mut pos = 0usize;
     let bytes = xml.as_bytes();
@@ -214,6 +216,9 @@ pub fn parse_xml(xml: &str) -> Option<XmlNode> {
                         root = Some(node);
                     }
                 } else {
+                    if stack.len() >= MAX_XML_DEPTH {
+                        return None;
+                    }
                     stack.push(node);
                 }
             }
