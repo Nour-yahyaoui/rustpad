@@ -85,4 +85,123 @@ mod tests {
         }
         assert!(parse_xml(&deep).is_none());
     }
+
+    #[test]
+    fn test_jpeg_and_png_image_roundtrip_with_full_drawingml() {
+        let mut doc = doc_model::Document::blank();
+        let mut jpg_img = doc_model::ImageBlock::new(
+            "Quarterly Chart",
+            360.0,
+            220.0,
+            vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, b'J', b'F', b'I', b'F'],
+        );
+        jpg_img.caption = "Figure 1: Revenue trajectory".into();
+        jpg_img.alignment = doc_model::Alignment::Right;
+        doc.blocks.push(Block::Image(jpg_img));
+
+        let bytes = save_docx_bytes(&doc);
+        let archive = rustpad_zip::ZipArchive::from_bytes(&bytes).expect("open saved docx zip");
+        assert!(
+            archive.get("word/media/image1.jpeg").is_some(),
+            "JPEG payload must use .jpeg media extension"
+        );
+        let doc_xml = archive.get_str("word/document.xml").expect("document.xml");
+        assert!(doc_xml.contains("<pic:nvPicPr>"));
+        assert!(doc_xml.contains("<pic:spPr>"));
+
+        let parsed = load_docx_bytes(&bytes).expect("reload saved image docx");
+        let loaded_img = parsed
+            .blocks
+            .iter()
+            .find_map(|b| match b {
+                Block::Image(i) => Some(i),
+                _ => None,
+            })
+            .expect("expected reloaded Block::Image");
+        assert_eq!(loaded_img.name, "Quarterly Chart");
+        assert_eq!(loaded_img.caption, "Figure 1: Revenue trajectory");
+        assert_eq!(loaded_img.alignment, doc_model::Alignment::Right);
+        assert!((loaded_img.width_pt - 360.0).abs() < 0.5);
+        assert!((loaded_img.height_pt - 220.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn test_alternate_content_vml_pict_and_mixed_paragraph_images() {
+        let mut zw = rustpad_zip::ZipWriter::new();
+        zw.add_file(
+            "word/_rels/document.xml.rels",
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId10" Target="/word/media/photo1.jpg"/>
+  <Relationship Id="rId11" Target="media/vml_diag.png"/>
+</Relationships>"#
+                .to_vec(),
+        );
+        zw.add_file("word/media/photo1.jpg", vec![0xFF, 0xD8, 0xFF, 0xD9]);
+        zw.add_file(
+            "word/media/vml_diag.png",
+            vec![137, 80, 78, 71, 13, 10, 26, 10],
+        );
+        zw.add_file(
+            "word/document.xml",
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+  xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+  xmlns:v="urn:schemas-microsoft-com:vml"
+  xmlns:o="urn:schemas-microsoft-com:office:office">
+  <w:body>
+    <w:p>
+      <w:r><w:t>Inline lead-in text</w:t></w:r>
+      <w:r>
+        <mc:AlternateContent>
+          <mc:Choice Requires="wps">
+            <w:drawing>
+              <wp:anchor>
+                <wp:extent cx="3810000" cy="1905000"/>
+                <wp:docPr id="1" name="Anchored Photo" descr="Alt caption"/>
+                <a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId10"/></pic:blipFill></pic:pic></a:graphicData></a:graphic>
+              </wp:anchor>
+            </w:drawing>
+          </mc:Choice>
+          <mc:Fallback>
+            <w:pict><v:shape style="width:300pt;height:150pt"><v:imagedata r:id="rId10"/></v:shape></w:pict>
+          </mc:Fallback>
+        </mc:AlternateContent>
+      </w:r>
+    </w:p>
+    <w:p>
+      <w:r>
+        <w:pict>
+          <v:shape style="width:240pt;height:120pt">
+            <v:imagedata r:id="rId11" o:title="Legacy VML Diagram"/>
+          </v:shape>
+        </w:pict>
+      </w:r>
+    </w:p>
+  </w:body>
+</w:document>"#
+                .to_vec(),
+        );
+
+        let parsed = load_docx_bytes(&zw.finish()).expect("parse AlternateContent + VML docx");
+        assert!(parsed.to_plain_text().contains("Inline lead-in text"));
+        let imgs: Vec<&doc_model::ImageBlock> = parsed
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Image(i) => Some(i),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(imgs.len(), 2, "must extract Choice drawing once + VML pict");
+        assert_eq!(imgs[0].name, "Anchored Photo");
+        assert_eq!(imgs[0].caption, "Alt caption");
+        assert!((imgs[0].width_pt - 300.0).abs() < 1.0);
+        assert_eq!(imgs[1].name, "Legacy VML Diagram");
+        assert!((imgs[1].width_pt - 240.0).abs() < 1.0);
+    }
 }

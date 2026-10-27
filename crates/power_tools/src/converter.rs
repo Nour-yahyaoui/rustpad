@@ -217,6 +217,23 @@ pub fn markdown_to_word(md: &str, title: impl Into<String>) -> Document {
             blocks.push(Block::HorizontalRule);
             continue;
         }
+        if let Some(after_bang) = trimmed.strip_prefix("![") {
+            if let Some((alt_cap, rest_paren)) = after_bang.split_once("](") {
+                if let Some(img_path_str) = rest_paren.strip_suffix(')') {
+                    let p_ref = std::path::Path::new(img_path_str.trim());
+                    if let Ok(raw_img) = std::fs::read(p_ref) {
+                        let name = p_ref
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("Markdown Figure");
+                        let mut img = doc_model::ImageBlock::new(name, 360.0, 220.0, raw_img);
+                        img.caption = alt_cap.trim().to_string();
+                        blocks.push(Block::Image(img));
+                        continue;
+                    }
+                }
+            }
+        }
         if let Some(h1) = trimmed.strip_prefix("# ") {
             blocks.push(Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Title,

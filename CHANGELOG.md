@@ -2,6 +2,19 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`) follow our continuous release workflow (`Issue → PR → CI Matrix → GitHub Release`).
 
+## [v2.2.0] - 2026-10-28 — Smooth `.docx` Image & Figure Studio + Effortless Table Creation Release
+### Added
+- **Pure-Rust `.docx` Image Codec Suite (`PNG` / `JPEG` / `BMP`), Full OOXML DrawingML & PDF Image XObjects** (`crates/rustpad_render/src/{png_codec,jpeg_codec,lib}.rs`, `crates/docx_io/src/{reader,writer,lib}.rs`, `crates/pdf_create/src/lib.rs`, `#39`):
+  - Implemented a from-scratch ITU-T.81 Baseline, Extended Sequential & Progressive **JPEG decoder** (`SOF0`/`SOF1`/`SOF2`, DHT Huffman trees, 2D float IDCT, `YCbCr`/`CMYK`/Grayscale upsampling) alongside full RFC 2083 **PNG** (`1`/`2`/`4`/`8`/`16`-bit depths, `PLTE` indexed palettes + `tRNS` alpha, Adam7 de-interlacing) and **BMP/DIB** (`24`/`32`-bit + clipboard screenshots), unified under `decode_any_image_rgba` (`0` `crates.io` deps).
+  - Upgraded `docx_io::reader` to traverse `<w:drawing>`, `<mc:AlternateContent>` (`<mc:Choice>` with `<mc:Fallback>` deduplication), legacy `<w:pict>`/`<v:imagedata>`, `<w:sdt>` content controls, normalized `../media/` relationship targets, and mixed text + inline image paragraphs — preserving `alignment` and figure `caption`.
+  - Upgraded `docx_io::writer` to emit true media extensions (`imageN.jpg`/`.png`/`.bmp`), content types, and complete ECMA-376 `<pic:pic>` DrawingML (`<pic:nvPicPr>` + `<pic:spPr><a:xfrm>` + `<a:prstGeom prst="rect"/>`) so Word, LibreOffice, and Google Docs render RustPad-authored images natively.
+  - Upgraded `pdf_create` to embed real ISO 32000 `/Subtype /Image` XObjects (`/DCTDecode` zero-recompression JPEG & `/FlateDecode` RGB PNG streams) with aligned `cm /ImN Do` placement and italicized captions.
+- **Smooth `.docx` Image Insertion, Paste, Drag-and-Drop, Corner Resize & Contextual `IMAGE` Bar** (`crates/rustpad_window/`, `app/src/{commands,state,word_view,ui_paint,main}.rs`, `#40`):
+  - Added `Image` ribbon button (`Ctrl+Shift+I`), inline empty-line `+ Image` chip, `/image <path>` & `/img` slash commands, native OS open-image dialogs (`GetOpenFileNameW` / `zenity` / `kdialog`) + workspace image picker modal, OS file drag-and-drop (`WM_DROPFILES`), and `Ctrl+V` screenshot/image clipboard paste (`CF_DIB` / `image/png`).
+  - Added live click/hover figure selection, 1:1 mouse-locked aspect-preserving corner resize handles (`DragInteraction::ImageResize`), contextual `IMAGE` action bar (`25%` / `50%` / `75%` / `100%`, `Left` / `Center` / `Right`, `Caption`, `Replace`, `Delete`), and double-click / `+ Add figure caption…` inline modal.
+- **Effortless Table Creation Studio: Visual `8×8` Grid Picker, Styled Presets, Slash/Pipe Shorthands & TSV Paste** (`crates/doc_model/src/lib.rs`, `app/src/{commands,state,word_view,ui_paint}.rs`, `index.html`, `src/`, `#36`, `#37`, `#38`):
+  - Added interactive `8×8` visual hover/arrow-key grid popover (`Ctrl+Shift+T`), 5 1-click styled presets (`Simple Grid`, `Pricing / Invoice`, `Project Tracker`, `Comparison Matrix`, `Pros & Cons Split`), inline `+ Table` chip, `/table RxC` / `/invoice` / `| Col A | Col B |` auto-tables, Excel/Sheets TSV & Markdown table `Ctrl+V` paste, 5 table color palettes (`Linen`, `Cobalt`, `Sage`, `Terracotta`, `Minimal`), Zebra striping, Column Equalize, auto-replace header placeholders, and last-cell `Tab` auto-row insertion.
+
 ## [v2.1.0] - 2026-10-27 — Ultra-Smooth 60–120Hz Compositor & Flagship Human UX Release
 ### Added
 - **60–120Hz Coalesced Native Compositor, Fast Scanline Fills & Pure-Rust PNG Figure Decoder** (`crates/rustpad_window/src/{win32,linux_x11}.rs`, `crates/rustpad_render/src/{canvas,png_codec}.rs`, `#31`):

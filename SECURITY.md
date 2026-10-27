@@ -1,6 +1,6 @@
 # Security Policy & Enterprise Threat Model
 
-**Project:** RustPad Enterprise Suite (`v2.0.0`)  
+**Project:** RustPad Enterprise Suite (`v2.2.0`)  
 **Maintainer:** Nour Yahyaoui (<nourryahyaoui@gmail.com>)  
 **Repository:** <https://github.com/Nour-yahyaoui/rustpad>
 
@@ -10,7 +10,8 @@
 
 | Version | Status | Supply-Chain Posture | Security Advisories |
 | :--- | :--- | :--- | :--- |
-| **`2.0.x`** | **Active LTS** | `0` third-party `crates.io` runtime dependencies | Full parser hardening, DLP policy, forensic PDF sanitize & SHA-256 seals |
+| **`2.2.x`** | **Active LTS** | `0` third-party `crates.io` runtime dependencies | Bounded PNG/JPEG/BMP image decoders (`64 MiB`), full parser hardening, DLP policy, forensic PDF sanitize & SHA-256 seals |
+| `2.0.x` – `2.1.x` | Supported | `0` third-party `crates.io` runtime dependencies | Full parser hardening, DLP policy, forensic PDF sanitize & SHA-256 seals |
 | `1.3.x` | Maintenance | `0` third-party `crates.io` runtime dependencies | Upgrade to `2.0.0` recommended for zip-bomb & XML depth limits |
 | `< 1.3.0` | End of Life | — | Unsupported |
 

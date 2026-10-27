@@ -583,6 +583,37 @@ impl Surface {
                 self.draw_line(r.x, r.y + r.h * 0.38, r.x + r.w, r.y + r.h * 0.38, sw, color);
                 self.draw_line(r.x + r.w * 0.5, r.y, r.x + r.w * 0.5, r.y + r.h, sw, color);
             }
+            UiIcon::Image => {
+                let r = Rect::new(cx - h * 0.82, cy - h * 0.68, size * 0.82, size * 0.68);
+                self.stroke_rounded_rect(r, 2.0, sw, color);
+                // Sun circle in upper-left + crisp mountain ridge
+                let sun = Rect::new(r.x + r.w * 0.20, r.y + r.h * 0.20, sw * 1.7, sw * 1.7);
+                self.fill_rounded_rect(sun, sw, color);
+                self.draw_line(
+                    r.x + r.w * 0.12,
+                    r.y + r.h * 0.84,
+                    r.x + r.w * 0.46,
+                    r.y + r.h * 0.44,
+                    sw * 0.95,
+                    color,
+                );
+                self.draw_line(
+                    r.x + r.w * 0.46,
+                    r.y + r.h * 0.44,
+                    r.x + r.w * 0.66,
+                    r.y + r.h * 0.66,
+                    sw * 0.95,
+                    color,
+                );
+                self.draw_line(
+                    r.x + r.w * 0.66,
+                    r.y + r.h * 0.66,
+                    r.x + r.w * 0.88,
+                    r.y + r.h * 0.50,
+                    sw * 0.95,
+                    color,
+                );
+            }
             UiIcon::Sparkles => {
                 // Clean 4-point architectural star + secondary dot
                 self.draw_line(cx - h * 0.12, cy - h * 0.76, cx - h * 0.12, cy + h * 0.64, sw, color);
@@ -639,6 +670,7 @@ pub enum UiIcon {
     BulletList,
     Checklist,
     Table,
+    Image,
     Sparkles,
     Search,
     Plus,

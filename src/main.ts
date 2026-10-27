@@ -637,6 +637,453 @@ function initUxSandbox(): void {
   });
 
   syncToolbarState();
+  initUxTableCreator(toastEl);
+}
+
+interface SandboxTableModel {
+  rows: string[][];
+  alignRightCols: number[];
+  zebra: boolean;
+  themeIdx: number;
+}
+
+const SANDBOX_THEMES: { id: string; label: string }[] = [
+  { id: 'linen', label: 'Linen' },
+  { id: 'cobalt', label: 'Cobalt' },
+  { id: 'sage', label: 'Sage' },
+  { id: 'terracotta', label: 'Terracotta' },
+];
+
+function initUxTableCreator(toastEl: HTMLElement | null): void {
+  const triggerBtn = document.getElementById('ux-table-trigger') as HTMLButtonElement | null;
+  const inlineOpenBtn = document.getElementById('ux-tbl-open-picker') as HTMLButtonElement | null;
+  const popover = document.getElementById('ux-table-popover') as HTMLElement | null;
+  const gridWrap = document.getElementById('ux-grid-cells') as HTMLElement | null;
+  const gridReadout = document.getElementById('ux-grid-readout');
+  const quickForm = document.getElementById('ux-table-quick-form') as HTMLFormElement | null;
+  const quickInput = document.getElementById('ux-table-quick-input') as HTMLInputElement | null;
+  const studioEl = document.getElementById('ux-table-studio') as HTMLElement | null;
+  const tableEl = document.getElementById('ux-live-table') as HTMLTableElement | null;
+  const coordEl = document.getElementById('ux-table-coord');
+  const addRowBtn = document.getElementById('ux-tbl-add-row');
+  const addColBtn = document.getElementById('ux-tbl-add-col');
+  const zebraBtn = document.getElementById('ux-tbl-zebra') as HTMLButtonElement | null;
+  const themeBtn = document.getElementById('ux-tbl-theme') as HTMLButtonElement | null;
+
+  if (!tableEl || !studioEl) return;
+
+  const model: SandboxTableModel = {
+    rows: [
+      ['Deliverable', 'Owner', 'Status'],
+      ['8×8 Visual Table Picker', 'Desktop UX', 'Shipped ✓'],
+      ['Slash /table & TSV Paste', 'Doc Model', '60–120Hz Live'],
+    ],
+    alignRightCols: [],
+    zebra: false,
+    themeIdx: 0,
+  };
+
+  let activeR = 1;
+  let activeC = 0;
+  let hoverR = 3;
+  let hoverC = 3;
+
+  const setToast = (msg: string) => {
+    if (toastEl) toastEl.textContent = msg;
+  };
+
+  const closePopover = () => {
+    if (!popover) return;
+    popover.hidden = true;
+    triggerBtn?.setAttribute('aria-expanded', 'false');
+  };
+
+  const togglePopover = () => {
+    if (!popover) return;
+    const willOpen = popover.hidden;
+    popover.hidden = !willOpen;
+    triggerBtn?.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    if (willOpen) {
+      paintHoverGrid(hoverR, hoverC);
+    }
+  };
+
+  const updateCoordLabel = () => {
+    const rCount = model.rows.length;
+    const cCount = model.rows[0]?.length ?? 1;
+    if (coordEl) {
+      coordEl.textContent = `TABLE R${activeR + 1}·C${activeC + 1} · ${rCount}×${cCount}`;
+    }
+  };
+
+  const focusCell = (r: number, c: number) => {
+    const cell = tableEl.querySelector<HTMLElement>(
+      `[data-r="${r}"][data-c="${c}"]`,
+    );
+    if (!cell) return;
+    cell.focus();
+    const sel = window.getSelection();
+    if (sel) {
+      const range = document.createRange();
+      range.selectNodeContents(cell);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  };
+
+  const renderTable = (focusAfter?: { r: number; c: number }) => {
+    const theme = SANDBOX_THEMES[model.themeIdx] ?? SANDBOX_THEMES[0];
+    studioEl.dataset.theme = theme.id;
+    studioEl.classList.toggle('is-zebra', model.zebra);
+    if (zebraBtn) zebraBtn.setAttribute('aria-pressed', model.zebra ? 'true' : 'false');
+    if (themeBtn) themeBtn.textContent = `Theme: ${theme.label} ↻`;
+
+    tableEl.innerHTML = model.rows
+      .map((row, rIdx) => {
+        const tag = rIdx === 0 ? 'th' : 'td';
+        const cellsHtml = row
+          .map((val, cIdx) => {
+            const isRight = model.alignRightCols.includes(cIdx);
+            const isPlaceholder = rIdx === 0 && val === `Column ${cIdx + 1}`;
+            const cls = [
+              isRight ? 'is-right' : '',
+              isPlaceholder ? 'is-placeholder' : '',
+            ]
+              .filter(Boolean)
+              .join(' ');
+            return `<${tag} contenteditable="true" spellcheck="false" data-r="${rIdx}" data-c="${cIdx}" class="${cls}">${escapeHtml(val)}</${tag}>`;
+          })
+          .join('');
+        return `<tr>${cellsHtml}</tr>`;
+      })
+      .join('');
+
+    updateCoordLabel();
+
+    tableEl.querySelectorAll<HTMLElement>('[data-r][data-c]').forEach((cell) => {
+      const r = Number(cell.dataset.r || '0');
+      const c = Number(cell.dataset.c || '0');
+
+      cell.addEventListener('focus', () => {
+        activeR = r;
+        activeC = c;
+        updateCoordLabel();
+        if (r === 0 && model.rows[0]?.[c] === `Column ${c + 1}`) {
+          const sel = window.getSelection();
+          if (sel) {
+            const range = document.createRange();
+            range.selectNodeContents(cell);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        }
+      });
+
+      cell.addEventListener('input', () => {
+        const txt = (cell.textContent || '').replace(/\n/g, ' ');
+        if (model.rows[r]) {
+          model.rows[r][c] = txt;
+        }
+        cell.classList.toggle('is-placeholder', r === 0 && txt === `Column ${c + 1}`);
+      });
+
+      cell.addEventListener('keydown', (e: KeyboardEvent) => {
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          const cols = model.rows[0]?.length ?? 1;
+          if (e.shiftKey) {
+            if (c > 0) {
+              focusCell(r, c - 1);
+            } else if (r > 0) {
+              focusCell(r - 1, cols - 1);
+            }
+          } else if (c + 1 < cols) {
+            focusCell(r, c + 1);
+          } else if (r + 1 < model.rows.length) {
+            focusCell(r + 1, 0);
+          } else {
+            model.rows.push(Array.from({ length: cols }, () => ''));
+            const newR = model.rows.length - 1;
+            activeR = newR;
+            activeC = 0;
+            renderTable({ r: newR, c: 0 });
+            setToast(`Tab at last cell auto-added Row ${newR + 1} — keep typing smoothly!`);
+          }
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          const cols = model.rows[0]?.length ?? 1;
+          if (r + 1 < model.rows.length) {
+            focusCell(r + 1, c);
+          } else {
+            model.rows.push(Array.from({ length: cols }, () => ''));
+            const newR = model.rows.length - 1;
+            renderTable({ r: newR, c });
+            setToast(`Added Row ${newR + 1} below`);
+          }
+        }
+      });
+    });
+
+    if (focusAfter) {
+      focusCell(focusAfter.r, focusAfter.c);
+    }
+  };
+
+  const applyCustomGrid = (rows: number, cols: number) => {
+    const r = Math.max(1, Math.min(8, rows));
+    const c = Math.max(1, Math.min(6, cols));
+    model.alignRightCols = [];
+    model.zebra = false;
+    model.rows = Array.from({ length: r }, (_, rIdx) =>
+      Array.from({ length: c }, (__, cIdx) => (rIdx === 0 ? `Column ${cIdx + 1}` : '')),
+    );
+    activeR = 0;
+    activeC = 0;
+    closePopover();
+    renderTable({ r: 0, c: 0 });
+    setToast(`Created ${r}×${c} table — type header & press Tab across cells!`);
+  };
+
+  const applyPreset = (id: string) => {
+    if (id === 'invoice') {
+      model.themeIdx = 1;
+      model.zebra = false;
+      model.alignRightCols = [1, 2, 3];
+      model.rows = [
+        ['Deliverable / Item', 'Qty', 'Unit Price', 'Line Total'],
+        ['Core Rust Architecture & UX', '1', '$1,200.00', '$1,200.00'],
+        ['Security & PDF/A-2b Audit', '1', '$650.00', '$650.00'],
+        ['Total Due (USD)', '', '', '$1,850.00'],
+      ];
+    } else if (id === 'tracker') {
+      model.themeIdx = 2;
+      model.zebra = true;
+      model.alignRightCols = [];
+      model.rows = [
+        ['Milestone / Task', 'Owner', 'Status', 'Target'],
+        ['Visual 8×8 Table Creator', 'Desktop UX', 'Complete', 'Week 1'],
+        ['Slash & Pipe Auto-Tables', 'Doc Model', 'In Progress', 'Week 2'],
+        ['OOXML & PDF Verification', 'SecOps', 'Planned', 'Week 3'],
+      ];
+    } else if (id === 'compare') {
+      model.themeIdx = 1;
+      model.zebra = true;
+      model.alignRightCols = [];
+      model.rows = [
+        ['Dimension', 'Legacy Suites', 'RustPad v2.2'],
+        ['Table Creation', 'Nested ribbon dialogs', 'Visual grid, /table & TSV'],
+        ['Frame Latency', '35–90 ms DOM reflow', '< 1 ms native VSync'],
+        ['Runtime Footprint', '340 MB – 2 GB', '~3.9 MB · 0 crates'],
+      ];
+    } else {
+      model.themeIdx = 3;
+      model.zebra = false;
+      model.alignRightCols = [];
+      model.rows = [
+        ['Advantages / Pros', 'Trade-Offs / Considerations'],
+        ['Instant 60–120Hz native execution', 'Focused scope (no VBA macros)'],
+        ['100% offline & zero external deps', 'Desktop-first (Win32 & X11)'],
+      ];
+    }
+    activeR = 1;
+    activeC = 0;
+    closePopover();
+    renderTable({ r: 1, c: 0 });
+    setToast(`Inserted styled '${id.toUpperCase()}' preset — click any cell or press Tab!`);
+  };
+
+  // Build 6 × 6 Interactive Hover/Tap Visual Grid
+  const GRID_N = 6;
+  const paintHoverGrid = (selR: number, selC: number) => {
+    hoverR = selR;
+    hoverC = selC;
+    if (gridReadout) gridReadout.textContent = `${selR} × ${selC} Table`;
+    gridWrap?.querySelectorAll<HTMLButtonElement>('.ux-grid-cell').forEach((btn) => {
+      const r = Number(btn.dataset.gr || '1');
+      const c = Number(btn.dataset.gc || '1');
+      const active = r <= selR && c <= selC;
+      btn.classList.toggle('is-active', active);
+      btn.classList.toggle('is-header', active && r === 1);
+    });
+  };
+
+  if (gridWrap) {
+    let html = '';
+    for (let r = 1; r <= GRID_N; r += 1) {
+      for (let c = 1; c <= GRID_N; c += 1) {
+        html += `<button type="button" class="ux-grid-cell" data-gr="${r}" data-gc="${c}" aria-label="Insert ${r} by ${c} table"></button>`;
+      }
+    }
+    gridWrap.innerHTML = html;
+    gridWrap.querySelectorAll<HTMLButtonElement>('.ux-grid-cell').forEach((btn) => {
+      const r = Number(btn.dataset.gr || '3');
+      const c = Number(btn.dataset.gc || '3');
+      btn.addEventListener('pointerenter', () => paintHoverGrid(r, c));
+      btn.addEventListener('click', () => applyCustomGrid(r, c));
+    });
+    paintHoverGrid(3, 3);
+  }
+
+  popover?.querySelectorAll<HTMLButtonElement>('[data-ux-preset]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.uxPreset) applyPreset(btn.dataset.uxPreset);
+    });
+  });
+
+  quickForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const raw = (quickInput?.value || '').trim();
+    if (!raw) return;
+    const lower = raw.toLowerCase();
+    if (lower.startsWith('|') && raw.split('|').filter((s) => s.trim().length > 0).length >= 2) {
+      const headers = raw
+        .replace(/^\|/, '')
+        .replace(/\|$/, '')
+        .split('|')
+        .map((s) => s.trim() || 'Column');
+      model.alignRightCols = [];
+      model.rows = [headers, headers.map(() => '')];
+      closePopover();
+      if (quickInput) quickInput.value = '';
+      renderTable({ r: 1, c: 0 });
+      setToast(`Created ${headers.length}-column table from pipe headers — type Row 2!`);
+      return;
+    }
+    if (lower.includes('invoice') || lower.includes('pricing')) {
+      if (quickInput) quickInput.value = '';
+      applyPreset('invoice');
+      return;
+    }
+    if (lower.includes('tracker') || lower.includes('roadmap')) {
+      if (quickInput) quickInput.value = '';
+      applyPreset('tracker');
+      return;
+    }
+    if (lower.includes('compare')) {
+      if (quickInput) quickInput.value = '';
+      applyPreset('compare');
+      return;
+    }
+    if (lower.includes('pros')) {
+      if (quickInput) quickInput.value = '';
+      applyPreset('pros');
+      return;
+    }
+    const dimMatch = lower.match(/(\d+)\s*[x×*\s]\s*(\d+)/);
+    if (dimMatch) {
+      if (quickInput) quickInput.value = '';
+      applyCustomGrid(Number(dimMatch[1]), Number(dimMatch[2]));
+      return;
+    }
+    if (quickInput) quickInput.value = '';
+    applyCustomGrid(3, 3);
+  });
+
+  triggerBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    togglePopover();
+  });
+  inlineOpenBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    togglePopover();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!popover || popover.hidden) return;
+    const target = e.target as Node | null;
+    if (target && !popover.contains(target) && target !== triggerBtn && target !== inlineOpenBtn) {
+      closePopover();
+    }
+  });
+
+  addRowBtn?.addEventListener('click', () => {
+    const cols = model.rows[0]?.length ?? 1;
+    model.rows.push(Array.from({ length: cols }, () => ''));
+    const nr = model.rows.length - 1;
+    renderTable({ r: nr, c: 0 });
+    setToast(`Added Row ${nr + 1} — start typing`);
+  });
+
+  addColBtn?.addEventListener('click', () => {
+    const curCols = model.rows[0]?.length ?? 1;
+    if (curCols >= 6) {
+      setToast('Sandbox preview caps columns at 6 (native desktop supports up to 16)');
+      return;
+    }
+    model.rows.forEach((row, rIdx) => {
+      row.push(rIdx === 0 ? `Column ${curCols + 1}` : '');
+    });
+    renderTable({ r: 0, c: curCols });
+    setToast(`Added Column ${curCols + 1}`);
+  });
+
+  zebraBtn?.addEventListener('click', () => {
+    model.zebra = !model.zebra;
+    renderTable();
+    setToast(model.zebra ? 'Enabled alternating Zebra row striping' : 'Disabled Zebra striping');
+  });
+
+  themeBtn?.addEventListener('click', () => {
+    model.themeIdx = (model.themeIdx + 1) % SANDBOX_THEMES.length;
+    renderTable();
+    const theme = SANDBOX_THEMES[model.themeIdx];
+    setToast(`Applied '${theme?.label}' table palette (round-trips to .docx & .pdf)`);
+  });
+
+  // Interactive .docx Figure & Image Studio controls (50%/75%/100%, Left/Center/Right, Toggle)
+  const figStudio = document.getElementById('ux-figure-studio');
+  const figFrame = document.getElementById('ux-fig-frame');
+  const figCoord = document.getElementById('ux-fig-coord');
+  const figToggleBtn = document.querySelector<HTMLButtonElement>('#ux-figure-toggle');
+  let figPct = 75;
+  let figAlign = 'center';
+
+  const syncFigureUi = () => {
+    if (figFrame) figFrame.style.width = `${figPct}%`;
+    if (figStudio) figStudio.dataset.align = figAlign;
+    const wPt = Math.round((480 * figPct) / 100);
+    const hPt = Math.round(wPt * 0.45);
+    if (figCoord) {
+      figCoord.textContent = `IMAGE · ${wPt}×${hPt} pt · ${figPct}% (PNG/JPEG/BMP)`;
+    }
+    figStudio?.querySelectorAll<HTMLButtonElement>('[data-ux-fig-scale]').forEach((b) => {
+      b.classList.toggle('ux-tbar-accent', Number(b.dataset.uxFigScale) === figPct);
+    });
+    figStudio?.querySelectorAll<HTMLButtonElement>('[data-ux-fig-align]').forEach((b) => {
+      b.classList.toggle('ux-tbar-accent', b.dataset.uxFigAlign === figAlign);
+    });
+  };
+
+  figStudio?.querySelectorAll<HTMLButtonElement>('[data-ux-fig-scale]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      figPct = Number(btn.dataset.uxFigScale || '75');
+      syncFigureUi();
+      setToast(`Scaled .docx figure to ${figPct}% page width (aspect-ratio locked)`);
+    });
+  });
+
+  figStudio?.querySelectorAll<HTMLButtonElement>('[data-ux-fig-align]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      figAlign = btn.dataset.uxFigAlign || 'center';
+      syncFigureUi();
+      setToast(`Aligned .docx figure ${figAlign.toUpperCase()} (<w:jc w:val="${figAlign}"/>)`);
+    });
+  });
+
+  figToggleBtn?.addEventListener('click', () => {
+    if (!figStudio) return;
+    const nextHidden = !figStudio.hidden;
+    figStudio.hidden = nextHidden;
+    figToggleBtn.setAttribute('aria-pressed', nextHidden ? 'false' : 'true');
+    setToast(
+      nextHidden
+        ? 'Hid sample .docx figure (click 🖼 Figure Studio to re-insert)'
+        : 'Inserted .docx figure (<pic:pic> + word/media/image1.png) — try 50%/75%/100%!',
+    );
+  });
+
+  renderTable();
 }
 
 function bootstrap(): void {

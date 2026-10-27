@@ -33,7 +33,7 @@ impl TemplateKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Blank => "Blank Document",
-            Self::WelcomeGuide => "Welcome to RustPad v2.1",
+            Self::WelcomeGuide => "Welcome to RustPad v2.2",
             Self::EnterpriseContract => "Enterprise MSA Redline",
             Self::ModernResume => "Modern Resume / CV",
             Self::AcademicReport => "Technical Architecture Spec",
@@ -81,14 +81,14 @@ fn checklist(text: &str, done: bool) -> Block {
 
 fn build_welcome_guide() -> Document {
     let mut setup = PageSetup::default();
-    setup.header_text = "RustPad v2.1 — Ultra-Smooth 60–120Hz Offline Document & PDF Studio".into();
+    setup.header_text = "RustPad v2.2 — Effortless Table Studio & 60–120Hz Offline Document Suite".into();
     setup.footer_text = "Open-Source MIT · github.com/Nour-yahyaoui/rustpad".into();
 
     let mut intro = Paragraph::new(ParagraphStyle::Normal, "");
     intro.spans = vec![
         TextSpan::plain("Welcome to "),
         TextSpan::styled(
-            "RustPad v2.1",
+            "RustPad v2.2",
             SpanStyle {
                 bold: true,
                 color: RgbColor::COBALT,
@@ -120,23 +120,23 @@ fn build_welcome_guide() -> Document {
     let mut table = TableBlock::new(5, 3);
     table.rows[0] = vec![
         TableCell::header("Core Pillar"),
-        TableCell::header("v2.1 Smooth UX & Enterprise Craft"),
+        TableCell::header("v2.2 Smooth UX & Effortless Table Studio"),
         TableCell::header("Shortcut / CLI"),
     ];
     table.rows[1] = vec![
-        TableCell::plain("60–120Hz Smooth UX"),
-        TableCell::plain("Live drag/double-click selection, floating popover bar, spring scroll & Focus Mode"),
-        TableCell::plain("Ctrl+Shift+F"),
+        TableCell::plain("Effortless Table Creator"),
+        TableCell::plain("Visual 8×8 grid picker, 1-click Invoice/Tracker presets, /table 4x5, | A | B | & TSV paste"),
+        TableCell::plain("Ctrl+Shift+T"),
     ];
     table.rows[2] = vec![
-        TableCell::plain("OOXML Word Studio (.docx)"),
-        TableCell::plain("Lossless ZIP passthrough, per-clause Accept/Reject redlines, comments & tables"),
-        TableCell::plain("Ctrl+Shift+E"),
+        TableCell::plain("Smooth .docx Figures"),
+        TableCell::plain("Native PNG/JPEG/BMP decoder, Image button, /image, Ctrl+V screenshot paste & corner resize"),
+        TableCell::plain("Ctrl+Shift+I"),
     ];
     table.rows[3] = vec![
-        TableCell::plain("Forensic PDF Studio (.pdf)"),
-        TableCell::plain("ObjStm parser, forensic glyph-scrub redaction, PDF/A-2b & SHA-256 seal"),
-        TableCell::plain("rustpad sanitize"),
+        TableCell::plain("OOXML & Forensic PDF"),
+        TableCell::plain("Lossless .docx passthrough, per-clause redlines, PDF ObjStm + glyph-scrub redaction"),
+        TableCell::plain("Ctrl+Shift+E"),
     ];
     table.rows[4] = vec![
         TableCell::plain("Air-Gapped AI + DLP Policy"),
@@ -157,7 +157,7 @@ fn build_welcome_guide() -> Document {
             )),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Subtitle,
-                "v2.1 Ultra-Smooth 60–120Hz UX · Zero External Dependencies · Paper & Daylight Studio",
+                "v2.2 Effortless Table Studio · 60–120Hz Smooth UX · Zero External Dependencies",
             )),
             Block::Paragraph(intro),
             Block::Paragraph(Paragraph::new(

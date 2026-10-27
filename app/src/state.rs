@@ -4,8 +4,9 @@
 use crate::commands::{filter_commands, CommandId};
 use doc_model::{
     next_word_char_idx, prev_word_char_idx, word_range_at_char, Alignment, Block, Document,
-    FontFamily, ListKind, PaperSize, Paragraph, ParagraphStyle, RevisionKind, RevisionMeta,
-    RgbColor, SpanStyle, TableBlock, TemplateKind, TextSpan, UndoHistory,
+    FontFamily, ImageBlock, ListKind, PaperSize, Paragraph, ParagraphStyle, RevisionKind,
+    RevisionMeta, RgbColor, SpanStyle, TableBlock, TablePreset, TableTheme, TemplateKind, TextSpan,
+    UndoHistory,
 };
 use docx_io::{load_docx_file, save_docx_file};
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
@@ -19,10 +20,11 @@ use power_tools::{
     AiAgentConfig, AiProviderPreset, AiResponse, AiTask, AuditTrail, EnterprisePolicy,
     SnapshotVault, SpellChecker, WalJournal,
 };
-use rustpad_render::{FontBook, Rect};
+use rustpad_render::{decode_any_image_rgba, encode_rgba_png, FontBook, Rect};
 use rustpad_window::{
-    detect_dpi_scale, get_clipboard_text, set_clipboard_text, spool_pdf_to_os_printer,
-    try_native_open_dialog, try_native_save_dialog, CursorShape, Key, Modifiers,
+    detect_dpi_scale, get_clipboard_image_bytes, get_clipboard_text, set_clipboard_text,
+    spool_pdf_to_os_printer, try_native_open_dialog, try_native_open_image_dialog,
+    try_native_save_dialog, CursorShape, Key, Modifiers,
 };
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -83,9 +85,10 @@ pub struct WordTabState {
     pub cursor_char: usize,
     pub selection_anchor: Option<(usize, usize)>, // (block_idx, char_idx)
     pub active_table_cell: Option<(usize, usize, usize)>, // (block_idx, row, col)
+    pub selected_image_block: Option<usize>,
     pub table_cursor_char: usize,
     pub table_col_weights: Vec<(usize, Vec<f32>)>,
-    pub image_rgba_cache: Vec<(usize, usize, u32, u32, Vec<u8>)>, // (block_idx, png_len, w, h, rgba)
+    pub image_rgba_cache: Vec<(u64, u32, u32, Vec<u8>)>, // (content_hash, w, h, rgba)
     pub scroll_y: f32,
     pub target_scroll_y: f32,
     pub max_scroll_y: f32,
@@ -116,6 +119,7 @@ impl WordTabState {
             cursor_char,
             selection_anchor: None,
             active_table_cell: None,
+            selected_image_block: None,
             table_cursor_char: 0,
             table_col_weights: Vec::new(),
             image_rgba_cache: Vec::new(),
@@ -341,6 +345,131 @@ impl WordTabState {
             self.table_col_weights.push((block_idx, weights));
         }
     }
+
+    /// Insert a `TableBlock` smoothly at the cursor (replacing the current block if it's an
+    /// empty paragraph), preserve `table_col_weights` alignment, and guarantee a trailing
+    /// prose paragraph below the table so `Esc` / `Down` exits without friction.
+    pub fn insert_table_smart(
+        &mut self,
+        table: TableBlock,
+        col_weights: Option<Vec<f32>>,
+        replace_if_empty_para: bool,
+        focus_row: usize,
+    ) -> usize {
+        let rows_len = table.rows.len().max(1);
+        let idx = self.cursor_block.min(self.doc.blocks.len().saturating_sub(1));
+        let replace_here = replace_if_empty_para
+            && matches!(
+                self.doc.blocks.get(idx),
+                Some(Block::Paragraph(p))
+                    if p.list_kind == ListKind::None && p.plain_text().trim().is_empty()
+            );
+
+        let tb_idx = if replace_here {
+            self.table_col_weights.retain(|(b, _)| *b != idx);
+            self.doc.blocks[idx] = Block::Table(table);
+            idx
+        } else {
+            let insert_at = (idx + 1).min(self.doc.blocks.len());
+            for (b_idx, _) in &mut self.table_col_weights {
+                if *b_idx >= insert_at {
+                    *b_idx += 1;
+                }
+            }
+            self.doc.blocks.insert(insert_at, Block::Table(table));
+            insert_at
+        };
+
+        if let Some(weights) = col_weights {
+            self.table_col_weights.retain(|(b, _)| *b != tb_idx);
+            self.table_col_weights.push((tb_idx, weights));
+        }
+
+        if tb_idx + 1 >= self.doc.blocks.len() {
+            self.doc
+                .blocks
+                .push(Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "")));
+        }
+
+        let target_r = focus_row.min(rows_len - 1);
+        self.cursor_block = tb_idx;
+        self.cursor_char = 0;
+        self.selection_anchor = None;
+        self.selected_image_block = None;
+        self.active_table_cell = Some((tb_idx, target_r, 0));
+        self.table_cursor_char = 0;
+        self.dirty = true;
+        self.scroll_to_caret = true;
+        tb_idx
+    }
+
+    pub fn content_width_pt(&self) -> f32 {
+        let (pw, _) = self
+            .doc
+            .page_setup
+            .paper_size
+            .dimensions_pt(self.doc.page_setup.landscape);
+        (pw - self.doc.page_setup.margin_left_pt - self.doc.page_setup.margin_right_pt).max(160.0)
+    }
+
+    /// Insert an `ImageBlock` smoothly at the cursor (replacing an empty paragraph in-place),
+    /// preserve `table_col_weights`, ensure a trailing prose paragraph below, and select the figure.
+    pub fn insert_image_smart(&mut self, img: ImageBlock, replace_if_empty_para: bool) -> usize {
+        let idx = self.cursor_block.min(self.doc.blocks.len().saturating_sub(1));
+        let replace_here = replace_if_empty_para
+            && matches!(
+                self.doc.blocks.get(idx),
+                Some(Block::Paragraph(p))
+                    if p.list_kind == ListKind::None && p.plain_text().trim().is_empty()
+            );
+
+        let img_idx = if replace_here {
+            self.doc.blocks[idx] = Block::Image(img);
+            idx
+        } else {
+            let insert_at = (idx + 1).min(self.doc.blocks.len());
+            for (b_idx, _) in &mut self.table_col_weights {
+                if *b_idx >= insert_at {
+                    *b_idx += 1;
+                }
+            }
+            self.doc.blocks.insert(insert_at, Block::Image(img));
+            insert_at
+        };
+
+        if img_idx + 1 >= self.doc.blocks.len() {
+            self.doc
+                .blocks
+                .push(Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "")));
+        }
+
+        self.cursor_block = img_idx;
+        self.cursor_char = 0;
+        self.selection_anchor = None;
+        self.active_table_cell = None;
+        self.selected_image_block = Some(img_idx);
+        self.dirty = true;
+        self.scroll_to_caret = true;
+        img_idx
+    }
+
+    pub fn delete_image_at(&mut self, img_idx: usize) -> bool {
+        if !matches!(self.doc.blocks.get(img_idx), Some(Block::Image(_))) {
+            return false;
+        }
+        self.doc.blocks.remove(img_idx);
+        for (b_idx, _) in &mut self.table_col_weights {
+            if *b_idx > img_idx {
+                *b_idx -= 1;
+            }
+        }
+        self.doc.ensure_non_empty();
+        self.selected_image_block = None;
+        self.cursor_block = img_idx.min(self.doc.blocks.len().saturating_sub(1));
+        self.cursor_char = 0;
+        self.dirty = true;
+        true
+    }
 }
 
 pub struct PdfTabState {
@@ -409,6 +538,8 @@ pub enum FileModalKind {
     SaveActive,
     ExportPdf,
     MergePdf,
+    InsertImage,
+    ReplaceImage,
 }
 
 #[derive(Clone)]
@@ -443,6 +574,10 @@ pub enum ActiveModal {
     AddComment {
         text: String,
     },
+    EditImageCaption {
+        block_idx: usize,
+        text: String,
+    },
     SnapshotsDrawer,
     Governance,
     About,
@@ -452,6 +587,23 @@ pub enum ActiveModal {
 pub enum ToolbarDropdown {
     ParagraphStyle { anchor_x: i32, anchor_y: i32 },
     FontFamily { anchor_x: i32, anchor_y: i32 },
+    TableCreator {
+        anchor_x: i32,
+        anchor_y: i32,
+        rows: usize,
+        cols: usize,
+    },
+}
+
+impl ToolbarDropdown {
+    pub fn same_kind(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::ParagraphStyle { .. }, Self::ParagraphStyle { .. })
+                | (Self::FontFamily { .. }, Self::FontFamily { .. })
+                | (Self::TableCreator { .. }, Self::TableCreator { .. })
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -531,6 +683,15 @@ pub enum DragInteraction {
     WordTextSelection {
         tab_idx: usize,
     },
+    ImageResize {
+        tab_idx: usize,
+        block_idx: usize,
+        start_x: f32,
+        start_width_pt: f32,
+        scale: f32,
+        anchor_factor: f32,
+        max_width_pt: f32,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -544,6 +705,8 @@ pub enum UiAction {
     CloseDropdown,
     SelectParagraphStyle(ParagraphStyle),
     SelectFontFamily(FontFamily),
+    InsertTableCustom { rows: usize, cols: usize },
+    InsertTablePreset(TablePreset),
     CreateFromTemplate(TemplateKind),
     OpenRecentPath(PathBuf),
     JumpOutline {
@@ -555,6 +718,10 @@ pub enum UiAction {
         tab_idx: usize,
         block_idx: usize,
         char_idx: usize,
+    },
+    SelectWordImage {
+        tab_idx: usize,
+        block_idx: usize,
     },
     AcceptRevisionById {
         tab_idx: usize,
@@ -752,7 +919,7 @@ impl RustPadApp {
             last_click_pos: (-100.0, -100.0),
             last_click_mods: Modifiers::default(),
             cursor_blink_on: true,
-            status_toast: "Ready · RustPad v2.1 Ultra-Smooth 60–120Hz Document & PDF Studio".into(),
+            status_toast: "Ready · RustPad v2.2 Effortless Table & Figure Studio · 60–120Hz Smooth UX".into(),
             recent_files: recent,
         }
     }
@@ -962,7 +1129,7 @@ impl RustPadApp {
                         let lines: Vec<&str> = out.split('\n').collect();
                         for (li, line) in lines.iter().enumerate() {
                             if li > 0 {
-                                word_enter(w);
+                                let _ = word_enter(w);
                             }
                             for ch in line.chars() {
                                 word_insert_char_no_record(w, ch);
@@ -1108,7 +1275,110 @@ impl RustPadApp {
                 self.status_toast = format!("Imported '{}' into Word Studio", p.display());
                 Ok(())
             }
+            "png" | "jpg" | "jpeg" | "bmp" => {
+                self.ensure_active_word_tab();
+                self.insert_image_from_path(&p, None)
+            }
             other => Err(format!("Unsupported file format '.{other}'")),
+        }
+    }
+
+    pub fn ensure_active_word_tab(&mut self) {
+        if matches!(self.tabs.get(self.active_tab), Some(StudioTab::Word(_))) {
+            return;
+        }
+        if let Some(existing_word_idx) = self
+            .tabs
+            .iter()
+            .position(|t| matches!(t, StudioTab::Word(_)))
+        {
+            self.active_tab = existing_word_idx;
+        } else {
+            self.tabs
+                .push(StudioTab::Word(WordTabState::from_doc(Document::blank(), None)));
+            self.active_tab = self.tabs.len() - 1;
+        }
+    }
+
+    pub fn insert_image_from_bytes(
+        &mut self,
+        name: &str,
+        raw_bytes: Vec<u8>,
+        replace_block: Option<usize>,
+    ) -> Result<(), String> {
+        let (iw, ih, rgba) = decode_any_image_rgba(&raw_bytes)?;
+        // If clipboard provided a headerless Win32 DIB, encode lossless PNG so `.docx` saves valid media
+        let is_file_encoded = (raw_bytes.len() >= 8
+            && raw_bytes[..8] == [137, 80, 78, 71, 13, 10, 26, 10])
+            || (raw_bytes.len() >= 3
+                && raw_bytes[0] == 0xFF
+                && raw_bytes[1] == 0xD8
+                && raw_bytes[2] == 0xFF)
+            || (raw_bytes.len() >= 2 && &raw_bytes[0..2] == b"BM");
+        let persisted_bytes = if is_file_encoded {
+            raw_bytes
+        } else {
+            encode_rgba_png(iw, ih, &rgba)
+        };
+
+        self.ensure_active_word_tab();
+        let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) else {
+            return Err("Open a Word (.docx) tab to insert an image".into());
+        };
+
+        w.history.record(&w.doc);
+        let content_w = w.content_width_pt();
+        let mut img = ImageBlock::from_decoded(name, iw, ih, rgba, persisted_bytes, content_w);
+
+        if let Some(rep_idx) =
+            replace_block.filter(|&b| matches!(w.doc.blocks.get(b), Some(Block::Image(_))))
+        {
+            if let Some(Block::Image(prev)) = w.doc.blocks.get(rep_idx) {
+                img.caption = prev.caption.clone();
+                img.alignment = prev.alignment;
+                img.resize_preserving_aspect(prev.width_pt, content_w);
+            }
+            w.doc.blocks[rep_idx] = Block::Image(img);
+            w.selected_image_block = Some(rep_idx);
+            w.cursor_block = rep_idx;
+            w.dirty = true;
+            self.status_toast = format!(
+                "Replaced image with '{name}' ({iw}×{ih} px) — Ctrl+Z to undo"
+            );
+        } else {
+            w.insert_image_smart(img, true);
+            self.status_toast = format!(
+                "Inserted '{name}' ({iw}×{ih} px) — drag corner handle or use Image bar to resize"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn insert_image_from_path(
+        &mut self,
+        path: &Path,
+        replace_block: Option<usize>,
+    ) -> Result<(), String> {
+        let bytes = std::fs::read(path).map_err(|e| format!("Cannot read '{}': {e}", path.display()))?;
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Figure");
+        self.insert_image_from_bytes(name, bytes, replace_block)
+    }
+
+    pub fn handle_dropped_file(&mut self, path: PathBuf) {
+        let ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp") {
+            if let Err(e) = self.insert_image_from_path(&path, None) {
+                self.status_toast = format!("Image drop error: {e}");
+            }
+        } else if let Err(e) = self.open_path(&path) {
+            self.status_toast = format!("Drop open error: {e}");
         }
     }
 
@@ -1188,6 +1458,24 @@ impl RustPadApp {
 
     pub fn prompt_or_open_modal(&mut self, kind: FileModalKind, default_name: &str) {
         match kind {
+            FileModalKind::InsertImage | FileModalKind::ReplaceImage => {
+                let title = if kind == FileModalKind::ReplaceImage {
+                    "Replace Image in RustPad"
+                } else {
+                    "Insert Image into RustPad"
+                };
+                if let Some(picked) = try_native_open_image_dialog(title) {
+                    self.apply_file_modal_choice(kind, picked);
+                    return;
+                }
+                let candidates = discover_workspace_images();
+                self.modal = Some(ActiveModal::FilePrompt {
+                    kind,
+                    input_path: default_name.to_string(),
+                    recent_candidates: candidates,
+                });
+                return;
+            }
             FileModalKind::OpenAny | FileModalKind::MergePdf => {
                 if let Some(picked) = try_native_open_dialog("Open in RustPad") {
                     self.apply_file_modal_choice(kind, picked);
@@ -1211,6 +1499,20 @@ impl RustPadApp {
 
     pub fn apply_file_modal_choice(&mut self, kind: FileModalKind, path: PathBuf) {
         match kind {
+            FileModalKind::InsertImage => {
+                if let Err(e) = self.insert_image_from_path(&path, None) {
+                    self.status_toast = format!("Insert image error: {e}");
+                }
+            }
+            FileModalKind::ReplaceImage => {
+                let rep = match self.tabs.get(self.active_tab) {
+                    Some(StudioTab::Word(w)) => w.selected_image_block.or(Some(w.cursor_block)),
+                    _ => None,
+                };
+                if let Err(e) = self.insert_image_from_path(&path, rep) {
+                    self.status_toast = format!("Replace image error: {e}");
+                }
+            }
             FileModalKind::OpenAny => {
                 if let Err(e) = self.open_path(&path) {
                     self.status_toast = format!("Open error: {e}");
@@ -1375,6 +1677,7 @@ impl RustPadApp {
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
                     if w.history.undo(&mut w.doc) {
                         w.active_table_cell = None;
+                        w.selected_image_block = None;
                         w.selection_anchor = None;
                         w.image_rgba_cache.clear();
                         w.cursor_block = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
@@ -1389,6 +1692,7 @@ impl RustPadApp {
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
                     if w.history.redo(&mut w.doc) {
                         w.active_table_cell = None;
+                        w.selected_image_block = None;
                         w.selection_anchor = None;
                         w.image_rgba_cache.clear();
                         w.cursor_block = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
@@ -1458,6 +1762,51 @@ impl RustPadApp {
             CommandId::AiRunSummarize => self.start_ai_task(AiTask::SummarizeDocument),
             CommandId::AiRunDescribe => self.start_ai_task(AiTask::WriteDescription),
             CommandId::AiRunAddSections => self.start_ai_task(AiTask::AddSections),
+            CommandId::OpenTableCreator => {
+                if !matches!(self.tabs.get(self.active_tab), Some(StudioTab::Word(_))) {
+                    self.execute_command(CommandId::NewWordBlank);
+                }
+                let ax = if self.mouse_x > 40.0 {
+                    (self.mouse_x as i32 - 90).max(24)
+                } else {
+                    420
+                };
+                let ay = if self.focus_mode { 28 } else { 88 };
+                self.open_dropdown = Some(ToolbarDropdown::TableCreator {
+                    anchor_x: ax,
+                    anchor_y: ay,
+                    rows: 3,
+                    cols: 3,
+                });
+                self.status_toast =
+                    "Choose grid size (Arrow keys + Enter or hover/click) or pick a styled preset"
+                        .into();
+            }
+            CommandId::InsertImage => {
+                self.ensure_active_word_tab();
+                self.prompt_or_open_modal(FileModalKind::InsertImage, "");
+            }
+            CommandId::ImageReplace => {
+                self.ensure_active_word_tab();
+                self.prompt_or_open_modal(FileModalKind::ReplaceImage, "");
+            }
+            CommandId::ImageEditCaption => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get(self.active_tab) {
+                    let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+                    let target_idx = w.selected_image_block.unwrap_or(idx);
+                    if let Some(Block::Image(img)) = w.doc.blocks.get(target_idx) {
+                        self.modal = Some(ActiveModal::EditImageCaption {
+                            block_idx: target_idx,
+                            text: img.caption.clone(),
+                        });
+                    } else {
+                        self.status_toast =
+                            "Click an image figure first to add or edit its caption".into();
+                    }
+                } else {
+                    self.status_toast = "Open a Word (.docx) tab to edit figure captions".into();
+                }
+            }
             CommandId::ToggleBold
             | CommandId::ToggleItalic
             | CommandId::ToggleUnderline
@@ -1482,7 +1831,15 @@ impl RustPadApp {
             | CommandId::TableDeleteCol
             | CommandId::TableToggleCellBold
             | CommandId::TableCycleCellFill
+            | CommandId::TableToggleZebra
+            | CommandId::TableCycleTheme
+            | CommandId::TableEqualizeCols
             | CommandId::TableDelete
+            | CommandId::ImageScale25
+            | CommandId::ImageScale50
+            | CommandId::ImageScale75
+            | CommandId::ImageScale100
+            | CommandId::ImageDelete
             | CommandId::InsertPageBreak
             | CommandId::CyclePaperSize
             | CommandId::ToggleSpellcheck => {
@@ -2084,15 +2441,96 @@ impl RustPadApp {
                 }
                 return;
             }
+            CommandId::TableToggleZebra => {
+                let target_idx = w.active_table_cell.map(|(b, _, _)| b).unwrap_or(idx);
+                if let Some(Block::Table(t)) = w.doc.blocks.get_mut(target_idx) {
+                    let on = t.toggle_zebra_striping();
+                    self.status_toast = if on {
+                        "Enabled alternating zebra row striping".into()
+                    } else {
+                        "Cleared alternating zebra row striping".into()
+                    };
+                }
+                return;
+            }
+            CommandId::TableCycleTheme => {
+                let target_idx = w.active_table_cell.map(|(b, _, _)| b).unwrap_or(idx);
+                if let Some(Block::Table(t)) = w.doc.blocks.get_mut(target_idx) {
+                    let next_theme: TableTheme = t.cycle_theme();
+                    self.status_toast = format!("Applied '{}' table theme", next_theme.label());
+                }
+                return;
+            }
+            CommandId::TableEqualizeCols => {
+                let target_idx = w.active_table_cell.map(|(b, _, _)| b).unwrap_or(idx);
+                if matches!(w.doc.blocks.get(target_idx), Some(Block::Table(_))) {
+                    w.table_col_weights.retain(|(b, _)| *b != target_idx);
+                    self.status_toast = "Equalized all column widths".into();
+                }
+                return;
+            }
             CommandId::TableDelete => {
                 let target_idx = w.active_table_cell.map(|(b, _, _)| b).unwrap_or(idx);
                 if matches!(w.doc.blocks.get(target_idx), Some(Block::Table(_))) {
                     w.doc.blocks.remove(target_idx);
+                    w.table_col_weights.retain(|(b, _)| *b != target_idx);
+                    for (b_idx, _) in &mut w.table_col_weights {
+                        if *b_idx > target_idx {
+                            *b_idx -= 1;
+                        }
+                    }
                     w.doc.ensure_non_empty();
                     w.active_table_cell = None;
+                    w.selected_image_block = None;
                     w.cursor_block = target_idx.min(w.doc.blocks.len().saturating_sub(1));
                     w.cursor_char = 0;
                     self.status_toast = "Removed table (Ctrl+Z to undo)".into();
+                }
+                return;
+            }
+            CommandId::ImageScale25
+            | CommandId::ImageScale50
+            | CommandId::ImageScale75
+            | CommandId::ImageScale100 => {
+                let target_idx = w.selected_image_block.unwrap_or(idx);
+                let cw = w.content_width_pt();
+                let frac = match cmd {
+                    CommandId::ImageScale25 => 0.25,
+                    CommandId::ImageScale50 => 0.50,
+                    CommandId::ImageScale75 => 0.75,
+                    _ => 1.0,
+                };
+                if let Some(Block::Image(img)) = w.doc.blocks.get_mut(target_idx) {
+                    img.scale_to_fraction(frac, cw);
+                    w.selected_image_block = Some(target_idx);
+                    self.status_toast =
+                        format!("Resized figure to {:.0}% of sheet width", frac * 100.0);
+                }
+                return;
+            }
+            CommandId::ImageDelete => {
+                let target_idx = w.selected_image_block.unwrap_or(idx);
+                if w.delete_image_at(target_idx) {
+                    self.status_toast = "Removed image figure (Ctrl+Z to undo)".into();
+                }
+                return;
+            }
+            CommandId::AlignLeft | CommandId::AlignCenter | CommandId::AlignRight
+                if w.selected_image_block.is_some()
+                    || matches!(w.doc.blocks.get(idx), Some(Block::Image(_))) =>
+            {
+                let target_idx = w.selected_image_block.unwrap_or(idx);
+                if let Some(Block::Image(img)) = w.doc.blocks.get_mut(target_idx) {
+                    img.alignment = match cmd {
+                        CommandId::AlignCenter => Alignment::Center,
+                        CommandId::AlignRight => Alignment::Right,
+                        _ => Alignment::Left,
+                    };
+                    self.status_toast = match img.alignment {
+                        Alignment::Center => "Centered figure on sheet".into(),
+                        Alignment::Right => "Right-aligned figure on sheet".into(),
+                        _ => "Left-aligned figure on sheet".into(),
+                    };
                 }
                 return;
             }
@@ -2367,7 +2805,11 @@ impl RustPadApp {
                 self.execute_command(cmd);
             }
             UiAction::ToggleDropdown(dd) => {
-                if self.open_dropdown == Some(dd) {
+                if self
+                    .open_dropdown
+                    .map(|cur| cur.same_kind(dd))
+                    .unwrap_or(false)
+                {
                     self.open_dropdown = None;
                 } else {
                     self.open_dropdown = Some(dd);
@@ -2383,6 +2825,32 @@ impl RustPadApp {
             UiAction::SelectFontFamily(fam) => {
                 self.open_dropdown = None;
                 self.apply_font_family(fam);
+            }
+            UiAction::InsertTableCustom { rows, cols } => {
+                self.open_dropdown = None;
+                let r = rows.clamp(1, 24);
+                let c = cols.clamp(1, 12);
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    w.history.record(&w.doc);
+                    // Focus header cell `(0, 0)` so typing replaces `Column 1` -> `Tab` -> `Column 2` effortlessly!
+                    w.insert_table_smart(TableBlock::new(r, c), None, true, 0);
+                    self.status_toast = format!(
+                        "Inserted {r}×{c} table — type header & press Tab across cells (Esc to exit)"
+                    );
+                }
+            }
+            UiAction::InsertTablePreset(preset) => {
+                self.open_dropdown = None;
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    w.history.record(&w.doc);
+                    let (tbl, weights) = preset.build();
+                    let focus_r = if tbl.rows.len() > 1 { 1 } else { 0 };
+                    w.insert_table_smart(tbl, weights, true, focus_r);
+                    self.status_toast = format!(
+                        "Inserted '{}' table — Tab across cells, drag dividers to resize",
+                        preset.label()
+                    );
+                }
             }
             UiAction::CreateFromTemplate(tpl) => {
                 let doc = tpl.build();
@@ -2409,7 +2877,46 @@ impl RustPadApp {
                     w.cursor_char = 0;
                     w.selection_anchor = None;
                     w.active_table_cell = None;
+                    w.selected_image_block = None;
                     w.target_scroll_y = target_scroll_y.clamp(0.0, w.max_scroll_y);
+                }
+            }
+            UiAction::SelectWordImage { tab_idx, block_idx } => {
+                self.open_dropdown = None;
+                self.ai_dock.focused_field = None;
+                self.active_tab = tab_idx;
+                let now = Instant::now();
+                let is_double_click = self
+                    .last_click_at
+                    .map(|t0| now.duration_since(t0).as_millis() <= 380)
+                    .unwrap_or(false)
+                    && (self.mouse_x - self.last_click_pos.0).abs() <= 10.0
+                    && (self.mouse_y - self.last_click_pos.1).abs() <= 10.0;
+                self.last_click_at = Some(now);
+                self.last_click_pos = (self.mouse_x, self.mouse_y);
+
+                let mut open_caption: Option<(usize, String)> = None;
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
+                    w.active_table_cell = None;
+                    w.selection_anchor = None;
+                    w.cursor_block = block_idx;
+                    w.cursor_char = 0;
+                    w.selected_image_block = Some(block_idx);
+                    if is_double_click {
+                        if let Some(Block::Image(img)) = w.doc.blocks.get(block_idx) {
+                            open_caption = Some((block_idx, img.caption.clone()));
+                        }
+                    } else {
+                        self.status_toast =
+                            "Selected figure — drag corner handle to resize, double-click for caption, or press Delete"
+                                .into();
+                    }
+                }
+                if let Some((b_idx, cap)) = open_caption {
+                    self.modal = Some(ActiveModal::EditImageCaption {
+                        block_idx: b_idx,
+                        text: cap,
+                    });
                 }
             }
             UiAction::ClickWordParagraph {
@@ -2432,6 +2939,7 @@ impl RustPadApp {
 
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
                     w.active_table_cell = None;
+                    w.selected_image_block = None;
                     if is_double_click {
                         let (ws, we) = match w.doc.blocks.get(block_idx) {
                             Some(Block::Paragraph(p)) => {
@@ -2522,6 +3030,7 @@ impl RustPadApp {
                 self.active_tab = tab_idx;
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
                     w.cursor_block = block_idx;
+                    w.selected_image_block = None;
                     w.active_table_cell = Some((block_idx, row, col));
                     w.table_cursor_char = char_idx;
                 }
@@ -2565,6 +3074,18 @@ impl RustPadApp {
             }
             UiAction::BeginDrag(drag) => {
                 self.open_dropdown = None;
+                if let DragInteraction::ImageResize {
+                    tab_idx, block_idx, ..
+                } = drag
+                {
+                    self.active_tab = tab_idx;
+                    if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
+                        w.history.record(&w.doc);
+                        w.selected_image_block = Some(block_idx);
+                        w.active_table_cell = None;
+                        w.selection_anchor = None;
+                    }
+                }
                 self.active_drag = drag;
                 if let DragInteraction::Scrollbar {
                     tab_idx,
@@ -2960,6 +3481,22 @@ impl RustPadApp {
                     }
                 }
             }
+            ActiveModal::EditImageCaption { block_idx, text } => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    if let Some(Block::Image(img)) = w.doc.blocks.get_mut(block_idx) {
+                        w.history.record(&w.doc);
+                        let cleaned = text.trim().to_string();
+                        img.caption = cleaned.clone();
+                        w.dirty = true;
+                        w.selected_image_block = Some(block_idx);
+                        self.status_toast = if cleaned.is_empty() {
+                            "Cleared figure caption".into()
+                        } else {
+                            format!("Updated figure caption: '{cleaned}'")
+                        };
+                    }
+                }
+            }
             ActiveModal::FindReplace { .. }
             | ActiveModal::SnapshotsDrawer
             | ActiveModal::Governance
@@ -3141,6 +3678,25 @@ impl RustPadApp {
                 self.desired_cursor = CursorShape::IBeam;
                 return moved;
             }
+            DragInteraction::ImageResize {
+                tab_idx,
+                block_idx,
+                start_x,
+                start_width_pt,
+                scale,
+                anchor_factor,
+                max_width_pt,
+            } => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
+                    if let Some(Block::Image(img)) = w.doc.blocks.get_mut(block_idx) {
+                        let delta_pt = (x - start_x) * anchor_factor / scale.max(0.4);
+                        img.resize_preserving_aspect(start_width_pt + delta_pt, max_width_pt);
+                        w.dirty = true;
+                    }
+                }
+                self.desired_cursor = CursorShape::ResizeEW;
+                return true;
+            }
             DragInteraction::None => {}
         }
 
@@ -3255,6 +3811,40 @@ impl RustPadApp {
                     w.selection_anchor = None;
                     return;
                 }
+                if let Some(img_idx) = w.selected_image_block.take() {
+                    let next_idx = img_idx + 1;
+                    if next_idx >= w.doc.blocks.len() {
+                        w.doc.blocks.push(Block::Paragraph(Paragraph::new(
+                            ParagraphStyle::Normal,
+                            "",
+                        )));
+                    }
+                    w.cursor_block = next_idx.min(w.doc.blocks.len().saturating_sub(1));
+                    w.cursor_char = match w.doc.blocks.get(w.cursor_block) {
+                        Some(Block::Paragraph(p)) => p.plain_text().chars().count(),
+                        _ => 0,
+                    };
+                    w.scroll_to_caret = true;
+                    self.status_toast = "Deselected figure — continue writing prose below".into();
+                    return;
+                }
+                if let Some((tb_idx, _, _)) = w.active_table_cell.take() {
+                    let next_idx = tb_idx + 1;
+                    if next_idx >= w.doc.blocks.len() {
+                        w.doc.blocks.push(Block::Paragraph(Paragraph::new(
+                            ParagraphStyle::Normal,
+                            "",
+                        )));
+                    }
+                    w.cursor_block = next_idx.min(w.doc.blocks.len().saturating_sub(1));
+                    w.cursor_char = match w.doc.blocks.get(w.cursor_block) {
+                        Some(Block::Paragraph(p)) => p.plain_text().chars().count(),
+                        _ => 0,
+                    };
+                    w.scroll_to_caret = true;
+                    self.status_toast = "Exited table — continue writing prose below".into();
+                    return;
+                }
             }
             if self.focus_mode {
                 self.focus_mode = false;
@@ -3263,9 +3853,97 @@ impl RustPadApp {
             }
         }
 
-        // Clipboard Paste (`Ctrl+V`) works in Modals, AI Dock inputs, Table cells, and Prose!
+        // Keyboard navigation inside the Interactive Table Creator Popover (Arrow keys + Enter)
+        if let Some(ToolbarDropdown::TableCreator {
+            anchor_x,
+            anchor_y,
+            rows,
+            cols,
+        }) = self.open_dropdown
+        {
+            match key {
+                Key::Right => {
+                    let nc = (cols + 1).min(8);
+                    self.open_dropdown = Some(ToolbarDropdown::TableCreator {
+                        anchor_x,
+                        anchor_y,
+                        rows,
+                        cols: nc,
+                    });
+                    return;
+                }
+                Key::Left => {
+                    let nc = cols.saturating_sub(1).max(1);
+                    self.open_dropdown = Some(ToolbarDropdown::TableCreator {
+                        anchor_x,
+                        anchor_y,
+                        rows,
+                        cols: nc,
+                    });
+                    return;
+                }
+                Key::Down => {
+                    let nr = (rows + 1).min(8);
+                    self.open_dropdown = Some(ToolbarDropdown::TableCreator {
+                        anchor_x,
+                        anchor_y,
+                        rows: nr,
+                        cols,
+                    });
+                    return;
+                }
+                Key::Up => {
+                    let nr = rows.saturating_sub(1).max(1);
+                    self.open_dropdown = Some(ToolbarDropdown::TableCreator {
+                        anchor_x,
+                        anchor_y,
+                        rows: nr,
+                        cols,
+                    });
+                    return;
+                }
+                Key::Enter => {
+                    self.dispatch_ui_action(UiAction::InsertTableCustom { rows, cols });
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // Clipboard Paste (`Ctrl+V`) works for Screenshots/Images, Modals, AI Dock inputs, Table cells, and Prose!
         if mods.ctrl && key == Key::Char('v') {
+            if self.modal.is_none()
+                && self.ai_dock.focused_field.is_none()
+                && matches!(self.tabs.get(self.active_tab), Some(StudioTab::Word(_)))
+            {
+                if let Some(img_bytes) = get_clipboard_image_bytes() {
+                    if self
+                        .insert_image_from_bytes("Clipboard Screenshot", img_bytes, None)
+                        .is_ok()
+                    {
+                        return;
+                    }
+                }
+            }
             if let Some(clip) = get_clipboard_text() {
+                if self.modal.is_none()
+                    && self.ai_dock.focused_field.is_none()
+                    && matches!(self.tabs.get(self.active_tab), Some(StudioTab::Word(_)))
+                {
+                    let trimmed_path = clip.trim().trim_matches('"');
+                    let candidate = Path::new(trimmed_path);
+                    let ext = candidate
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp") && candidate.is_file()
+                    {
+                        if self.insert_image_from_path(candidate, None).is_ok() {
+                            return;
+                        }
+                    }
+                }
                 self.paste_text(&clip);
             }
             return;
@@ -3304,6 +3982,14 @@ impl RustPadApp {
                 }
                 Key::Char('m') if mods.shift => {
                     self.execute_command(CommandId::AddReviewComment);
+                    return;
+                }
+                Key::Char('t') if mods.shift => {
+                    self.execute_command(CommandId::OpenTableCreator);
+                    return;
+                }
+                Key::Char('i') if mods.shift => {
+                    self.execute_command(CommandId::InsertImage);
                     return;
                 }
                 Key::Char('e') => {
@@ -3430,7 +4116,9 @@ impl RustPadApp {
                         Key::Enter => follow_up = ModalKeyFollowUp::Confirm,
                         _ => {}
                     },
-                    ActiveModal::Watermark { text } | ActiveModal::AddComment { text } => match key {
+                    ActiveModal::Watermark { text }
+                    | ActiveModal::AddComment { text }
+                    | ActiveModal::EditImageCaption { text, .. } => match key {
                         Key::Backspace => {
                             text.pop();
                         }
@@ -3514,12 +4202,93 @@ impl RustPadApp {
             }
         }
 
+        // Selected figure or `/image` slash command handling before mutable borrow of `self.tabs`
+        if matches!(key, Key::Backspace | Key::Delete | Key::Enter) {
+            enum PreWordAction {
+                None,
+                DeletedSelectedImage,
+                ExitedSelectedImage,
+                SlashImageDialog,
+                SlashImagePath(String),
+            }
+            let mut pre = PreWordAction::None;
+            if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                if let Some(img_idx) = w.selected_image_block {
+                    match key {
+                        Key::Backspace | Key::Delete => {
+                            w.history.record(&w.doc);
+                            if w.delete_image_at(img_idx) {
+                                pre = PreWordAction::DeletedSelectedImage;
+                            }
+                        }
+                        Key::Enter => {
+                            w.selected_image_block = None;
+                            let next_idx = img_idx + 1;
+                            if next_idx >= w.doc.blocks.len() {
+                                w.doc.blocks.push(Block::Paragraph(Paragraph::new(
+                                    ParagraphStyle::Normal,
+                                    "",
+                                )));
+                            }
+                            w.cursor_block = next_idx.min(w.doc.blocks.len().saturating_sub(1));
+                            w.cursor_char = 0;
+                            w.scroll_to_caret = true;
+                            pre = PreWordAction::ExitedSelectedImage;
+                        }
+                        _ => {}
+                    }
+                } else if key == Key::Enter && w.active_table_cell.is_none() {
+                    let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+                    if let Some(Block::Paragraph(p)) = w.doc.blocks.get(idx) {
+                        if let Some(opt_path) =
+                            ImageBlock::parse_slash_image_command(&p.plain_text())
+                        {
+                            w.history.record(&w.doc);
+                            w.doc.blocks[idx] =
+                                Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, ""));
+                            w.cursor_char = 0;
+                            w.dirty = true;
+                            pre = match opt_path {
+                                Some(pth) => PreWordAction::SlashImagePath(pth),
+                                None => PreWordAction::SlashImageDialog,
+                            };
+                        }
+                    }
+                }
+            }
+            match pre {
+                PreWordAction::None => {}
+                PreWordAction::DeletedSelectedImage => {
+                    self.status_toast = "Removed image figure (Ctrl+Z to undo)".into();
+                    return;
+                }
+                PreWordAction::ExitedSelectedImage => {
+                    self.status_toast = "Moved below figure — continue typing prose".into();
+                    return;
+                }
+                PreWordAction::SlashImageDialog => {
+                    self.prompt_or_open_modal(FileModalKind::InsertImage, "");
+                    return;
+                }
+                PreWordAction::SlashImagePath(pth) => {
+                    if let Err(e) = self.insert_image_from_path(Path::new(&pth), None) {
+                        self.status_toast = format!("Image slash command error: {e}");
+                    }
+                    return;
+                }
+            }
+        }
+
         // Active Tab Editor Navigation & Typing (with Shift range selection & Ctrl+Arrow word jump!)
         match self.tabs.get_mut(self.active_tab) {
             Some(StudioTab::Word(w)) => match key {
                 Key::Backspace => word_backspace(w),
                 Key::Delete => word_delete(w),
-                Key::Enter => word_enter(w),
+                Key::Enter => {
+                    if let Some(msg) = word_enter(w) {
+                        self.status_toast = msg;
+                    }
+                }
                 Key::Left => {
                     if mods.shift {
                         if w.selection_anchor.is_none() {
@@ -3811,7 +4580,9 @@ impl RustPadApp {
                 }
                 ActiveModal::FilePrompt { input_path, .. } => input_path.push_str(single),
                 ActiveModal::SplitRange { range_spec } => range_spec.push_str(single),
-                ActiveModal::Watermark { text } | ActiveModal::AddComment { text } => {
+                ActiveModal::Watermark { text }
+                | ActiveModal::AddComment { text }
+                | ActiveModal::EditImageCaption { text, .. } => {
                     text.push_str(single)
                 }
                 ActiveModal::FindReplace {
@@ -3849,11 +4620,31 @@ impl RustPadApp {
                 w.history.record(&w.doc);
                 w.dirty = true;
                 if let Some((tb_idx, r, c)) = w.active_table_cell {
+                    if let Some((grid, _)) = TableBlock::parse_delimited_grid(&cleaned) {
+                        if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                            let prev_cols = t.cols;
+                            t.paste_grid_at(r, c, &grid);
+                            if t.cols > prev_cols {
+                                w.table_col_weights.retain(|(b, _)| *b != tb_idx);
+                            }
+                            let gr = grid.len();
+                            let gc = grid.first().map(|rw| rw.len()).unwrap_or(1);
+                            self.status_toast = format!(
+                                "Pasted {gr}×{gc} spreadsheet cells into table (Ctrl+Z to undo)"
+                            );
+                            return;
+                        }
+                    }
                     if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
                         if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
                             let flat = cleaned.replace('\n', " ");
-                            insert_str_at_char(&mut cell.text, w.table_cursor_char, &flat);
-                            w.table_cursor_char += flat.chars().count();
+                            if r == 0 && cell.text == format!("Column {}", c + 1) {
+                                cell.text = flat.clone();
+                                w.table_cursor_char = flat.chars().count();
+                            } else {
+                                insert_str_at_char(&mut cell.text, w.table_cursor_char, &flat);
+                                w.table_cursor_char += flat.chars().count();
+                            }
                             self.status_toast = "Pasted into table cell".into();
                             return;
                         }
@@ -3864,10 +4655,22 @@ impl RustPadApp {
                     w.delete_selection();
                 }
 
+                // Smart Tabular Paste: TSV (Excel/Sheets) or Markdown pipe tables create a structured TableBlock!
+                if let Some(tbl) = TableBlock::from_delimited_text(&cleaned) {
+                    let tr = tbl.rows.len();
+                    let tc = tbl.cols;
+                    let focus_r = if tr > 1 { 1 } else { 0 };
+                    w.insert_table_smart(tbl, None, true, focus_r);
+                    self.status_toast = format!(
+                        "Created {tr}×{tc} table from clipboard data (Ctrl+Z to undo)"
+                    );
+                    return;
+                }
+
                 let lines: Vec<&str> = cleaned.split('\n').collect();
                 for (li, line) in lines.iter().enumerate() {
                     if li > 0 {
-                        word_enter(w);
+                        let _ = word_enter(w);
                     }
                     for ch in line.chars() {
                         word_insert_char_no_record(w, ch);
@@ -3899,7 +4702,9 @@ impl RustPadApp {
                 }
                 ActiveModal::FilePrompt { input_path, .. } => input_path.push(ch),
                 ActiveModal::SplitRange { range_spec } => range_spec.push(ch),
-                ActiveModal::Watermark { text } | ActiveModal::AddComment { text } => text.push(ch),
+                ActiveModal::Watermark { text }
+                | ActiveModal::AddComment { text }
+                | ActiveModal::EditImageCaption { text, .. } => text.push(ch),
                 ActiveModal::FindReplace {
                     find_text,
                     replace_text,
@@ -3938,10 +4743,17 @@ impl RustPadApp {
                 if let Some((tb_idx, r, c)) = w.active_table_cell {
                     if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
                         if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
-                            let pos = w.table_cursor_char.min(cell.text.chars().count());
-                            let byte_idx = char_to_byte(&cell.text, pos);
-                            cell.text.insert(byte_idx, ch);
-                            w.table_cursor_char = pos + 1;
+                            // Auto-replace untouched default `Column N` header placeholder on first typed character!
+                            if r == 0 && cell.text == format!("Column {}", c + 1) {
+                                cell.text.clear();
+                                cell.text.push(ch);
+                                w.table_cursor_char = 1;
+                            } else {
+                                let pos = w.table_cursor_char.min(cell.text.chars().count());
+                                let byte_idx = char_to_byte(&cell.text, pos);
+                                cell.text.insert(byte_idx, ch);
+                                w.table_cursor_char = pos + 1;
+                            }
                             w.dirty = true;
                             return;
                         }
@@ -4074,6 +4886,12 @@ fn word_backspace(w: &mut WordTabState) {
     if let Some((tb_idx, r, c)) = w.active_table_cell {
         if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
             if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
+                if r == 0 && cell.text == format!("Column {}", c + 1) {
+                    cell.text.clear();
+                    w.table_cursor_char = 0;
+                    w.dirty = true;
+                    return;
+                }
                 let len = cell.text.chars().count();
                 let cur = w.table_cursor_char.min(len);
                 if cur > 0 {
@@ -4252,7 +5070,7 @@ fn word_delete(w: &mut WordTabState) {
     }
 }
 
-fn word_enter(w: &mut WordTabState) {
+fn word_enter(w: &mut WordTabState) -> Option<String> {
     if w.has_selection() {
         w.history.record(&w.doc);
         w.delete_selection();
@@ -4274,7 +5092,7 @@ fn word_enter(w: &mut WordTabState) {
                     w.dirty = true;
                 }
                 w.scroll_to_caret = true;
-                return;
+                return None;
             }
         }
     }
@@ -4282,12 +5100,37 @@ fn word_enter(w: &mut WordTabState) {
     w.history.record(&w.doc);
     let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
 
+    // Zero-mouse table auto-creation on Enter:
+    // 1. `/table`, `/table 4x5`, `/4x3`, `/invoice`, `/roadmap`, `/compare`, `/pros`, `/schedule`
+    // 2. `| Header A | Header B | Header C |` Markdown pipe header line
+    if let Some(Block::Paragraph(p)) = w.doc.blocks.get(idx) {
+        let line_text = p.plain_text();
+        if let Some((tbl, weights, msg)) = TableBlock::from_slash_command(&line_text) {
+            let focus_r = if weights.is_some() && tbl.rows.len() > 1 {
+                1
+            } else {
+                0
+            };
+            w.doc.blocks[idx] = Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, ""));
+            w.insert_table_smart(tbl, weights, true, focus_r);
+            return Some(msg);
+        }
+        if let Some(tbl) = TableBlock::from_pipe_header_line(&line_text) {
+            let cols = tbl.cols;
+            w.doc.blocks[idx] = Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, ""));
+            w.insert_table_smart(tbl, None, true, 1);
+            return Some(format!(
+                "Created {cols}-column table from pipe headers — type Row 2 & Tab across cells"
+            ));
+        }
+    }
+
     // Pressing Enter on an empty bullet/checklist item exits the list cleanly
     if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
         if p.list_kind != ListKind::None && p.plain_text().trim().is_empty() {
             p.list_kind = ListKind::None;
             w.dirty = true;
-            return;
+            return None;
         }
     }
 
@@ -4332,6 +5175,7 @@ fn word_enter(w: &mut WordTabState) {
     w.cursor_char = 0;
     w.dirty = true;
     w.scroll_to_caret = true;
+    None
 }
 
 fn word_move_left(w: &mut WordTabState) {
@@ -4514,6 +5358,28 @@ fn discover_workspace_documents() -> Vec<PathBuf> {
     found
 }
 
+fn discover_workspace_images() -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for dir in [".", "assets", "assets/icons", "public", "examples", "samples"] {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for ent in entries.flatten() {
+                let p = ent.path();
+                if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                    if matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "png" | "jpg" | "jpeg" | "bmp"
+                    ) {
+                        found.push(p);
+                    }
+                }
+            }
+        }
+    }
+    found.sort();
+    found.truncate(8);
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4643,6 +5509,110 @@ mod tests {
         }
         app.handle_scroll(180.0, false);
         assert!(app.poll_background_tasks());
+    }
+
+    #[test]
+    fn test_v22_smooth_table_creator_presets_slash_pipe_paste_and_esc_exit() {
+        let mut app = RustPadApp::new();
+        app.execute_command(CommandId::NewWordBlank);
+
+        // 1. Ctrl+Shift+T opens TableCreator -> Arrow keys size to 4x5 -> Enter inserts 4x5 table!
+        app.execute_command(CommandId::OpenTableCreator);
+        app.handle_key_down(Key::Down, Modifiers::default()); // rows: 3 -> 4
+        app.handle_key_down(Key::Right, Modifiers::default()); // cols: 3 -> 4
+        app.handle_key_down(Key::Right, Modifiers::default()); // cols: 4 -> 5
+        app.handle_key_down(Key::Enter, Modifiers::default());
+        assert!(app.open_dropdown.is_none());
+
+        // Typing into header cell (0, 0) auto-replaces untouched `Column 1` -> `Task`!
+        for ch in "Task".chars() {
+            app.handle_text_input(ch);
+        }
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            if let Block::Table(t) = &w.doc.blocks[0] {
+                assert_eq!(t.rows.len(), 4);
+                assert_eq!(t.cols, 5);
+                assert_eq!(t.rows[0][0].text, "Task");
+            } else {
+                panic!("expected 4x5 table at block 0");
+            }
+        }
+
+        // Esc cleanly exits the table to the prose paragraph below!
+        app.handle_key_down(Key::Escape, Modifiers::default());
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            assert!(w.active_table_cell.is_none());
+            assert_eq!(w.cursor_block, 1);
+        }
+
+        // 2. Typing `| Name | Role | ETA |` + Enter auto-creates a 3-column table!
+        for ch in "| Name | Role | ETA |".chars() {
+            app.handle_text_input(ch);
+        }
+        app.handle_key_down(Key::Enter, Modifiers::default());
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            if let Block::Table(t) = &w.doc.blocks[1] {
+                assert_eq!(t.cols, 3);
+                assert_eq!(t.rows[0][1].text, "Role");
+            } else {
+                panic!("expected pipe-header table at block 1");
+            }
+            assert_eq!(w.active_table_cell, Some((1, 1, 0)));
+        }
+
+        // 3. Exit table and paste TSV spreadsheet data -> auto-builds structured TableBlock!
+        app.handle_key_down(Key::Escape, Modifiers::default());
+        app.paste_text("Item\tQty\tTotal\nAudit\t2\t$900");
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            if let Block::Table(t) = &w.doc.blocks[2] {
+                assert_eq!(t.cols, 3);
+                assert_eq!(t.rows.len(), 2);
+                assert_eq!(t.rows[1][2].text, "$900");
+            } else {
+                panic!("expected TSV table at block 2");
+            }
+        }
+    }
+
+    #[test]
+    fn test_v22_image_insertion_png_dib_resize_caption_align_and_docx_roundtrip() {
+        let mut app = RustPadApp::new();
+        app.execute_command(CommandId::NewWordBlank);
+
+        // 1. Insert a 120x80 RGBA image encoded via pure-Rust PNG codec
+        let png_bytes = encode_rgba_png(120, 80, &vec![40u8; 120 * 80 * 4]);
+        app.insert_image_from_bytes("system-architecture.png", png_bytes, None)
+            .expect("insert PNG figure");
+
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            assert_eq!(w.selected_image_block, Some(0));
+            assert!(matches!(w.doc.blocks.get(0), Some(Block::Image(_))));
+            assert!(matches!(w.doc.blocks.get(1), Some(Block::Paragraph(_))));
+        }
+
+        // 2. Resize to 50% sheet width + right-align + add caption via modal!
+        app.execute_command(CommandId::ImageScale50);
+        app.execute_command(CommandId::AlignRight);
+        app.execute_command(CommandId::ImageEditCaption);
+        for ch in "Figure 1: Pure-Rust Compositor".chars() {
+            app.handle_text_input(ch);
+        }
+        app.handle_key_down(Key::Enter, Modifiers::default());
+
+        // 3. Verify full `.docx` round-trip preserves image, caption, and right alignment!
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            let docx = docx_io::save_docx_bytes(&w.doc);
+            let reloaded = docx_io::load_docx_bytes(&docx).expect("reload image docx");
+            if let Block::Image(re_img) = &reloaded.blocks[0] {
+                assert_eq!(re_img.caption, "Figure 1: Pure-Rust Compositor");
+                assert_eq!(re_img.alignment, Alignment::Right);
+                let (dw, dh, _) =
+                    decode_any_image_rgba(&re_img.png_bytes).expect("decode reloaded PNG");
+                assert_eq!((dw, dh), (120, 80));
+            } else {
+                panic!("expected Block::Image at block 0");
+            }
+        }
     }
 
     trait BlockParaLen {

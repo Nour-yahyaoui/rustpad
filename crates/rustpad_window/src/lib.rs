@@ -73,6 +73,7 @@ pub enum WindowEvent {
     Scroll { delta_y: f32, mods: Modifiers },
     KeyDown { key: Key, mods: Modifiers },
     TextInput(char),
+    DroppedFile(PathBuf),
     Tick,
     CloseRequested,
 }
@@ -258,6 +259,105 @@ pub fn run_native_window(
     {
         let _ = (title, initial_width, initial_height, app);
         Err("Interactive native windowing requires Windows or Linux X11 (or use CLI flags)".into())
+    }
+}
+
+/// Reads image bytes (PNG or Win32 DIB) from the native OS clipboard when pasting screenshots/photos.
+pub fn get_clipboard_image_bytes() -> Option<Vec<u8>> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(bytes) = win32::get_win32_clipboard_image_bytes() {
+            if !bytes.is_empty() {
+                return Some(bytes);
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let has_display = std::env::var_os("DISPLAY").is_some()
+            || std::env::var_os("WAYLAND_DISPLAY").is_some();
+        if has_display {
+            for (bin, args) in [
+                ("wl-paste", &["--no-newline", "--type", "image/png"][..]),
+                ("xclip", &["-selection", "clipboard", "-t", "image/png", "-o"][..]),
+            ] {
+                if let Ok(out) = Command::new(bin)
+                    .args(args)
+                    .stderr(Stdio::null())
+                    .output()
+                {
+                    if out.status.success() && out.stdout.len() >= 16 {
+                        return Some(out.stdout);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn try_native_open_image_dialog(title: &str) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        return win32::open_image_file_dialog(title);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(out) = Command::new("zenity")
+            .args([
+                "--file-selection",
+                "--title",
+                title,
+                "--file-filter=Images (*.png *.jpg *.jpeg *.bmp) | *.png *.jpg *.jpeg *.bmp *.PNG *.JPG *.JPEG *.BMP",
+            ])
+            .output()
+        {
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !s.is_empty() {
+                    return Some(PathBuf::from(s));
+                }
+            }
+            return None;
+        }
+        if let Ok(out) = Command::new("kdialog")
+            .args([
+                "--getopenfilename",
+                ".",
+                "*.png *.jpg *.jpeg *.bmp|Image Files",
+                "--title",
+                title,
+            ])
+            .output()
+        {
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !s.is_empty() {
+                    return Some(PathBuf::from(s));
+                }
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = Command::new("osascript")
+            .args(["-e", "POSIX path of (choose file of type {\"png\", \"jpg\", \"jpeg\", \"bmp\"})"])
+            .output()
+        {
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !s.is_empty() {
+                    return Some(PathBuf::from(s));
+                }
+            }
+        }
+        None
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        let _ = title;
+        None
     }
 }
 
