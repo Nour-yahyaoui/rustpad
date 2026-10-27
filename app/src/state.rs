@@ -3483,8 +3483,10 @@ impl RustPadApp {
             }
             ActiveModal::EditImageCaption { block_idx, text } => {
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
-                    if let Some(Block::Image(img)) = w.doc.blocks.get_mut(block_idx) {
+                    if matches!(w.doc.blocks.get(block_idx), Some(Block::Image(_))) {
                         w.history.record(&w.doc);
+                    }
+                    if let Some(Block::Image(img)) = w.doc.blocks.get_mut(block_idx) {
                         let cleaned = text.trim().to_string();
                         img.caption = cleaned.clone();
                         w.dirty = true;
