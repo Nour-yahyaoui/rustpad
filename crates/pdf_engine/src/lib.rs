@@ -383,7 +383,7 @@ impl PdfDocument {
     }
 
     /// Computes a deterministic SHA-256 content hash over all page dimensions, canonical text items,
-    /// and redaction boxes so tampering with any saved PDF stream is cryptographically detectable.
+    /// and vector rect regions so tampering with any saved PDF stream is cryptographically detectable.
     pub fn canonical_content_sha256(&self) -> String {
         let mut canon = String::with_capacity(1024);
         let _ = writeln!(canon, "rustpad-seal-v2|pages={}", self.pages.len());
@@ -396,24 +396,39 @@ impl PdfDocument {
             let mut texts: Vec<(i32, i32, &str)> = page
                 .text_items
                 .iter()
-                .map(|t| ((t.x * 10.0).round() as i32, (t.y * 10.0).round() as i32, t.text.trim()))
+                .map(|t| {
+                    (
+                        (t.x * 10.0).round() as i32,
+                        (t.y * 10.0).round() as i32,
+                        t.text.trim(),
+                    )
+                })
                 .filter(|(_, _, s)| !s.is_empty())
                 .collect();
             texts.sort();
             for (qx, qy, txt) in texts {
                 let _ = writeln!(canon, "t:{qx}:{qy}:{txt}");
             }
-            for annot in &page.annotations {
-                if let PdfAnnotation::Redaction { x, y, w, h } = annot {
-                    let _ = writeln!(
-                        canon,
-                        "redact:{}:{}:{}:{}",
-                        (x * 10.0).round() as i32,
-                        (y * 10.0).round() as i32,
-                        (w * 10.0).round() as i32,
-                        (h * 10.0).round() as i32
-                    );
-                }
+            let mut rects: Vec<(i32, i32, i32, i32, String)> = page
+                .rects
+                .iter()
+                .map(|r| {
+                    let fill_hex = r
+                        .fill
+                        .map(|c| c.to_hex())
+                        .unwrap_or_else(|| "none".to_string());
+                    (
+                        (r.x * 10.0).round() as i32,
+                        (r.y * 10.0).round() as i32,
+                        (r.w * 10.0).round() as i32,
+                        (r.h * 10.0).round() as i32,
+                        fill_hex,
+                    )
+                })
+                .collect();
+            rects.sort();
+            for (rx, ry, rw, rh, fill_hex) in rects {
+                let _ = writeln!(canon, "r:{rx}:{ry}:{rw}:{rh}:{fill_hex}");
             }
         }
         sha256_hex(canon.as_bytes())

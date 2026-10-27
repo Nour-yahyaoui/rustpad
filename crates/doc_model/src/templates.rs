@@ -413,7 +413,7 @@ fn build_academic_report() -> Document {
         blocks: vec![
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Title,
-                "High-Assurance Offline Document Processing",
+                "High-Speed Native Document Processing",
             )),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Subtitle,

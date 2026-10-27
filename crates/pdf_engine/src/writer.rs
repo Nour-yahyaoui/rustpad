@@ -51,8 +51,17 @@ pub fn seal_pdf_bytes(
     } else {
         date_iso.trim()
     };
-    let content_sha256 = doc.canonical_content_sha256();
-    let bytes = save_pdf_bytes_ext(doc, true, pdfa, Some((clean_signer, clean_date)));
+    // Compute SHA-256 over the exact canonical serialized stream representation so
+    // baked annotations (Redactions, Stamps, Signatures, TextBoxes) round-trip identically.
+    let preview = save_pdf_bytes_ext(doc, true, pdfa, None);
+    let canonical_doc = load_pdf_bytes(&preview).unwrap_or_else(|_| doc.clone());
+    let content_sha256 = canonical_doc.canonical_content_sha256();
+    let bytes = save_pdf_bytes_ext(
+        doc,
+        true,
+        pdfa,
+        Some((clean_signer, clean_date, content_sha256.as_str())),
+    );
     let manifest = PdfSealManifest {
         signer: clean_signer.to_string(),
         date_iso: clean_date.to_string(),
@@ -115,7 +124,7 @@ pub fn save_pdf_bytes_ext(
     doc: &PdfDocument,
     compress: bool,
     pdfa: bool,
-    seal: Option<(&str, &str)>,
+    seal: Option<(&str, &str, &str)>,
 ) -> Vec<u8> {
     const FONT_NAMES: [(&str, &str); 12] = [
         ("F1", "Helvetica"),
@@ -131,12 +140,6 @@ pub fn save_pdf_bytes_ext(
         ("F11", "Courier-Oblique"),
         ("F12", "Courier-BoldOblique"),
     ];
-
-    let canonical_hash = if seal.is_some() {
-        Some(doc.canonical_content_sha256())
-    } else {
-        None
-    };
 
     let mut objects: Vec<Vec<u8>> = Vec::new();
     objects.push(Vec::new()); // 1: placeholder for /Catalog
@@ -237,7 +240,7 @@ pub fn save_pdf_bytes_ext(
         let _ = write!(catalog_extras, " /Metadata {xmp_id} 0 R");
     }
 
-    if let (Some((signer, date_iso)), Some(hash)) = (seal, canonical_hash) {
+    if let Some((signer, date_iso, hash)) = seal {
         let seal_id = objects.len() + 1;
         objects.push(
             format!(
