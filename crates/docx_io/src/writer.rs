@@ -18,13 +18,14 @@ pub fn save_docx_file(path: impl AsRef<Path>, doc: &Document) -> Result<(), Docx
 pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
     let mut zw = ZipWriter::new();
 
-    // Collect embedded images
+    // Collect embedded images with true media extensions (`png`, `jpeg`, `bmp`, `gif`)
     let mut images: Vec<(String, Vec<u8>)> = Vec::new();
     for block in &doc.blocks {
         if let Block::Image(img) = block {
             if !img.png_bytes.is_empty() {
                 let idx = images.len() + 1;
-                images.push((format!("media/image{idx}.png"), img.png_bytes.clone()));
+                let ext = img.media_extension();
+                images.push((format!("media/image{idx}.{ext}"), img.png_bytes.clone()));
             }
         }
     }
@@ -95,6 +96,8 @@ fn build_content_types(has_comments: bool) -> String {
   <Default Extension="png" ContentType="image/png"/>
   <Default Extension="jpeg" ContentType="image/jpeg"/>
   <Default Extension="jpg" ContentType="image/jpeg"/>
+  <Default Extension="bmp" ContentType="image/bmp"/>
+  <Default Extension="gif" ContentType="image/gif"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
   <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
@@ -544,15 +547,26 @@ fn build_document_xml(doc: &Document) -> String {
             Block::Image(img) => {
                 if !img.png_bytes.is_empty() {
                     img_counter += 1;
-                    let cx = (img.width_pt * 12700.0).round() as u64;
-                    let cy = (img.height_pt * 12700.0).round() as u64;
+                    let cx = (img.width_pt.max(24.0) * 12700.0).round() as u64;
+                    let cy = (img.height_pt.max(24.0) * 12700.0).round() as u64;
+                    let jc = jc_val(img.alignment);
+                    let esc_name = escape_xml(&img.name);
+                    let esc_caption = escape_xml(&img.caption);
                     xml.push_str(&format!(
-                        r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="{cx}" cy="{cy}"/>
-                        <wp:docPr id="{img_counter}" name="{}"/>
-                        <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
-                        <pic:pic><pic:blipFill><a:blip r:embed="rIdImg{img_counter}"/></pic:blipFill></pic:pic>
-                        </a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
-                        escape_xml(&img.name)
+                        concat!(
+                            r#"<w:p><w:pPr><w:jc w:val="{jc}"/></w:pPr><w:r><w:drawing>"#,
+                            r#"<wp:inline distT="0" distB="0" distL="0" distR="0">"#,
+                            r#"<wp:extent cx="{cx}" cy="{cy}"/>"#,
+                            r#"<wp:docPr id="{img_counter}" name="{esc_name}" descr="{esc_caption}"/>"#,
+                            r#"<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>"#,
+                            r#"<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+                            r#"<pic:pic>"#,
+                            r#"<pic:nvPicPr><pic:cNvPr id="{img_counter}" name="{esc_name}" descr="{esc_caption}"/><pic:cNvPicPr/></pic:nvPicPr>"#,
+                            r#"<pic:blipFill><a:blip r:embed="rIdImg{img_counter}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>"#,
+                            r#"<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>"#,
+                            r#"</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
+                            "\n"
+                        ),
                     ));
                 }
             }

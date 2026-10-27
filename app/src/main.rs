@@ -69,6 +69,10 @@ impl DesktopAppHandler for NativeAppRunner {
                 self.app.cursor_blink_on = true;
                 AppControl::Redraw
             }
+            WindowEvent::DroppedFile(path) => {
+                self.app.handle_dropped_file(path);
+                AppControl::Redraw
+            }
             WindowEvent::Tick => {
                 let mut needs_redraw = self.app.poll_background_tasks();
                 self.tick_counter = self.tick_counter.wrapping_add(1);
@@ -661,7 +665,7 @@ fn run_cli() -> Result<(), String> {
         tick_counter: 0,
     };
     run_native_window(
-        "RustPad v2.1 — Ultra-Smooth 60–120Hz Native Word (.docx), Forensic PDF & AI Studio",
+        "RustPad v2.2 — Effortless Table Studio & 60–120Hz Native Word (.docx), PDF & AI Suite",
         1380,
         880,
         &mut runner,

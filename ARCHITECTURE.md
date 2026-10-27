@@ -1,4 +1,4 @@
-# RustPad v2.0 Enterprise — Systems Architecture
+# RustPad v2.2 Enterprise — Systems Architecture
 
 RustPad is a **pure-Rust, offline-first native desktop document and PDF suite** engineered with **zero third-party `crates.io` runtime dependencies**. It compiles into a single self-contained native executable (`rustpad` / `rustpad.exe`) for Windows (`Win32 GDI + WinHTTP`) and Linux (`X11`).
 
@@ -17,7 +17,7 @@ RustPad is a **pure-Rust, offline-first native desktop document and PDF suite** 
              │ • EnterprisePolicy │     │ • Win32 GDI│  │ • TrueType (.ttf)│
              │ • AuditTrail SHA256│     │ • Linux X11│  │ • Subpixel AA    │
              │ • WAL Crash Journal│     │ • Clipboard│  │ • 2D SDF Painter │
-             │ • WinHTTP / TCP AI │     │ • OS Print │  │ • PNG Encoder    │
+             │ • WinHTTP / TCP AI │     │ • OS Print │  │ • PNG/JPEG/BMP   │
              └───┬────────┬───────┘     └────────────┘  └─────────┬────────┘
                  │        │                                       │
        ┌─────────▼──┐  ┌──▼──────────┐  ┌──────────────┐          │
@@ -61,6 +61,7 @@ RustPad is a **pure-Rust, offline-first native desktop document and PDF suite** 
 - **ECMA-376 Track Changes (`<w:ins>` / `<w:del>`):** `TextSpan` carries optional `RevisionMeta { id, kind, author, date_iso }`. `docx_io` reads and emits `<w:ins>` and `<w:del><w:r><w:delText>` runs alongside `word/settings.xml` (`<w:trackRevisions/>`).
 - **Threaded Review Comments (`word/comments.xml`):** Anchors `<w:commentRangeStart>`, `<w:commentRangeEnd>`, and `<w:commentReference>` to paragraph blocks and round-trips `word/comments.xml` + OPC relationships.
 - **Offline Word-Level Legal Redline Engine (`Document::diff_redline`):** Computes LCS word-level diffs paragraph-by-paragraph between base and counterparty `.docx` revisions to produce standards-compliant redlined contracts offline.
+- **Full `.docx` Image & Figure Pipeline (`png_codec`, `jpeg_codec`, `<pic:pic>`):** Decodes ITU-T.81 Baseline/Extended/Progressive JPEG, RFC 2083 PNG (`1–16` bit, palettes, Adam7), and BMP/DIB in pure Rust (`64 MiB` cap), traverses `<w:drawing>`, `<mc:AlternateContent>`, and `<w:pict>`, and emits standards-compliant ECMA-376 `<pic:pic>` DrawingML + ISO 32000 PDF `/Subtype /Image` XObjects.
 
 ### 2.3 `pdf_engine` & `pdf_create` — ISO 32000 PDF 1.5+, Forensic Sanitization & PDF/A-2b
 - **PDF 1.5+ Compressed Object Streams (`/Type /ObjStm`) & PNG Predictors:** `scan_and_expand_objects` unpacks Flate-compressed object streams and reverses `/Predictor >= 10` PNG row filters emitted by Microsoft Word, LibreOffice, Chrome, and macOS Quartz.

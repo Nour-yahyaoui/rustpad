@@ -106,28 +106,16 @@ pub fn load_docx_bytes(bytes: &[u8]) -> Result<Document, DocxError> {
         let XmlChild::Element(el) = child else {
             continue;
         };
-        match el.local_name() {
-            "p" => {
-                parse_paragraph_or_special(
-                    el,
-                    &archive,
-                    &rels,
-                    &mut num_counter,
-                    &mut blocks,
-                    &mut consumed_media_paths,
-                    &mut comment_anchors,
-                );
-            }
-            "tbl" => {
-                if let Some(tbl) = parse_table(el) {
-                    blocks.push(Block::Table(tbl));
-                }
-            }
-            "sectPr" => {
-                parse_sect_pr(el, &mut page_setup);
-            }
-            _ => {}
-        }
+        parse_body_element(
+            el,
+            &archive,
+            &rels,
+            &mut num_counter,
+            &mut blocks,
+            &mut consumed_media_paths,
+            &mut comment_anchors,
+            &mut page_setup,
+        );
     }
 
     // Parse `word/comments.xml` if present
@@ -239,6 +227,78 @@ fn parse_sect_pr(sect: &XmlNode, setup: &mut PageSetup) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn parse_body_element(
+    el: &XmlNode,
+    archive: &ZipArchive,
+    rels: &BTreeMap<String, String>,
+    num_counter: &mut u32,
+    blocks: &mut Vec<Block>,
+    consumed_media_paths: &mut BTreeSet<String>,
+    comment_anchors: &mut BTreeMap<u32, usize>,
+    page_setup: &mut PageSetup,
+) {
+    match el.local_name() {
+        "p" => {
+            parse_paragraph_or_special(
+                el,
+                archive,
+                rels,
+                num_counter,
+                blocks,
+                consumed_media_paths,
+                comment_anchors,
+            );
+        }
+        "tbl" => {
+            if let Some(tbl) = parse_table(el) {
+                blocks.push(Block::Table(tbl));
+            }
+        }
+        "sectPr" => {
+            parse_sect_pr(el, page_setup);
+        }
+        "sdt" => {
+            if let Some(sdt_content) = el.child("sdtContent") {
+                for c in &sdt_content.children {
+                    if let XmlChild::Element(inner) = c {
+                        parse_body_element(
+                            inner,
+                            archive,
+                            rels,
+                            num_counter,
+                            blocks,
+                            consumed_media_paths,
+                            comment_anchors,
+                            page_setup,
+                        );
+                    }
+                }
+            }
+        }
+        "AlternateContent" => {
+            let branch = el.child("Choice").or_else(|| el.child("Fallback"));
+            if let Some(b_node) = branch {
+                for c in &b_node.children {
+                    if let XmlChild::Element(inner) = c {
+                        parse_body_element(
+                            inner,
+                            archive,
+                            rels,
+                            num_counter,
+                            blocks,
+                            consumed_media_paths,
+                            comment_anchors,
+                            page_setup,
+                        );
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn parse_paragraph_or_special(
     p_node: &XmlNode,
     archive: &ZipArchive,
@@ -250,29 +310,27 @@ fn parse_paragraph_or_special(
 ) {
     if let Some(p_pr) = p_node.child("pPr") {
         if p_pr.child("pBdr").is_some() && p_node.text_content().trim().is_empty() {
-            blocks.push(Block::HorizontalRule);
-            return;
-        }
-    }
-
-    for r in p_node.children_named("r") {
-        for br in r.children_named("br") {
-            if br.attr("type") == Some("page") {
-                blocks.push(Block::PageBreak);
+            let mut probe_imgs = Vec::new();
+            collect_embedded_images(p_node, archive, rels, Alignment::Left, &mut probe_imgs);
+            if probe_imgs.is_empty() {
+                blocks.push(Block::HorizontalRule);
                 return;
             }
         }
-        if let Some(drawing) = r.child("drawing") {
-            if let Some((img, media_path)) = extract_drawing_image(drawing, archive, rels) {
-                consumed_media_paths.insert(media_path);
-                blocks.push(Block::Image(img));
-                return;
+    }
+
+    let mut has_page_break = false;
+    for r in p_node.children_named("r") {
+        for br in r.children_named("br") {
+            if br.attr("type") == Some("page") {
+                has_page_break = true;
             }
         }
     }
 
     let mut style = ParagraphStyle::Normal;
     let mut alignment = Alignment::Left;
+    let mut has_explicit_alignment = false;
     let mut list_kind = ListKind::None;
     let mut line_spacing = 1.35f32;
     let mut indent_level = 0u8;
@@ -297,6 +355,7 @@ fn parse_paragraph_or_special(
             };
         }
         if let Some(jc) = p_pr.child("jc").and_then(|n| n.attr("val")) {
+            has_explicit_alignment = true;
             alignment = match jc {
                 "center" => Alignment::Center,
                 "right" | "end" => Alignment::Right,
@@ -338,6 +397,19 @@ fn parse_paragraph_or_special(
     } else {
         *num_counter = 0;
     }
+
+    // Extract any DrawingML (`<w:drawing>`), `<mc:AlternateContent>`, or legacy VML (`<w:pict>`) images
+    let img_align = if has_explicit_alignment {
+        if alignment == Alignment::Justify {
+            Alignment::Center
+        } else {
+            alignment
+        }
+    } else {
+        Alignment::Center
+    };
+    let mut extracted_images = Vec::new();
+    collect_embedded_images(p_node, archive, rels, img_align, &mut extracted_images);
 
     let target_block_idx = blocks.len();
     let mut spans = Vec::new();
@@ -400,26 +472,45 @@ fn parse_paragraph_or_special(
         }
     }
 
-    if let Some(first) = spans.first_mut() {
-        if let Some(rest) = first.text.strip_prefix("☑ ") {
-            list_kind = ListKind::Checklist(true);
-            first.text = rest.to_string();
-        } else if let Some(rest) = first.text.strip_prefix("☐ ") {
-            list_kind = ListKind::Checklist(false);
-            first.text = rest.to_string();
-        }
+    let has_text = spans.iter().any(|s| !s.text.is_empty());
+
+    if has_page_break && !has_text && extracted_images.is_empty() {
+        blocks.push(Block::PageBreak);
+        return;
     }
 
-    let mut para = Paragraph {
-        style,
-        alignment,
-        list_kind,
-        line_spacing,
-        indent_level,
-        spans,
-    };
-    para.normalize_spans();
-    blocks.push(Block::Paragraph(para));
+    if has_text || (extracted_images.is_empty() && !has_page_break) {
+        if let Some(first) = spans.first_mut() {
+            if let Some(rest) = first.text.strip_prefix("☑ ") {
+                list_kind = ListKind::Checklist(true);
+                first.text = rest.to_string();
+            } else if let Some(rest) = first.text.strip_prefix("☐ ") {
+                list_kind = ListKind::Checklist(false);
+                first.text = rest.to_string();
+            }
+        }
+
+        let mut para = Paragraph {
+            style,
+            alignment,
+            list_kind,
+            line_spacing,
+            indent_level,
+            spans,
+        };
+        para.normalize_spans();
+        blocks.push(Block::Paragraph(para));
+    }
+
+    for (img, media_path) in extracted_images {
+        consumed_media_paths.insert(media_path);
+        blocks.push(Block::Image(img));
+    }
+
+    if has_page_break && (has_text || blocks.last().is_some_and(|b| !matches!(b, Block::PageBreak)))
+    {
+        blocks.push(Block::PageBreak);
+    }
 }
 
 fn parse_run(
@@ -581,36 +672,224 @@ fn parse_table(tbl_node: &XmlNode) -> Option<TableBlock> {
     })
 }
 
+fn collect_embedded_images(
+    node: &XmlNode,
+    archive: &ZipArchive,
+    rels: &BTreeMap<String, String>,
+    alignment: Alignment,
+    out: &mut Vec<(ImageBlock, String)>,
+) {
+    match node.local_name() {
+        "drawing" => {
+            if let Some((img, path)) = extract_drawing_image(node, archive, rels, alignment) {
+                out.push((img, path));
+            }
+            return;
+        }
+        "pict" => {
+            if let Some((img, path)) = extract_vml_pict_image(node, archive, rels, alignment) {
+                out.push((img, path));
+            }
+            return;
+        }
+        "AlternateContent" => {
+            let before = out.len();
+            if let Some(choice) = node.child("Choice") {
+                for c in &choice.children {
+                    if let XmlChild::Element(el) = c {
+                        collect_embedded_images(el, archive, rels, alignment, out);
+                    }
+                }
+            }
+            if out.len() == before {
+                if let Some(fallback) = node.child("Fallback") {
+                    for c in &fallback.children {
+                        if let XmlChild::Element(el) = c {
+                            collect_embedded_images(el, archive, rels, alignment, out);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        "del" => return,
+        _ => {}
+    }
+
+    for c in &node.children {
+        if let XmlChild::Element(child) = c {
+            collect_embedded_images(child, archive, rels, alignment, out);
+        }
+    }
+}
+
+fn resolve_docx_rel_path(archive: &ZipArchive, raw_target: &str) -> Option<(String, Vec<u8>)> {
+    let cleaned = raw_target.trim().replace('\\', "/");
+    if cleaned.is_empty()
+        || cleaned.starts_with("http://")
+        || cleaned.starts_with("https://")
+        || cleaned.starts_with("file://")
+    {
+        return None;
+    }
+
+    // Strip query/fragment if any and resolve `.` / `..` relative to `word/` unless rooted with `/`
+    let path_only = cleaned.split(['?', '#']).next().unwrap_or(&cleaned);
+    let mut stack: Vec<&str> = if path_only.starts_with('/') {
+        Vec::new()
+    } else if path_only.starts_with("word/") {
+        Vec::new()
+    } else {
+        vec!["word"]
+    };
+
+    for seg in path_only.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                stack.pop();
+            }
+            other => stack.push(other),
+        }
+    }
+    let normalized = stack.join("/");
+    if let Some(bytes) = archive.get(&normalized) {
+        return Some((normalized, bytes.to_vec()));
+    }
+    // Case-insensitive fallback for non-standard OOXML producers
+    let lower = normalized.to_ascii_lowercase();
+    for (entry_name, data) in archive.entries() {
+        if entry_name.to_ascii_lowercase() == lower {
+            return Some((entry_name.clone(), data.clone()));
+        }
+    }
+    None
+}
+
 fn extract_drawing_image(
     drawing: &XmlNode,
     archive: &ZipArchive,
     rels: &BTreeMap<String, String>,
+    alignment: Alignment,
 ) -> Option<(ImageBlock, String)> {
-    let inline = drawing.child("inline").or_else(|| drawing.child("anchor"))?;
-    let mut width_pt = 240.0f32;
-    let mut height_pt = 160.0f32;
-    if let Some(ext) = inline.child("extent") {
+    let container = drawing
+        .child("inline")
+        .or_else(|| drawing.child("anchor"))
+        .unwrap_or(drawing);
+    let mut width_pt = 300.0f32;
+    let mut height_pt = 200.0f32;
+    if let Some(ext) = container
+        .child("extent")
+        .or_else(|| find_node_recursive(container, "ext"))
+    {
         if let Some(cx) = ext.attr("cx").and_then(|v| v.parse::<f64>().ok()) {
-            width_pt = (cx / 12700.0) as f32;
+            if cx > 0.0 {
+                width_pt = ((cx / 12700.0) as f32).clamp(24.0, 680.0);
+            }
         }
         if let Some(cy) = ext.attr("cy").and_then(|v| v.parse::<f64>().ok()) {
-            height_pt = (cy / 12700.0) as f32;
+            if cy > 0.0 {
+                height_pt = ((cy / 12700.0) as f32).clamp(24.0, 680.0);
+            }
         }
     }
-    let name = inline
+    let doc_pr = container
         .child("docPr")
+        .or_else(|| find_node_recursive(container, "cNvPr"));
+    let name = doc_pr
         .and_then(|n| n.attr("name"))
+        .filter(|s| !s.trim().is_empty())
         .unwrap_or("Embedded Image")
         .to_string();
+    let caption = doc_pr
+        .and_then(|n| n.attr("descr"))
+        .unwrap_or("")
+        .trim()
+        .to_string();
 
-    let blip_id = find_attr_recursive(inline, "blip", "embed")?;
+    let blip_id = find_attr_recursive(container, "blip", "embed")
+        .or_else(|| find_attr_recursive(container, "blip", "link"))?;
     let target = rels.get(&blip_id)?;
-    let full_path = if target.starts_with("word/") {
-        target.clone()
+    let (full_path, png_bytes) = resolve_docx_rel_path(archive, target)?;
+
+    Some((
+        ImageBlock {
+            name,
+            width_pt,
+            height_pt,
+            png_bytes,
+            rgba_preview: None,
+            caption,
+            alignment,
+        },
+        full_path,
+    ))
+}
+
+fn parse_css_length_pt(raw: &str) -> Option<f32> {
+    let s = raw.trim().to_ascii_lowercase();
+    let (num_str, factor) = if let Some(n) = s.strip_suffix("pt") {
+        (n, 1.0f32)
+    } else if let Some(n) = s.strip_suffix("px") {
+        (n, 0.75f32)
+    } else if let Some(n) = s.strip_suffix("in") {
+        (n, 72.0f32)
+    } else if let Some(n) = s.strip_suffix("cm") {
+        (n, 28.3465f32)
+    } else if let Some(n) = s.strip_suffix("mm") {
+        (n, 2.83465f32)
     } else {
-        format!("word/{}", target.trim_start_matches('/'))
+        (s.as_str(), 0.75f32)
     };
-    let png_bytes = archive.get(&full_path)?.to_vec();
+    num_str
+        .trim()
+        .parse::<f32>()
+        .ok()
+        .filter(|&v| v > 0.0)
+        .map(|v| (v * factor).clamp(24.0, 680.0))
+}
+
+fn extract_vml_pict_image(
+    pict: &XmlNode,
+    archive: &ZipArchive,
+    rels: &BTreeMap<String, String>,
+    alignment: Alignment,
+) -> Option<(ImageBlock, String)> {
+    let img_data = find_node_recursive(pict, "imagedata")?;
+    let rel_id = img_data
+        .attr("id")
+        .or_else(|| img_data.attr("pict"))
+        .or_else(|| img_data.attr("href"))?;
+    let target = rels.get(rel_id)?;
+    let (full_path, png_bytes) = resolve_docx_rel_path(archive, target)?;
+
+    let mut width_pt = 280.0f32;
+    let mut height_pt = 180.0f32;
+    if let Some(style_str) = find_attr_recursive(pict, "shape", "style") {
+        for decl in style_str.split(';') {
+            if let Some((k, v)) = decl.split_once(':') {
+                match k.trim().to_ascii_lowercase().as_str() {
+                    "width" => {
+                        if let Some(w) = parse_css_length_pt(v) {
+                            width_pt = w;
+                        }
+                    }
+                    "height" => {
+                        if let Some(h) = parse_css_length_pt(v) {
+                            height_pt = h;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let name = img_data
+        .attr("title")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("Embedded Image")
+        .to_string();
 
     Some((
         ImageBlock {
@@ -620,9 +899,24 @@ fn extract_drawing_image(
             png_bytes,
             rgba_preview: None,
             caption: String::new(),
+            alignment,
         },
         full_path,
     ))
+}
+
+fn find_node_recursive<'a>(node: &'a XmlNode, local_tag: &str) -> Option<&'a XmlNode> {
+    if node.local_name() == local_tag {
+        return Some(node);
+    }
+    for c in &node.children {
+        if let XmlChild::Element(child) = c {
+            if let Some(found) = find_node_recursive(child, local_tag) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 fn find_attr_recursive(node: &XmlNode, local_tag: &str, attr_key: &str) -> Option<String> {

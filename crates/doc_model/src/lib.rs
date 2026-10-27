@@ -30,9 +30,19 @@ impl RgbColor {
     pub const MUTED_GRAY: Self = Self::new(100, 116, 139);
     pub const TABLE_BORDER: Self = Self::new(210, 205, 196);
     pub const TABLE_HEADER_BG: Self = Self::new(244, 241, 235);
+    pub const TABLE_STRIPE_LINEN: Self = Self::new(250, 248, 244);
     pub const TABLE_TINT_CREAM: Self = Self::new(252, 246, 229);
     pub const TABLE_TINT_SAGE: Self = Self::new(234, 243, 238);
     pub const TABLE_TINT_BLUE: Self = Self::new(233, 239, 246);
+    pub const TABLE_HEADER_COBALT: Self = Self::new(226, 236, 250);
+    pub const TABLE_BORDER_COBALT: Self = Self::new(169, 193, 226);
+    pub const TABLE_STRIPE_COBALT: Self = Self::new(244, 248, 253);
+    pub const TABLE_HEADER_SAGE: Self = Self::new(225, 240, 232);
+    pub const TABLE_BORDER_SAGE: Self = Self::new(172, 204, 187);
+    pub const TABLE_STRIPE_SAGE: Self = Self::new(244, 250, 247);
+    pub const TABLE_HEADER_TERRACOTTA: Self = Self::new(250, 236, 226);
+    pub const TABLE_BORDER_TERRACOTTA: Self = Self::new(219, 186, 165);
+    pub const TABLE_STRIPE_TERRACOTTA: Self = Self::new(253, 248, 244);
 
     pub fn to_hex(self) -> String {
         format!("{:02X}{:02X}{:02X}", self.r, self.g, self.b)
@@ -818,6 +828,674 @@ impl TableBlock {
             };
         }
     }
+
+    /// Detect the closest active `TableTheme` from `border_color` and header fill.
+    pub fn detected_theme(&self) -> TableTheme {
+        if self.border_color == RgbColor::TABLE_BORDER_COBALT {
+            TableTheme::CobaltLedger
+        } else if self.border_color == RgbColor::TABLE_BORDER_SAGE {
+            TableTheme::SageBotanical
+        } else if self.border_color == RgbColor::TABLE_BORDER_TERRACOTTA {
+            TableTheme::TerracottaStudio
+        } else if self
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .and_then(|c| c.bg_color)
+            .is_none()
+        {
+            TableTheme::MinimalHairline
+        } else {
+            TableTheme::WarmLinen
+        }
+    }
+
+    /// Apply a coordinated palette theme across header, border, and optional zebra rows.
+    pub fn apply_theme(&mut self, theme: TableTheme) {
+        let striped = self.is_zebra_striped();
+        let (hdr_bg, border, stripe_bg) = theme.palette();
+        self.border_color = border;
+        for (r_idx, row) in self.rows.iter_mut().enumerate() {
+            for cell in row.iter_mut() {
+                if r_idx == 0 {
+                    cell.bold = true;
+                    cell.bg_color = hdr_bg;
+                } else if striped && r_idx % 2 == 0 {
+                    cell.bg_color = stripe_bg;
+                } else if is_stripe_fill(cell.bg_color) || r_idx > 0 && is_header_fill(cell.bg_color) {
+                    cell.bg_color = None;
+                }
+            }
+        }
+    }
+
+    pub fn cycle_theme(&mut self) -> TableTheme {
+        let next = self.detected_theme().next();
+        self.apply_theme(next);
+        next
+    }
+
+    pub fn is_zebra_striped(&self) -> bool {
+        self.rows
+            .get(2)
+            .and_then(|r| r.first())
+            .and_then(|c| c.bg_color)
+            .map(|bg| is_stripe_fill(Some(bg)))
+            .unwrap_or(false)
+    }
+
+    /// Toggle delicate alternating row striping while preserving custom semantic cell tints.
+    pub fn toggle_zebra_striping(&mut self) -> bool {
+        let currently_striped = self.is_zebra_striped();
+        let (_, _, stripe_opt) = self.detected_theme().palette();
+        let stripe_color = stripe_opt.unwrap_or(RgbColor::TABLE_STRIPE_LINEN);
+
+        if !currently_striped && self.rows.len() < 3 {
+            // Ensure zebra striping is immediately visible even on a 2-row table
+            for (r_idx, row) in self.rows.iter_mut().enumerate().skip(1) {
+                if r_idx % 2 == 1 {
+                    for cell in row.iter_mut() {
+                        if cell.bg_color.is_none() {
+                            cell.bg_color = Some(stripe_color);
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
+        let enable = !currently_striped;
+        for (r_idx, row) in self.rows.iter_mut().enumerate().skip(1) {
+            for cell in row.iter_mut() {
+                if enable {
+                    if r_idx % 2 == 0 && cell.bg_color.is_none() {
+                        cell.bg_color = Some(stripe_color);
+                    }
+                } else if is_stripe_fill(cell.bg_color) {
+                    cell.bg_color = None;
+                }
+            }
+        }
+        enable
+    }
+
+    /// Parse a single Markdown pipe header line such as `| Feature | Owner | Target |`
+    /// into a ready-to-type 2-row `TableBlock` (headers in Row 0, empty data cells in Row 1).
+    pub fn from_pipe_header_line(line: &str) -> Option<Self> {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('|') {
+            return None;
+        }
+        let inner = trimmed.trim_matches('|');
+        if !inner.contains('|') {
+            return None;
+        }
+        let headers: Vec<String> = inner
+            .split('|')
+            .map(|part| part.trim().to_string())
+            .collect();
+        if headers.len() < 2 || headers.len() > 12 {
+            return None;
+        }
+        if headers.iter().all(|h| is_markdown_separator_cell(h)) {
+            return None;
+        }
+        let cols = headers.len();
+        let header_row = headers
+            .into_iter()
+            .enumerate()
+            .map(|(i, h)| {
+                if h.is_empty() {
+                    TableCell::header(format!("Column {}", i + 1))
+                } else {
+                    TableCell::header(h)
+                }
+            })
+            .collect();
+        let first_data_row = (0..cols).map(|_| TableCell::plain("")).collect();
+        Some(Self {
+            cols,
+            rows: vec![header_row, first_data_row],
+            border_color: RgbColor::TABLE_BORDER,
+        })
+    }
+
+    /// Parse keyboard slash table shorthands on `Enter`:
+    /// `/table`, `/table 4x5`, `/4x3`, `/table invoice`, `/invoice`, `/roadmap`, `/compare`, `/pros`, `/schedule`.
+    pub fn from_slash_command(line: &str) -> Option<(Self, Option<Vec<f32>>, String)> {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('/') {
+            return None;
+        }
+        let body = trimmed[1..].trim();
+        if body.is_empty() {
+            return None;
+        }
+        let lower = body.to_ascii_lowercase();
+
+        // Direct preset shorthands: `/invoice`, `/pricing`, `/tracker`, `/roadmap`, `/compare`, `/pros`, `/schedule`
+        let preset_match = match lower.as_str() {
+            "invoice" | "pricing" | "table invoice" | "table pricing" => {
+                Some(TablePreset::PricingInvoice)
+            }
+            "tracker" | "roadmap" | "table tracker" | "table roadmap" => {
+                Some(TablePreset::ProjectTracker)
+            }
+            "compare" | "matrix" | "table compare" | "table matrix" => {
+                Some(TablePreset::ComparisonMatrix)
+            }
+            "pros" | "proscons" | "table pros" => Some(TablePreset::ProsAndCons),
+            "schedule" | "agenda" | "table schedule" | "table agenda" => {
+                Some(TablePreset::WeeklySchedule)
+            }
+            _ => None,
+        };
+        if let Some(preset) = preset_match {
+            let (tbl, weights) = preset.build();
+            return Some((
+                tbl,
+                weights,
+                format!("Inserted {} table — Tab to move across cells", preset.label()),
+            ));
+        }
+
+        if lower == "table" || lower == "tbl" {
+            return Some((
+                Self::new(3, 3),
+                None,
+                "Inserted 3×3 table — Tab to advance, Esc to exit".into(),
+            ));
+        }
+
+        let dim_part = if let Some(rest) = lower.strip_prefix("table ") {
+            rest.trim()
+        } else if let Some(rest) = lower.strip_prefix("tbl ") {
+            rest.trim()
+        } else {
+            lower.as_str()
+        };
+
+        if let Some((r, c)) = parse_grid_dimensions(dim_part) {
+            let rows = r.clamp(1, 24);
+            let cols = c.clamp(1, 12);
+            return Some((
+                Self::new(rows, cols),
+                None,
+                format!(
+                    "Inserted {}×{} table — Tab to advance, drag borders to resize",
+                    rows, cols
+                ),
+            ));
+        }
+
+        None
+    }
+
+    /// Parse TSV (Excel / Google Sheets / Calc) or multi-line Markdown pipe text into a raw cell grid
+    /// plus optional column alignments inferred from Markdown `:---` / `:---:` / `---:` rows.
+    pub fn parse_delimited_grid(raw: &str) -> Option<(Vec<Vec<String>>, Vec<Alignment>)> {
+        let non_empty_lines: Vec<&str> = raw
+            .lines()
+            .map(|l| l.trim_end_matches('\r'))
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+        if non_empty_lines.is_empty() {
+            return None;
+        }
+
+        // 1. Check TSV (tab-separated spreadsheet paste)
+        let tab_lines = non_empty_lines.iter().filter(|l| l.contains('\t')).count();
+        if (non_empty_lines.len() >= 2 && tab_lines * 2 >= non_empty_lines.len())
+            || (non_empty_lines.len() == 1 && non_empty_lines[0].matches('\t').count() >= 2)
+        {
+            let mut max_cols = 0usize;
+            let mut grid: Vec<Vec<String>> = non_empty_lines
+                .iter()
+                .map(|line| {
+                    let row: Vec<String> =
+                        line.split('\t').map(|s| s.trim().to_string()).collect();
+                    max_cols = max_cols.max(row.len());
+                    row
+                })
+                .collect();
+            if max_cols < 2 || max_cols > 16 {
+                return None;
+            }
+            for row in &mut grid {
+                while row.len() < max_cols {
+                    row.push(String::new());
+                }
+            }
+            return Some((grid, vec![Alignment::Left; max_cols]));
+        }
+
+        // 2. Check multi-line Markdown pipe table (`| A | B |\n|---|---|\n| 1 | 2 |`)
+        if non_empty_lines.len() >= 2
+            && non_empty_lines
+                .iter()
+                .all(|l| l.trim().contains('|'))
+        {
+            let mut grid = Vec::new();
+            let mut alignments: Vec<Alignment> = Vec::new();
+            let mut max_cols = 0usize;
+            for line in non_empty_lines {
+                let inner = line.trim().trim_matches('|');
+                let parts: Vec<&str> = inner.split('|').map(|p| p.trim()).collect();
+                if parts.len() < 2 {
+                    return None;
+                }
+                if parts.iter().all(|p| is_markdown_separator_cell(p)) {
+                    alignments = parts.iter().map(|p| parse_md_alignment(p)).collect();
+                    continue;
+                }
+                max_cols = max_cols.max(parts.len());
+                grid.push(parts.into_iter().map(|s| s.to_string()).collect::<Vec<_>>());
+            }
+            if grid.is_empty() || max_cols < 2 || max_cols > 16 {
+                return None;
+            }
+            for row in &mut grid {
+                while row.len() < max_cols {
+                    row.push(String::new());
+                }
+            }
+            while alignments.len() < max_cols {
+                alignments.push(Alignment::Left);
+            }
+            return Some((grid, alignments));
+        }
+
+        None
+    }
+
+    /// Build a styled `TableBlock` directly from TSV or Markdown pipe clipboard text.
+    pub fn from_delimited_text(raw: &str) -> Option<Self> {
+        let (grid, alignments) = Self::parse_delimited_grid(raw)?;
+        let cols = grid.first()?.len().max(1);
+        let mut rows = Vec::with_capacity(grid.len().max(2));
+        for (r_idx, r_vals) in grid.into_iter().enumerate() {
+            let mut row = Vec::with_capacity(cols);
+            for (c_idx, text) in r_vals.into_iter().enumerate() {
+                let align = alignments.get(c_idx).copied().unwrap_or(Alignment::Left);
+                let mut cell = if r_idx == 0 {
+                    TableCell::header(text)
+                } else {
+                    TableCell::plain(text)
+                };
+                cell.alignment = align;
+                row.push(cell);
+            }
+            rows.push(row);
+        }
+        if rows.len() == 1 {
+            rows.push((0..cols).map(|_| TableCell::plain("")).collect());
+        }
+        Some(Self {
+            cols,
+            rows,
+            border_color: RgbColor::TABLE_BORDER,
+        })
+    }
+
+    /// Paste a 2D cell grid into an existing table starting at `(start_row, start_col)`,
+    /// automatically expanding rows and columns so spreadsheet pastes never clip.
+    pub fn paste_grid_at(&mut self, start_row: usize, start_col: usize, grid: &[Vec<String>]) {
+        if grid.is_empty() {
+            return;
+        }
+        let needed_cols = grid
+            .iter()
+            .map(|r| start_col + r.len())
+            .max()
+            .unwrap_or(self.cols)
+            .min(16);
+        while self.cols < needed_cols {
+            self.add_column();
+        }
+        let needed_rows = (start_row + grid.len()).min(128);
+        while self.rows.len() < needed_rows {
+            self.add_row();
+        }
+        for (dr, r_vals) in grid.iter().enumerate() {
+            let tr = start_row + dr;
+            if tr >= self.rows.len() {
+                break;
+            }
+            for (dc, val) in r_vals.iter().enumerate() {
+                let tc = start_col + dc;
+                if tc >= self.cols {
+                    break;
+                }
+                if let Some(cell) = self.rows.get_mut(tr).and_then(|r| r.get_mut(tc)) {
+                    cell.text = val.clone();
+                }
+            }
+        }
+    }
+}
+
+fn is_stripe_fill(bg: Option<RgbColor>) -> bool {
+    matches!(
+        bg,
+        Some(c)
+            if c == RgbColor::TABLE_STRIPE_LINEN
+                || c == RgbColor::TABLE_STRIPE_COBALT
+                || c == RgbColor::TABLE_STRIPE_SAGE
+                || c == RgbColor::TABLE_STRIPE_TERRACOTTA
+    )
+}
+
+fn is_header_fill(bg: Option<RgbColor>) -> bool {
+    matches!(
+        bg,
+        Some(c)
+            if c == RgbColor::TABLE_HEADER_BG
+                || c == RgbColor::TABLE_HEADER_COBALT
+                || c == RgbColor::TABLE_HEADER_SAGE
+                || c == RgbColor::TABLE_HEADER_TERRACOTTA
+    )
+}
+
+fn is_markdown_separator_cell(cell: &str) -> bool {
+    let t = cell.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let core = t.trim_matches(':');
+    core.len() >= 2 && core.chars().all(|ch| ch == '-')
+}
+
+fn parse_md_alignment(cell: &str) -> Alignment {
+    let t = cell.trim();
+    match (t.starts_with(':'), t.ends_with(':')) {
+        (true, true) => Alignment::Center,
+        (false, true) => Alignment::Right,
+        _ => Alignment::Left,
+    }
+}
+
+fn parse_grid_dimensions(spec: &str) -> Option<(usize, usize)> {
+    let normalized = spec.replace('×', "x").replace('*', "x");
+    let parts: Vec<&str> = if normalized.contains('x') {
+        normalized.split('x').collect()
+    } else {
+        normalized.split_whitespace().collect()
+    };
+    if parts.len() != 2 {
+        return None;
+    }
+    let r = parts[0].trim().parse::<usize>().ok()?;
+    let c = parts[1].trim().parse::<usize>().ok()?;
+    if r == 0 || c == 0 {
+        return None;
+    }
+    Some((r, c))
+}
+
+/// Coordinated 1-click visual themes for `TableBlock` that round-trip natively to `.docx` and `.pdf`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableTheme {
+    WarmLinen,
+    CobaltLedger,
+    SageBotanical,
+    TerracottaStudio,
+    MinimalHairline,
+}
+
+impl TableTheme {
+    pub const ALL: [TableTheme; 5] = [
+        Self::WarmLinen,
+        Self::CobaltLedger,
+        Self::SageBotanical,
+        Self::TerracottaStudio,
+        Self::MinimalHairline,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::WarmLinen => "Warm Linen",
+            Self::CobaltLedger => "Cobalt Ledger",
+            Self::SageBotanical => "Sage Botanical",
+            Self::TerracottaStudio => "Terracotta Studio",
+            Self::MinimalHairline => "Minimal Hairline",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::WarmLinen => Self::CobaltLedger,
+            Self::CobaltLedger => Self::SageBotanical,
+            Self::SageBotanical => Self::TerracottaStudio,
+            Self::TerracottaStudio => Self::MinimalHairline,
+            Self::MinimalHairline => Self::WarmLinen,
+        }
+    }
+
+    pub fn palette(self) -> (Option<RgbColor>, RgbColor, Option<RgbColor>) {
+        match self {
+            Self::WarmLinen => (
+                Some(RgbColor::TABLE_HEADER_BG),
+                RgbColor::TABLE_BORDER,
+                Some(RgbColor::TABLE_STRIPE_LINEN),
+            ),
+            Self::CobaltLedger => (
+                Some(RgbColor::TABLE_HEADER_COBALT),
+                RgbColor::TABLE_BORDER_COBALT,
+                Some(RgbColor::TABLE_STRIPE_COBALT),
+            ),
+            Self::SageBotanical => (
+                Some(RgbColor::TABLE_HEADER_SAGE),
+                RgbColor::TABLE_BORDER_SAGE,
+                Some(RgbColor::TABLE_STRIPE_SAGE),
+            ),
+            Self::TerracottaStudio => (
+                Some(RgbColor::TABLE_HEADER_TERRACOTTA),
+                RgbColor::TABLE_BORDER_TERRACOTTA,
+                Some(RgbColor::TABLE_STRIPE_TERRACOTTA),
+            ),
+            Self::MinimalHairline => (
+                None,
+                RgbColor::TABLE_BORDER,
+                Some(RgbColor::TABLE_STRIPE_LINEN),
+            ),
+        }
+    }
+}
+
+/// Curated 1-click ready-to-edit table templates inside the Visual Table Creator Popover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TablePreset {
+    PricingInvoice,
+    ProjectTracker,
+    ComparisonMatrix,
+    ProsAndCons,
+    WeeklySchedule,
+}
+
+impl TablePreset {
+    pub const ALL: [TablePreset; 5] = [
+        Self::PricingInvoice,
+        Self::ProjectTracker,
+        Self::ComparisonMatrix,
+        Self::ProsAndCons,
+        Self::WeeklySchedule,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::PricingInvoice => "Pricing / Invoice",
+            Self::ProjectTracker => "Project Tracker",
+            Self::ComparisonMatrix => "Comparison Matrix",
+            Self::ProsAndCons => "Pros & Cons",
+            Self::WeeklySchedule => "Schedule / Agenda",
+        }
+    }
+
+    pub fn badge(self) -> &'static str {
+        match self {
+            Self::PricingInvoice => "4×4 · $",
+            Self::ProjectTracker => "4×4 · Status",
+            Self::ComparisonMatrix => "4×3 · vs",
+            Self::ProsAndCons => "4×2 · Split",
+            Self::WeeklySchedule => "5×3 · Zebra",
+        }
+    }
+
+    /// Build the styled `TableBlock` plus optional natural proportional column weights.
+    pub fn build(self) -> (TableBlock, Option<Vec<f32>>) {
+        match self {
+            Self::PricingInvoice => {
+                let mut t = TableBlock::new(4, 4);
+                t.border_color = RgbColor::TABLE_BORDER_COBALT;
+                let mut h_qty = TableCell::header("Qty");
+                h_qty.alignment = Alignment::Center;
+                h_qty.bg_color = Some(RgbColor::TABLE_HEADER_COBALT);
+                let mut h_unit = TableCell::header("Unit Price");
+                h_unit.alignment = Alignment::Right;
+                h_unit.bg_color = Some(RgbColor::TABLE_HEADER_COBALT);
+                let mut h_total = TableCell::header("Line Total");
+                h_total.alignment = Alignment::Right;
+                h_total.bg_color = Some(RgbColor::TABLE_HEADER_COBALT);
+                let mut h_desc = TableCell::header("Deliverable / Item");
+                h_desc.bg_color = Some(RgbColor::TABLE_HEADER_COBALT);
+                t.rows[0] = vec![h_desc, h_qty, h_unit, h_total];
+
+                let items = [
+                    ("Core Architecture & Engineering", "1", "$1,200.00", "$1,200.00"),
+                    ("QA Verification & Release Packaging", "1", "$650.00", "$650.00"),
+                ];
+                for (idx, (desc, qty, unit, tot)) in items.iter().enumerate() {
+                    let mut c_qty = TableCell::plain(*qty);
+                    c_qty.alignment = Alignment::Center;
+                    let mut c_unit = TableCell::plain(*unit);
+                    c_unit.alignment = Alignment::Right;
+                    let mut c_tot = TableCell::plain(*tot);
+                    c_tot.alignment = Alignment::Right;
+                    t.rows[idx + 1] = vec![TableCell::plain(*desc), c_qty, c_unit, c_tot];
+                }
+                let mut sum_lbl = TableCell::plain("Total Due");
+                sum_lbl.bold = true;
+                sum_lbl.bg_color = Some(RgbColor::TABLE_TINT_CREAM);
+                let mut sum_blank1 = TableCell::plain("");
+                sum_blank1.bg_color = Some(RgbColor::TABLE_TINT_CREAM);
+                let mut sum_blank2 = TableCell::plain("USD");
+                sum_blank2.alignment = Alignment::Right;
+                sum_blank2.bg_color = Some(RgbColor::TABLE_TINT_CREAM);
+                let mut sum_val = TableCell::plain("$1,850.00");
+                sum_val.bold = true;
+                sum_val.alignment = Alignment::Right;
+                sum_val.bg_color = Some(RgbColor::TABLE_TINT_CREAM);
+                t.rows[3] = vec![sum_lbl, sum_blank1, sum_blank2, sum_val];
+
+                (t, Some(vec![0.46, 0.12, 0.21, 0.21]))
+            }
+            Self::ProjectTracker => {
+                let mut t = TableBlock::new(4, 4);
+                t.rows[0] = vec![
+                    TableCell::header("Milestone / Task"),
+                    TableCell::header("Owner"),
+                    TableCell::header("Status"),
+                    TableCell::header("Target"),
+                ];
+                let mut s_done = TableCell::plain("Complete");
+                s_done.bold = true;
+                s_done.bg_color = Some(RgbColor::TABLE_TINT_SAGE);
+                let mut s_prog = TableCell::plain("In Progress");
+                s_prog.bold = true;
+                s_prog.bg_color = Some(RgbColor::TABLE_TINT_BLUE);
+                let mut s_plan = TableCell::plain("Planned");
+                s_plan.bg_color = Some(RgbColor::TABLE_TINT_CREAM);
+
+                t.rows[1] = vec![
+                    TableCell::plain("Design System & Spec"),
+                    TableCell::plain("Design Lead"),
+                    s_done,
+                    TableCell::plain("Week 1"),
+                ];
+                t.rows[2] = vec![
+                    TableCell::plain("Core Engine Implementation"),
+                    TableCell::plain("Systems Eng"),
+                    s_prog,
+                    TableCell::plain("Week 2"),
+                ];
+                t.rows[3] = vec![
+                    TableCell::plain("Security Audit & Sign-Off"),
+                    TableCell::plain("QA / SecOps"),
+                    s_plan,
+                    TableCell::plain("Week 3"),
+                ];
+                (t, Some(vec![0.42, 0.20, 0.20, 0.18]))
+            }
+            Self::ComparisonMatrix => {
+                let mut t = TableBlock::new(4, 3);
+                let mut h_prop = TableCell::header("Proposed Option");
+                h_prop.bg_color = Some(RgbColor::TABLE_HEADER_COBALT);
+                t.rows[0] = vec![
+                    TableCell::header("Evaluation Criterion"),
+                    TableCell::header("Current Baseline"),
+                    h_prop,
+                ];
+                let rows_data = [
+                    ("Latency / Speed", "240 ms average", "< 16 ms native VSync"),
+                    ("Offline Operation", "Requires cloud login", "100% offline-first"),
+                    ("Annual Cost", "$24 / seat / mo", "Open-source MIT"),
+                ];
+                for (i, (crit, base, prop)) in rows_data.iter().enumerate() {
+                    let mut c_crit = TableCell::plain(*crit);
+                    c_crit.bold = true;
+                    let mut c_prop = TableCell::plain(*prop);
+                    c_prop.bg_color = Some(RgbColor::TABLE_STRIPE_COBALT);
+                    t.rows[i + 1] = vec![c_crit, TableCell::plain(*base), c_prop];
+                }
+                (t, Some(vec![0.32, 0.34, 0.34]))
+            }
+            Self::ProsAndCons => {
+                let mut t = TableBlock::new(4, 2);
+                let mut h_pros = TableCell::header("Advantages / Pros");
+                h_pros.bg_color = Some(RgbColor::TABLE_HEADER_SAGE);
+                let mut h_cons = TableCell::header("Trade-Offs / Considerations");
+                h_cons.bg_color = Some(RgbColor::TABLE_HEADER_TERRACOTTA);
+                t.rows[0] = vec![h_pros, h_cons];
+                for r in 1..4 {
+                    let mut p = TableCell::plain(if r == 1 {
+                        "Fast, predictable native execution"
+                    } else {
+                        ""
+                    });
+                    p.bg_color = Some(RgbColor::TABLE_STRIPE_SAGE);
+                    let mut c = TableCell::plain(if r == 1 {
+                        "Initial migration & onboarding effort"
+                    } else {
+                        ""
+                    });
+                    c.bg_color = Some(RgbColor::TABLE_STRIPE_TERRACOTTA);
+                    t.rows[r] = vec![p, c];
+                }
+                (t, Some(vec![0.50, 0.50]))
+            }
+            Self::WeeklySchedule => {
+                let mut t = TableBlock::new(5, 3);
+                t.rows[0] = vec![
+                    TableCell::header("Time"),
+                    TableCell::header("Session / Deliverable"),
+                    TableCell::header("Facilitator"),
+                ];
+                let slots = [
+                    ("09:00", "Kickoff & Architecture Alignment", "Engineering"),
+                    ("10:30", "Interactive UX Critique & Polish", "Product"),
+                    ("13:30", "Security & Compliance Review", "SecOps"),
+                    ("15:00", "Release Verification & Demo", "All Hands"),
+                ];
+                for (i, (tm, topic, lead)) in slots.iter().enumerate() {
+                    let mut c_tm = TableCell::plain(*tm);
+                    c_tm.bold = true;
+                    t.rows[i + 1] = vec![c_tm, TableCell::plain(*topic), TableCell::plain(*lead)];
+                }
+                t.toggle_zebra_striping();
+                (t, Some(vec![0.18, 0.56, 0.26]))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -828,6 +1506,124 @@ pub struct ImageBlock {
     pub png_bytes: Vec<u8>,
     pub rgba_preview: Option<(u32, u32, Vec<u8>)>,
     pub caption: String,
+    pub alignment: Alignment,
+}
+
+impl ImageBlock {
+    pub fn new(
+        name: impl Into<String>,
+        width_pt: f32,
+        height_pt: f32,
+        raw_bytes: Vec<u8>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            width_pt: width_pt.max(24.0),
+            height_pt: height_pt.max(24.0),
+            png_bytes: raw_bytes,
+            rgba_preview: None,
+            caption: String::new(),
+            alignment: Alignment::Center,
+        }
+    }
+
+    /// Construct a crisp, sheet-fitted `ImageBlock` from decoded RGBA pixels + original payload bytes.
+    pub fn from_decoded(
+        name: impl Into<String>,
+        pixel_w: u32,
+        pixel_h: u32,
+        rgba: Vec<u8>,
+        raw_bytes: Vec<u8>,
+        max_content_width_pt: f32,
+    ) -> Self {
+        let pw = pixel_w.max(1) as f32;
+        let ph = pixel_h.max(1) as f32;
+        let aspect = (pw / ph).clamp(0.08, 12.0);
+        // Convert 96-DPI pixels to 72-DPI typographic points (`0.75`), smoothly fitted to page margins
+        let max_w = max_content_width_pt.max(140.0);
+        let natural_w = (pw * 0.75).max(48.0);
+        let width_pt = natural_w.min(max_w);
+        let height_pt = (width_pt / aspect).clamp(24.0, 620.0);
+        let fitted_w = (height_pt * aspect).min(max_w);
+
+        Self {
+            name: name.into(),
+            width_pt: fitted_w,
+            height_pt,
+            png_bytes: raw_bytes,
+            rgba_preview: Some((pixel_w, pixel_h, rgba)),
+            caption: String::new(),
+            alignment: Alignment::Center,
+        }
+    }
+
+    pub fn aspect_ratio(&self) -> f32 {
+        if let Some((iw, ih, _)) = &self.rgba_preview {
+            if *iw > 0 && *ih > 0 {
+                return (*iw as f32 / *ih as f32).clamp(0.08, 12.0);
+            }
+        }
+        (self.width_pt / self.height_pt.max(1.0)).clamp(0.08, 12.0)
+    }
+
+    pub fn resize_preserving_aspect(&mut self, target_width_pt: f32, max_width_pt: f32) {
+        let aspect = self.aspect_ratio();
+        let clamped_w = target_width_pt.clamp(48.0, max_width_pt.max(96.0));
+        self.width_pt = clamped_w;
+        self.height_pt = (clamped_w / aspect).clamp(24.0, 680.0);
+    }
+
+    pub fn scale_to_fraction(&mut self, fraction: f32, content_width_pt: f32) {
+        let target = content_width_pt.max(120.0) * fraction.clamp(0.15, 1.0);
+        self.resize_preserving_aspect(target, content_width_pt);
+    }
+
+    /// Detect canonical OOXML media extension (`"png"`, `"jpeg"`, `"bmp"`, `"gif"`) from payload bytes.
+    pub fn media_extension(&self) -> &'static str {
+        let b = &self.png_bytes;
+        if b.len() >= 8 && b[..8] == [137, 80, 78, 71, 13, 10, 26, 10] {
+            "png"
+        } else if b.len() >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF {
+            "jpeg"
+        } else if b.len() >= 2 && &b[0..2] == b"BM" {
+            "bmp"
+        } else if b.len() >= 6 && (&b[0..6] == b"GIF87a" || &b[0..6] == b"GIF89a") {
+            "gif"
+        } else {
+            "png"
+        }
+    }
+
+    /// Parse `/image`, `/img`, `/figure`, or `/photo [optional/path.png]`.
+    /// Returns `Some(None)` to open the native image picker or `Some(Some(path))` to load directly.
+    pub fn parse_slash_image_command(line: &str) -> Option<Option<String>> {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('/') {
+            return None;
+        }
+        let body = &trimmed[1..];
+        let (cmd, rest) = match body.find(char::is_whitespace) {
+            Some(pos) => (&body[..pos], body[pos..].trim()),
+            None => (body, ""),
+        };
+        if matches!(
+            cmd.to_ascii_lowercase().as_str(),
+            "image" | "img" | "figure" | "photo" | "picture"
+        ) {
+            if rest.is_empty() {
+                Some(None)
+            } else {
+                let unquoted = rest.trim_matches('"').trim_matches('\'').trim();
+                if unquoted.is_empty() {
+                    Some(None)
+                } else {
+                    Some(Some(unquoted.to_string()))
+                }
+            }
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1696,5 +2492,85 @@ mod tests {
         assert!(contract.accept_revision(1) >= 1);
         let after = contract.revision_counts();
         assert!(after.0 + after.1 < before.0 + before.1);
+    }
+
+    #[test]
+    fn test_smart_table_creation_presets_slash_pipe_and_tsv() {
+        // 1. Slash command dimensions & presets
+        let (tbl_dim, _, _) = TableBlock::from_slash_command("/table 4x5").expect("slash 4x5");
+        assert_eq!(tbl_dim.rows.len(), 4);
+        assert_eq!(tbl_dim.cols, 5);
+
+        let (tbl_inv, weights_opt, _) =
+            TableBlock::from_slash_command("/invoice").expect("slash invoice");
+        assert_eq!(tbl_inv.cols, 4);
+        assert_eq!(tbl_inv.rows[0][3].alignment, Alignment::Right);
+        assert!(weights_opt.is_some());
+
+        // 2. Single-line Markdown pipe header -> ready-to-type 2-row table
+        let pipe_tbl = TableBlock::from_pipe_header_line("| Feature | Owner | ETA |")
+            .expect("pipe header line");
+        assert_eq!(pipe_tbl.cols, 3);
+        assert_eq!(pipe_tbl.rows.len(), 2);
+        assert_eq!(pipe_tbl.rows[0][0].text, "Feature");
+        assert!(pipe_tbl.rows[0][0].bold);
+        assert_eq!(pipe_tbl.rows[1][0].text, "");
+
+        // 3. Multi-line Markdown pipe paste with column alignment inference
+        let md = "| Item | Qty | Amount |\n| :--- | :---: | ---: |\n| License | 3 | $450 |";
+        let md_tbl = TableBlock::from_delimited_text(md).expect("markdown table paste");
+        assert_eq!(md_tbl.rows.len(), 2);
+        assert_eq!(md_tbl.cols, 3);
+        assert_eq!(md_tbl.rows[1][1].alignment, Alignment::Center);
+        assert_eq!(md_tbl.rows[1][2].alignment, Alignment::Right);
+
+        // 4. TSV paste + grid expansion inside an existing table + theme/zebra cycling
+        let tsv = "Q1\t$12,000\t+14%\nQ2\t$15,400\t+28%";
+        let mut tsv_tbl = TableBlock::from_delimited_text(tsv).expect("tsv paste");
+        assert_eq!(tsv_tbl.rows.len(), 2);
+        assert_eq!(tsv_tbl.cols, 3);
+
+        tsv_tbl.paste_grid_at(
+            1,
+            2,
+            &[
+                vec!["A".to_string(), "B".to_string()],
+                vec!["C".to_string(), "D".to_string()],
+            ],
+        );
+        assert_eq!(tsv_tbl.cols, 4);
+        assert_eq!(tsv_tbl.rows.len(), 3);
+        assert_eq!(tsv_tbl.rows[2][3].text, "D");
+
+        assert!(tsv_tbl.toggle_zebra_striping());
+        assert!(tsv_tbl.is_zebra_striped());
+        let next_theme = tsv_tbl.cycle_theme();
+        assert_eq!(next_theme, TableTheme::CobaltLedger);
+    }
+
+    #[test]
+    fn test_image_block_fitting_aspect_resize_and_slash_command() {
+        let mut img = ImageBlock::from_decoded(
+            "architecture-diagram",
+            1600,
+            800,
+            vec![255; 16],
+            vec![0xFF, 0xD8, 0xFF, 0xE0],
+            460.0,
+        );
+        assert_eq!(img.media_extension(), "jpeg");
+        assert!((img.width_pt - 460.0).abs() < 0.5);
+        assert!((img.height_pt - 230.0).abs() < 0.5);
+        assert_eq!(img.alignment, Alignment::Center);
+
+        img.scale_to_fraction(0.5, 460.0);
+        assert!((img.width_pt - 230.0).abs() < 0.5);
+        assert!((img.height_pt - 115.0).abs() < 0.5);
+
+        assert_eq!(ImageBlock::parse_slash_image_command("/image"), Some(None));
+        assert_eq!(
+            ImageBlock::parse_slash_image_command("/figure \"chart.png\""),
+            Some(Some("chart.png".to_string()))
+        );
     }
 }

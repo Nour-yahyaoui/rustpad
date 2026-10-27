@@ -1,9 +1,9 @@
 {
   "name": "rustpad-studio-site",
   "private": true,
-  "version": "2.1.0",
+  "version": "2.2.0",
   "type": "module",
-  "description": "Official project specification and showcase for RustPad v2.1 — Ultra-Smooth 60–120Hz Offline Native Desktop Word (.docx), Forensic PDF (.pdf) & Local AI Studio by Nour Yahyaoui.",
+  "description": "Official project specification and showcase for RustPad v2.2 — Effortless Table Studio & Ultra-Smooth 60–120Hz Offline Native Desktop Word (.docx), Forensic PDF (.pdf) & Local AI Suite by Nour Yahyaoui.",
   "author": "Nour Yahyaoui <nourryahyaoui@gmail.com> (https://www.linkedin.com/in/nour-yahyaoui-86987b36b)",
   "repository": "https://github.com/Nour-yahyaoui/rustpad",
   "license": "MIT",

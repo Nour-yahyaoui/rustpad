@@ -9,7 +9,7 @@ use crate::state::{
     ToolbarDropdown, UiAction,
 };
 use crate::word_view::paint_word_tab;
-use doc_model::{FontFamily, ParagraphStyle, TemplateKind};
+use doc_model::{FontFamily, ParagraphStyle, TablePreset, TemplateKind};
 use power_tools::{AiProviderPreset, AiTask};
 use rustpad_render::{Color, DaylightTheme, FontBook, FontSlot, Rect, Surface, UiIcon};
 
@@ -1522,6 +1522,197 @@ fn paint_toolbar_dropdown(
                     .push(HitRegion::button(r, UiAction::SelectFontFamily(*fam)));
             }
         }
+        ToolbarDropdown::TableCreator {
+            anchor_x,
+            anchor_y,
+            rows,
+            cols,
+        } => {
+            let grid_n = 8usize;
+            let cell_sz = (21.0 * s).round();
+            let gap = (4.0 * s).round();
+            let grid_span = (grid_n as f32) * cell_sz + ((grid_n - 1) as f32) * gap;
+            let pad_x = (14.0 * s).round();
+            let mw = (grid_span + pad_x * 2.0).max(232.0 * s).round();
+            let preset_h = (28.0 * s).round();
+            let presets = TablePreset::ALL;
+            let mh = (36.0 * s
+                + grid_span
+                + 28.0 * s
+                + (presets.len() as f32) * preset_h
+                + 28.0 * s)
+                .round();
+            let mx = (anchor_x as f32).min(win_w - mw - 12.0).max(8.0);
+            let my = (anchor_y as f32 + 4.0).min(win_h - mh - 12.0).max(8.0);
+            let card = Rect::new(mx, my, mw, mh);
+
+            let gx0 = card.x + ((mw - grid_span) * 0.5).round();
+            let gy0 = card.y + (34.0 * s).round();
+
+            // Zero-lag hover detection updates `(sel_rows, sel_cols)` on the exact current frame!
+            let mut sel_rows = rows.clamp(1, grid_n);
+            let mut sel_cols = cols.clamp(1, grid_n);
+            for r in 0..grid_n {
+                for c in 0..grid_n {
+                    let hit_r = Rect::new(
+                        gx0 + (c as f32) * (cell_sz + gap) - gap * 0.4,
+                        gy0 + (r as f32) * (cell_sz + gap) - gap * 0.4,
+                        cell_sz + gap * 0.8,
+                        cell_sz + gap * 0.8,
+                    );
+                    if hit_r.contains(app.mouse_x, app.mouse_y) {
+                        sel_rows = r + 1;
+                        sel_cols = c + 1;
+                        app.open_dropdown = Some(ToolbarDropdown::TableCreator {
+                            anchor_x,
+                            anchor_y,
+                            rows: sel_rows,
+                            cols: sel_cols,
+                        });
+                    }
+                }
+            }
+
+            surface.draw_paper_shadow(card, 7.0, 16.0, 26);
+            surface.fill_rounded_rect(card, 7.0, DaylightTheme::PAPER);
+            surface.stroke_rounded_rect(card, 7.0, 1.0, DaylightTheme::BORDER_STRONG);
+
+            // Header bar: title + live `R × C` pill readout
+            surface.draw_text(
+                &mut app.fonts,
+                FontSlot::SansBold,
+                10.5 * s,
+                card.x + pad_x,
+                card.y + 22.0 * s,
+                DaylightTheme::INK_SUB,
+                "INSERT TABLE",
+            );
+            let dim_lbl = format!("{sel_rows} × {sel_cols} Table");
+            let dim_tw = app.fonts.measure_text(FontSlot::SansBold, &dim_lbl, 10.6 * s);
+            let pill = Rect::new(
+                card.x + mw - pad_x - dim_tw - 14.0 * s,
+                card.y + 8.0 * s,
+                dim_tw + 14.0 * s,
+                19.0 * s,
+            );
+            surface.fill_rounded_rect(pill, 4.0, DaylightTheme::WORD_SOFT);
+            surface.stroke_rounded_rect(pill, 4.0, 1.0, DaylightTheme::WORD_ACCENT);
+            surface.draw_text(
+                &mut app.fonts,
+                FontSlot::SansBold,
+                10.6 * s,
+                pill.x + 7.0 * s,
+                pill.y + pill.h * 0.72,
+                DaylightTheme::WORD_ACCENT,
+                &dim_lbl,
+            );
+
+            // 8 × 8 tactile visual hover matrix (Row 0 shown as styled header row!)
+            for r in 0..grid_n {
+                for c in 0..grid_n {
+                    let cr = Rect::new(
+                        gx0 + (c as f32) * (cell_sz + gap),
+                        gy0 + (r as f32) * (cell_sz + gap),
+                        cell_sz,
+                        cell_sz,
+                    );
+                    let in_sel = r < sel_rows && c < sel_cols;
+                    let fill = if in_sel {
+                        if r == 0 {
+                            Color::rgb(214, 228, 250)
+                        } else {
+                            DaylightTheme::WORD_SOFT
+                        }
+                    } else {
+                        DaylightTheme::SIDEBAR
+                    };
+                    let stroke = if in_sel {
+                        DaylightTheme::WORD_ACCENT
+                    } else {
+                        DaylightTheme::BORDER_STRONG
+                    };
+                    surface.fill_rounded_rect(cr, 3.0, fill);
+                    surface.stroke_rounded_rect(cr, 3.0, if in_sel { 1.3 } else { 1.0 }, stroke);
+                    app.hit_regions.push(HitRegion::button(
+                        cr,
+                        UiAction::InsertTableCustom {
+                            rows: r + 1,
+                            cols: c + 1,
+                        },
+                    ));
+                }
+            }
+
+            // Divider + 1-Click Styled Table Presets
+            let sec_y = gy0 + grid_span + 10.0 * s;
+            surface.fill_rect(
+                Rect::new(card.x + pad_x, sec_y, mw - pad_x * 2.0, 1.0),
+                DaylightTheme::BORDER,
+            );
+            surface.draw_text(
+                &mut app.fonts,
+                FontSlot::SansBold,
+                9.6 * s,
+                card.x + pad_x,
+                sec_y + 15.0 * s,
+                DaylightTheme::INK_MUTED,
+                "1-CLICK STYLED PRESETS",
+            );
+
+            let list_y0 = sec_y + 21.0 * s;
+            for (idx, preset) in presets.iter().enumerate() {
+                let pr = Rect::new(
+                    card.x + 8.0 * s,
+                    list_y0 + (idx as f32) * preset_h,
+                    mw - 16.0 * s,
+                    preset_h - 1.0,
+                );
+                let hov = pr.contains(app.mouse_x, app.mouse_y);
+                if hov {
+                    surface.fill_rounded_rect(pr, 4.0, DaylightTheme::WORD_SOFT);
+                    surface.stroke_rounded_rect(pr, 4.0, 1.0, DaylightTheme::WORD_ACCENT);
+                }
+                surface.draw_text(
+                    &mut app.fonts,
+                    FontSlot::SansBold,
+                    11.2 * s,
+                    pr.x + 8.0 * s,
+                    pr.y + pr.h * 0.68,
+                    if hov {
+                        DaylightTheme::WORD_ACCENT
+                    } else {
+                        DaylightTheme::INK
+                    },
+                    preset.label(),
+                );
+                let badge = preset.badge();
+                let bw = app.fonts.measure_text(FontSlot::SansRegular, badge, 10.0 * s);
+                surface.draw_text(
+                    &mut app.fonts,
+                    FontSlot::SansRegular,
+                    10.0 * s,
+                    pr.x + pr.w - bw - 8.0 * s,
+                    pr.y + pr.h * 0.68,
+                    DaylightTheme::INK_SUB,
+                    badge,
+                );
+                app.hit_regions
+                    .push(HitRegion::button(pr, UiAction::InsertTablePreset(*preset)));
+            }
+
+            // Keyboard & Markdown shorthand hint footer
+            let foot_y = list_y0 + (presets.len() as f32) * preset_h + 15.0 * s;
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SansRegular,
+                9.4 * s,
+                card.x + pad_x,
+                foot_y,
+                mw - pad_x * 2.0,
+                DaylightTheme::INK_MUTED,
+                "Shortcuts: /table 4x5 · | A | B | · Ctrl+V TSV",
+            );
+        }
     }
 }
 
@@ -1757,7 +1948,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 let cat_col = match cmd.category {
                     "PDF" => DaylightTheme::PDF_ACCENT,
                     "AI" => DaylightTheme::AI_ACCENT,
-                    "Table" => DaylightTheme::RUST_ORANGE,
+                    "Table" | "Image" => DaylightTheme::RUST_ORANGE,
                     _ => DaylightTheme::WORD_ACCENT,
                 };
                 surface.draw_text(
@@ -1882,6 +2073,8 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 FileModalKind::SaveActive => "Save Active Document",
                 FileModalKind::ExportPdf => "Export Vector PDF (.pdf)",
                 FileModalKind::MergePdf => "Select PDF File to Merge",
+                FileModalKind::InsertImage => "Insert Image Figure (.png, .jpg, .jpeg, .bmp)",
+                FileModalKind::ReplaceImage => "Replace Selected Image Figure (.png, .jpg, .bmp)",
             };
             surface.draw_text(
                 &mut app.fonts,
@@ -2059,6 +2252,21 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 "Attach an ECMA-376 review comment to the active paragraph:",
                 &cmt,
                 "Attach Comment",
+            );
+        }
+
+        ActiveModal::EditImageCaption { text, .. } => {
+            let cap = text.clone();
+            paint_single_input_modal(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                s,
+                screen,
+                "Figure Caption & Alt Description (ECMA-376 wp:docPr)",
+                "Enter figure caption below image (leave empty to hide):",
+                &cap,
+                "Save Caption",
             );
         }
 

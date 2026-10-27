@@ -2,10 +2,10 @@
 //! Converts `doc_model::Document` (and custom PDF Studio pages) into crisp, multi-page vector PDFs.
 
 use doc_model::{
-    Alignment, Block, Document, FontFamily, ListKind, Paragraph, ParagraphStyle, RevisionKind,
-    RgbColor, SpanStyle, TableBlock,
+    Alignment, Block, Document, FontFamily, ImageBlock, ListKind, Paragraph, ParagraphStyle,
+    RevisionKind, RgbColor, SpanStyle, TableBlock,
 };
-use rustpad_zip::zlib_compress;
+use rustpad_zip::{zlib_compress, zlib_decompress};
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -49,6 +49,7 @@ pub fn export_document_to_pdf_bytes(doc: &Document, opts: &PdfCreateOptions) -> 
     let content_w = (page_w - m_left - m_right).max(120.0);
 
     let mut page_streams: Vec<String> = vec![String::new()];
+    let mut pdf_images: Vec<PdfImageXObject> = Vec::new();
     let mut cursor_y = page_h - m_top;
 
     let start_new_page = |streams: &mut Vec<String>, y: &mut f32| {
@@ -103,28 +104,73 @@ pub fn export_document_to_pdf_bytes(doc: &Document, opts: &PdfCreateOptions) -> 
                 );
             }
             Block::Image(img) => {
-                let box_h = img.height_pt.clamp(40.0, 260.0);
-                let box_w = img.width_pt.clamp(60.0, content_w);
-                if cursor_y - box_h - 14.0 < m_bot {
+                let aspect = img.aspect_ratio();
+                let box_w = img.width_pt.clamp(48.0, content_w);
+                let box_h = if img.width_pt > content_w {
+                    (box_w / aspect).clamp(32.0, 560.0)
+                } else {
+                    img.height_pt.clamp(32.0, 560.0)
+                };
+                let caption_h = if img.caption.trim().is_empty() {
+                    0.0
+                } else {
+                    16.0
+                };
+                if cursor_y - box_h - caption_h - 14.0 < m_bot {
                     start_new_page(&mut page_streams, &mut cursor_y);
                 }
+                let img_x = match img.alignment {
+                    Alignment::Center => m_left + (content_w - box_w) * 0.5,
+                    Alignment::Right => m_left + (content_w - box_w),
+                    _ => m_left,
+                };
                 let s = page_streams.last_mut().unwrap();
                 let y_bot = cursor_y - box_h;
-                let _ = writeln!(
-                    s,
-                    "q 0.95 0.96 0.98 rg 0.82 0.86 0.91 RG 0.75 w {:.2} {:.2} {:.2} {:.2} re B Q",
-                    m_left, y_bot, box_w, box_h
-                );
-                write_pdf_text_cmd(
-                    s,
-                    "F1",
-                    10.0,
-                    m_left + 12.0,
-                    y_bot + box_h * 0.5,
-                    RgbColor::MUTED_GRAY,
-                    &format!("[Image: {}]", img.name),
-                );
-                cursor_y = y_bot - 12.0;
+
+                if let Some(xobj) = prepare_pdf_image_xobject(img) {
+                    let alias = format!("Im{}", pdf_images.len() + 1);
+                    pdf_images.push(xobj);
+                    let _ = writeln!(
+                        s,
+                        "q {:.2} 0 0 {:.2} {:.2} {:.2} cm /{alias} Do Q",
+                        box_w, box_h, img_x, y_bot
+                    );
+                } else {
+                    let _ = writeln!(
+                        s,
+                        "q 0.95 0.96 0.98 rg 0.82 0.86 0.91 RG 0.75 w {:.2} {:.2} {:.2} {:.2} re B Q",
+                        img_x, y_bot, box_w, box_h
+                    );
+                    write_pdf_text_cmd(
+                        s,
+                        "F1",
+                        10.0,
+                        img_x + 12.0,
+                        y_bot + box_h * 0.5,
+                        RgbColor::MUTED_GRAY,
+                        &format!("[Image: {}]", img.name),
+                    );
+                }
+
+                if !img.caption.trim().is_empty() {
+                    let cap = img.caption.trim();
+                    let cap_w = estimate_text_width(cap, 9.5, FontFamily::Sans);
+                    let cap_x = match img.alignment {
+                        Alignment::Center => m_left + ((content_w - cap_w) * 0.5).max(0.0),
+                        Alignment::Right => m_left + (content_w - cap_w).max(0.0),
+                        _ => img_x,
+                    };
+                    write_pdf_text_cmd(
+                        s,
+                        "F3",
+                        9.5,
+                        cap_x,
+                        y_bot - 12.0,
+                        RgbColor::MUTED_GRAY,
+                        cap,
+                    );
+                }
+                cursor_y = y_bot - caption_h - 12.0;
             }
         }
     }
@@ -212,12 +258,13 @@ pub fn export_document_to_pdf_bytes(doc: &Document, opts: &PdfCreateOptions) -> 
         final_streams.push(full);
     }
 
-    assemble_pdf_binary_ext(
+    assemble_pdf_binary_with_images(
         &doc.title,
         &doc.author,
         page_w,
         page_h,
         &final_streams,
+        &pdf_images,
         opts.compress_streams,
         opts.pdfa_conformance,
     )
@@ -537,11 +584,17 @@ fn render_table_pdf(
             let font_id = if cell.bold { "F2" } else { "F1" };
             let max_chars = ((col_w - 12.0) / 5.3).max(4.0) as usize;
             let clipped: String = cell.text.chars().take(max_chars).collect();
+            let est_w = (clipped.chars().count() as f32) * 5.2;
+            let tx = match cell.alignment {
+                doc_model::Alignment::Center => x + ((col_w - est_w) * 0.5).max(6.0),
+                doc_model::Alignment::Right => (x + col_w - 6.0 - est_w).max(x + 6.0),
+                _ => x + 6.0,
+            };
             write_pdf_text_cmd(
                 s,
                 font_id,
                 10.0,
-                x + 6.0,
+                tx,
                 y_bot + 7.5,
                 RgbColor::INK_SLATE,
                 &clipped,
@@ -675,12 +728,268 @@ pub fn assemble_pdf_binary(
     assemble_pdf_binary_ext(title, author, page_w, page_h, page_streams, compress, false)
 }
 
+#[derive(Clone)]
+pub struct PdfImageXObject {
+    pub width: u32,
+    pub height: u32,
+    pub color_space: &'static str,
+    pub filter: &'static str,
+    pub data: Vec<u8>,
+}
+
+fn parse_jpeg_sof_dimensions(bytes: &[u8]) -> Option<(u32, u32, u8)> {
+    if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
+        return None;
+    }
+    let mut pos = 2usize;
+    while pos + 3 < bytes.len() {
+        if bytes[pos] != 0xFF {
+            pos += 1;
+            continue;
+        }
+        while pos < bytes.len() && bytes[pos] == 0xFF {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+        let m = bytes[pos];
+        pos += 1;
+        if m == 0xD9 {
+            break;
+        }
+        if m == 0x00 || m == 0xD8 || (0xD0..=0xD7).contains(&m) || m == 0x01 {
+            continue;
+        }
+        if pos + 2 > bytes.len() {
+            break;
+        }
+        let seg_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+        if seg_len < 2 || pos + seg_len > bytes.len() {
+            break;
+        }
+        if matches!(m, 0xC0 | 0xC1 | 0xC2) && seg_len >= 8 {
+            let h = u16::from_be_bytes([bytes[pos + 3], bytes[pos + 4]]) as u32;
+            let w = u16::from_be_bytes([bytes[pos + 5], bytes[pos + 6]]) as u32;
+            let nf = bytes[pos + 7];
+            if w > 0 && h > 0 && matches!(nf, 1 | 3 | 4) {
+                return Some((w, h, nf));
+            }
+        }
+        pos += seg_len;
+    }
+    None
+}
+
+fn extract_png_rgb_for_pdf(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    if bytes.len() < 33 || bytes[..8] != [137, 80, 78, 71, 13, 10, 26, 10] {
+        return None;
+    }
+    let mut w = 0usize;
+    let mut h = 0usize;
+    let mut bit_depth = 0u8;
+    let mut color_type = 0u8;
+    let mut interlace = 0u8;
+    let mut palette: Vec<[u8; 3]> = Vec::new();
+    let mut idat = Vec::new();
+    let mut cur = 8usize;
+
+    while cur + 12 <= bytes.len() {
+        let len = u32::from_be_bytes([bytes[cur], bytes[cur + 1], bytes[cur + 2], bytes[cur + 3]])
+            as usize;
+        let ctype = &bytes[cur + 4..cur + 8];
+        let ds = cur + 8;
+        let de = ds.checked_add(len)?;
+        if de + 4 > bytes.len() {
+            break;
+        }
+        let chunk = &bytes[ds..de];
+        match ctype {
+            b"IHDR" if chunk.len() >= 13 => {
+                w = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as usize;
+                h = u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]) as usize;
+                bit_depth = chunk[8];
+                color_type = chunk[9];
+                interlace = chunk[12];
+            }
+            b"PLTE" => {
+                for rgb in chunk.chunks_exact(3) {
+                    palette.push([rgb[0], rgb[1], rgb[2]]);
+                }
+            }
+            b"IDAT" => idat.extend_from_slice(chunk),
+            b"IEND" => break,
+            _ => {}
+        }
+        cur = de + 4;
+    }
+
+    if w == 0 || h == 0 || bit_depth != 8 || interlace != 0 || w * h > 16 * 1024 * 1024 {
+        return None;
+    }
+    let bpp = match color_type {
+        0 | 3 => 1usize,
+        4 => 2usize,
+        2 => 3usize,
+        6 => 4usize,
+        _ => return None,
+    };
+    let stride = w * bpp;
+    let raw = zlib_decompress(&idat).ok()?;
+    if raw.len() < h * (1 + stride) {
+        return None;
+    }
+
+    let mut prev = vec![0u8; stride];
+    let mut row = vec![0u8; stride];
+    let mut rgb = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        let off = y * (1 + stride);
+        let ftype = raw[off];
+        let src = &raw[off + 1..off + 1 + stride];
+        for x in 0..stride {
+            let a = if x >= bpp { row[x - bpp] } else { 0 };
+            let b = prev[x];
+            let c = if x >= bpp { prev[x - bpp] } else { 0 };
+            let pred = match ftype {
+                0 => 0,
+                1 => a,
+                2 => b,
+                3 => ((a as u16 + b as u16) >> 1) as u8,
+                4 => {
+                    let p = a as i32 + b as i32 - c as i32;
+                    let pa = (p - a as i32).abs();
+                    let pb = (p - b as i32).abs();
+                    let pc = (p - c as i32).abs();
+                    if pa <= pb && pa <= pc {
+                        a
+                    } else if pb <= pc {
+                        b
+                    } else {
+                        c
+                    }
+                }
+                _ => return None,
+            };
+            row[x] = src[x].wrapping_add(pred);
+        }
+        for px in 0..w {
+            match color_type {
+                0 => {
+                    let g = row[px];
+                    rgb.extend_from_slice(&[g, g, g]);
+                }
+                2 => {
+                    let i = px * 3;
+                    rgb.extend_from_slice(&row[i..i + 3]);
+                }
+                3 => {
+                    let c = palette.get(row[px] as usize).copied().unwrap_or([255, 255, 255]);
+                    rgb.extend_from_slice(&c);
+                }
+                4 => {
+                    let g = row[px * 2] as u16;
+                    let a = row[px * 2 + 1] as u16;
+                    let v = ((g * a + 255 * (255 - a)) / 255) as u8;
+                    rgb.extend_from_slice(&[v, v, v]);
+                }
+                6 => {
+                    let i = px * 4;
+                    let a = row[i + 3] as u16;
+                    let r = ((row[i] as u16 * a + 255 * (255 - a)) / 255) as u8;
+                    let g = ((row[i + 1] as u16 * a + 255 * (255 - a)) / 255) as u8;
+                    let b = ((row[i + 2] as u16 * a + 255 * (255 - a)) / 255) as u8;
+                    rgb.extend_from_slice(&[r, g, b]);
+                }
+                _ => {}
+            }
+        }
+        prev.copy_from_slice(&row);
+    }
+    Some((w as u32, h as u32, rgb))
+}
+
+fn prepare_pdf_image_xobject(img: &ImageBlock) -> Option<PdfImageXObject> {
+    // 1. Native JPEG `/DCTDecode` passthrough (lossless byte embedding, ultra-compact PDF!)
+    if let Some((w, h, nf)) = parse_jpeg_sof_dimensions(&img.png_bytes) {
+        let cs = match nf {
+            1 => "/DeviceGray",
+            4 => "/DeviceCMYK",
+            _ => "/DeviceRGB",
+        };
+        return Some(PdfImageXObject {
+            width: w,
+            height: h,
+            color_space: cs,
+            filter: "/DCTDecode",
+            data: img.png_bytes.clone(),
+        });
+    }
+
+    // 2. Decoded `rgba_preview` -> composited 24-bit RGB over paper white -> `/FlateDecode`
+    if let Some((w, h, rgba)) = &img.rgba_preview {
+        let px_count = (*w as usize).saturating_mul(*h as usize);
+        if *w > 0 && *h > 0 && rgba.len() >= px_count * 4 {
+            let mut rgb = Vec::with_capacity(px_count * 3);
+            for px in rgba[..px_count * 4].chunks_exact(4) {
+                let a = px[3] as u16;
+                rgb.push(((px[0] as u16 * a + 255 * (255 - a)) / 255) as u8);
+                rgb.push(((px[1] as u16 * a + 255 * (255 - a)) / 255) as u8);
+                rgb.push(((px[2] as u16 * a + 255 * (255 - a)) / 255) as u8);
+            }
+            return Some(PdfImageXObject {
+                width: *w,
+                height: *h,
+                color_space: "/DeviceRGB",
+                filter: "/FlateDecode",
+                data: zlib_compress(&rgb),
+            });
+        }
+    }
+
+    // 3. Headless CLI PNG fallback -> unfilter & compress RGB via `/FlateDecode`
+    if let Some((w, h, rgb)) = extract_png_rgb_for_pdf(&img.png_bytes) {
+        return Some(PdfImageXObject {
+            width: w,
+            height: h,
+            color_space: "/DeviceRGB",
+            filter: "/FlateDecode",
+            data: zlib_compress(&rgb),
+        });
+    }
+
+    None
+}
+
 pub fn assemble_pdf_binary_ext(
     title: &str,
     author: &str,
     page_w: f32,
     page_h: f32,
     page_streams: &[String],
+    compress: bool,
+    pdfa_conformance: bool,
+) -> Vec<u8> {
+    assemble_pdf_binary_with_images(
+        title,
+        author,
+        page_w,
+        page_h,
+        page_streams,
+        &[],
+        compress,
+        pdfa_conformance,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn assemble_pdf_binary_with_images(
+    title: &str,
+    author: &str,
+    page_w: f32,
+    page_h: f32,
+    page_streams: &[String],
+    images: &[PdfImageXObject],
     compress: bool,
     pdfa_conformance: bool,
 ) -> Vec<u8> {
@@ -704,8 +1013,10 @@ pub fn assemble_pdf_binary_ext(
     // 2: Pages
     // 3: Info
     // 4..=15: 12 standard Type1 Font objects
-    // 16: Shared Resources dictionary
-    // 17..: Pairs of (Page Obj, Content Stream Obj)
+    // 16: Shared Resources dictionary (/Font + optional /XObject)
+    // 17 .. 17 + page_count*2: Pairs of (Page Obj, Content Stream Obj)
+    // 17 + page_count*2 .. + images.len(): Image XObject streams
+    // 17 + page_count*2 + images.len(): Optional PDF/A-2b XMP Metadata
     let mut objects: Vec<Vec<u8>> = Vec::new();
     let page_count = page_streams.len().max(1);
     let mut kids_refs = String::new();
@@ -714,7 +1025,8 @@ pub fn assemble_pdf_binary_ext(
         let _ = write!(kids_refs, "{page_obj_id} 0 R ");
     }
 
-    let xmp_obj_id = 17 + page_count * 2;
+    let img_base_obj_id = 17 + page_count * 2;
+    let xmp_obj_id = img_base_obj_id + images.len();
     if pdfa_conformance {
         objects.push(
             format!("<< /Type /Catalog /Pages 2 0 R /Metadata {xmp_obj_id} 0 R >>").into_bytes(),
@@ -746,7 +1058,19 @@ pub fn assemble_pdf_binary_ext(
         let _ = write!(font_map_entries, "/{alias} {obj_id} 0 R ");
     }
 
-    objects.push(format!("<< /Font << {font_map_entries}>> >>").into_bytes()); // Obj 16
+    if images.is_empty() {
+        objects.push(format!("<< /Font << {font_map_entries}>> >>").into_bytes()); // Obj 16
+    } else {
+        let mut xobj_entries = String::new();
+        for k in 0..images.len() {
+            let xid = img_base_obj_id + k;
+            let _ = write!(xobj_entries, "/Im{} {xid} 0 R ", k + 1);
+        }
+        objects.push(
+            format!("<< /Font << {font_map_entries}>> /XObject << {xobj_entries}>> >>")
+                .into_bytes(),
+        );
+    }
 
     for (i, stream_str) in page_streams.iter().enumerate() {
         let content_obj_id = 17 + i * 2 + 1;
@@ -767,6 +1091,21 @@ pub fn assemble_pdf_binary_ext(
         stream_obj.extend_from_slice(&payload);
         stream_obj.extend_from_slice(b"\nendstream");
         objects.push(stream_obj);
+    }
+
+    for img in images {
+        let mut img_obj = format!(
+            "<< /Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace {} /BitsPerComponent 8 /Filter {} /Length {} >>\nstream\n",
+            img.width,
+            img.height,
+            img.color_space,
+            img.filter,
+            img.data.len()
+        )
+        .into_bytes();
+        img_obj.extend_from_slice(&img.data);
+        img_obj.extend_from_slice(b"\nendstream");
+        objects.push(img_obj);
     }
 
     if pdfa_conformance {
@@ -843,5 +1182,30 @@ mod tests {
         assert!(pdf.starts_with(b"%PDF-1.7"));
         assert!(pdf.ends_with(b"%%EOF\n"));
         assert!(pdf.len() > 600);
+    }
+
+    #[test]
+    fn test_export_document_embeds_real_pdf_image_xobjects() {
+        let mut doc = Document::blank();
+        let mut img = ImageBlock::from_decoded(
+            "Diagram",
+            2,
+            2,
+            vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255],
+            vec![137, 80, 78, 71, 13, 10, 26, 10],
+            400.0,
+        );
+        img.caption = "Figure 1: System Topology".into();
+        doc.blocks.push(Block::Image(img));
+
+        let opts = PdfCreateOptions {
+            compress_streams: false,
+            ..PdfCreateOptions::default()
+        };
+        let pdf = export_document_to_pdf_bytes(&doc, &opts);
+        let pdf_ascii = String::from_utf8_lossy(&pdf);
+        assert!(pdf_ascii.contains("/Subtype /Image"));
+        assert!(pdf_ascii.contains("/Im1 Do"));
+        assert!(pdf_ascii.contains("Figure 1: System Topology"));
     }
 }

@@ -10,7 +10,8 @@ use doc_model::{
 };
 use power_tools::SpellChecker;
 use rustpad_render::{
-    decode_png_rgba, Color, DaylightTheme, FontBook, FontSlot, Rect, Surface, UiIcon,
+    decode_any_image_rgba, hash_image_bytes, Color, DaylightTheme, FontBook, FontSlot, Rect,
+    Surface, UiIcon,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -36,12 +37,18 @@ pub fn paint_word_tab(
     let s = ui_scale.clamp(0.85, 1.6);
     let ribbon_h = if focus_mode { 0.0 } else { (44.0 * s).round() };
     let has_active_table = w.active_table_cell.is_some();
+    let has_active_image = w
+        .selected_image_block
+        .is_some_and(|b| matches!(w.doc.blocks.get(b), Some(Block::Image(_))));
     let (rev_ins, rev_del) = w.doc.revision_counts();
     let show_review_bar = !focus_mode
         && is_focused
         && !has_active_table
+        && !has_active_image
         && (w.doc.track_changes || rev_ins > 0 || rev_del > 0 || !w.doc.comments.is_empty());
-    let table_bar_h = if !focus_mode && ((has_active_table && is_focused) || show_review_bar) {
+    let table_bar_h = if !focus_mode
+        && (((has_active_table || has_active_image) && is_focused) || show_review_bar)
+    {
         (36.0 * s).round()
     } else {
         0.0
@@ -87,11 +94,13 @@ pub fn paint_word_tab(
         }
     }
 
-    // 2. Contextual Table Studio OR Legal Redline Review Sub-Bar
+    // 2. Contextual Table Studio, Image Studio, OR Legal Redline Review Sub-Bar
     if table_bar_h > 0.0 {
         let tbar = Rect::new(area.x, area.y + ribbon_h, area.w, table_bar_h);
         if has_active_table {
             paint_contextual_table_bar(surface, fonts, hit_regions, mouse_x, mouse_y, s, tbar, w);
+        } else if has_active_image {
+            paint_contextual_image_bar(surface, fonts, hit_regions, mouse_x, mouse_y, s, tbar, w);
         } else {
             paint_contextual_review_bar(
                 surface,
@@ -148,6 +157,26 @@ pub fn paint_word_tab(
     let content_w = (page_w - margin_x * 2.0).max(120.0);
     let usable_page_h = (page_h - margin_top - margin_bot).max(160.0);
 
+    // Lazily decode any embedded PNG/JPEG/BMP figures BEFORE layout so `img.aspect_ratio()` is exact!
+    for blk in &mut w.doc.blocks {
+        if let Block::Image(img) = blk {
+            if img.rgba_preview.is_none() && !img.png_bytes.is_empty() {
+                let hkey = hash_image_bytes(&img.png_bytes);
+                if let Some((_, iw, ih, rgba)) =
+                    w.image_rgba_cache.iter().find(|(k, _, _, _)| *k == hkey)
+                {
+                    img.rgba_preview = Some((*iw, *ih, rgba.clone()));
+                } else if let Ok((iw, ih, rgba)) = decode_any_image_rgba(&img.png_bytes) {
+                    if w.image_rgba_cache.len() >= 32 {
+                        w.image_rgba_cache.remove(0);
+                    }
+                    w.image_rgba_cache.push((hkey, iw, ih, rgba.clone()));
+                    img.rgba_preview = Some((iw, ih, rgba));
+                }
+            }
+        }
+    }
+
     let pages = layout_document_pages(fonts, w, scale, content_w, usable_page_h);
     let page_gap = 28.0 * s;
     let top_pad = 26.0 * s;
@@ -192,25 +221,6 @@ pub fn paint_word_tab(
     }
     w.scroll_y = w.scroll_y.clamp(0.0, w.max_scroll_y);
     w.target_scroll_y = w.target_scroll_y.clamp(0.0, w.max_scroll_y);
-
-    // Lazily decode any embedded PNG figures once into `w.image_rgba_cache` for 0-alloc 60Hz scrolling
-    for (bi, blk) in w.doc.blocks.iter().enumerate() {
-        if let Block::Image(img) = blk {
-            if img.rgba_preview.is_none() && !img.png_bytes.is_empty() {
-                let already = w
-                    .image_rgba_cache
-                    .iter()
-                    .any(|(b, plen, _, _, _)| *b == bi && *plen == img.png_bytes.len());
-                if !already {
-                    if let Ok((iw, ih, rgba)) = decode_png_rgba(&img.png_bytes) {
-                        w.image_rgba_cache.retain(|(b, _, _, _, _)| *b != bi);
-                        w.image_rgba_cache
-                            .push((bi, img.png_bytes.len(), iw, ih, rgba));
-                    }
-                }
-            }
-        }
-    }
 
     // Paint Outline Sidebar now that exact `block_canvas_y` offsets are known!
     if can_fit_sidebar {
@@ -681,7 +691,13 @@ fn layout_document_pages(
                 cur_y += h;
             }
             Block::Image(img) => {
-                let h = (img.height_pt * scale).clamp(48.0, 220.0) + 22.0 * scale;
+                let disp_w = (img.width_pt * scale).clamp(48.0 * scale, content_w);
+                let disp_h =
+                    (disp_w / img.aspect_ratio()).clamp(36.0 * scale, usable_page_h * 0.82);
+                let show_cap_row =
+                    !img.caption.trim().is_empty() || w.selected_image_block == Some(b_idx);
+                let cap_extra = if show_cap_row { 20.0 * scale } else { 0.0 };
+                let h = disp_h + cap_extra + 14.0 * scale;
                 if cur_y + h > usable_page_h && !pages.last().unwrap().is_empty() {
                     pages.push(Vec::new());
                     cur_y = 0.0;
@@ -953,34 +969,206 @@ fn paint_laid_out_block(
             );
         }
         Block::Image(img) => {
-            let box_h = (item.height - 16.0 * scale).max(36.0);
-            let r = Rect::new(x, y, (img.width_pt * scale).min(content_w), box_h);
-            surface.fill_rounded_rect(r, 4.0, DaylightTheme::SIDEBAR);
-            surface.stroke_rounded_rect(r, 4.0, 1.0, DaylightTheme::BORDER_STRONG);
+            let disp_w = (img.width_pt * scale).clamp(48.0 * scale, content_w);
+            let show_cap_row =
+                !img.caption.trim().is_empty() || w.selected_image_block == Some(item.block_idx);
+            let cap_extra = if show_cap_row { 20.0 * scale } else { 0.0 };
+            let box_h = (item.height - cap_extra - 14.0 * scale).max(36.0);
+            let img_x = match img.alignment {
+                Alignment::Center => x + (content_w - disp_w) * 0.5,
+                Alignment::Right => x + (content_w - disp_w),
+                _ => x,
+            };
+            let r = Rect::new(img_x, y + 3.0 * scale, disp_w, box_h);
+            let is_selected = is_focused && w.selected_image_block == Some(item.block_idx);
+            let is_hov = r.contains(mouse_x, mouse_y);
+
+            surface.draw_paper_shadow(r, 4.0, 8.0, 14);
+            surface.fill_rounded_rect(r, 4.0, DaylightTheme::PAPER);
+            surface.stroke_rounded_rect(
+                r,
+                4.0,
+                if is_selected { 2.0 } else { 1.0 },
+                if is_selected {
+                    DaylightTheme::WORD_ACCENT
+                } else if is_hov {
+                    DaylightTheme::RUST_ORANGE
+                } else {
+                    DaylightTheme::BORDER_STRONG
+                },
+            );
+
             let inner = Rect::new(
-                r.x + 3.0,
-                r.y + 3.0,
-                (r.w - 6.0).max(2.0),
-                (r.h - 6.0).max(2.0),
+                r.x + 2.0,
+                r.y + 2.0,
+                (r.w - 4.0).max(2.0),
+                (r.h - 4.0).max(2.0),
             );
             if let Some((iw, ih, rgba)) = &img.rgba_preview {
                 surface.blit_rgba_scaled(inner, *iw, *ih, rgba);
-            } else if let Some((_, _, iw, ih, rgba)) = w
-                .image_rgba_cache
-                .iter()
-                .find(|(b, _, _, _, _)| *b == item.block_idx)
-            {
-                surface.blit_rgba_scaled(inner, *iw, *ih, rgba);
             } else {
+                let hkey = hash_image_bytes(&img.png_bytes);
+                if let Some((_, iw, ih, rgba)) =
+                    w.image_rgba_cache.iter().find(|(k, _, _, _)| *k == hkey)
+                {
+                    surface.blit_rgba_scaled(inner, *iw, *ih, rgba);
+                } else {
+                    surface.fill_rounded_rect(inner, 3.0, DaylightTheme::SIDEBAR);
+                    surface.draw_icon(
+                        UiIcon::Image,
+                        r.x + 22.0 * scale,
+                        r.y + r.h * 0.5,
+                        18.0 * scale,
+                        DaylightTheme::INK_MUTED,
+                    );
+                    surface.draw_text_clipped(
+                        fonts,
+                        FontSlot::SansBold,
+                        11.5 * scale,
+                        r.x + 38.0 * scale,
+                        r.y + r.h * 0.5 + 4.0 * scale,
+                        (r.w - 46.0 * scale).max(24.0),
+                        DaylightTheme::INK_SUB,
+                        &format!("Figure: {}", img.name),
+                    );
+                }
+            }
+
+            hit_regions.push(HitRegion::button(
+                r,
+                UiAction::SelectWordImage {
+                    tab_idx,
+                    block_idx: item.block_idx,
+                },
+            ));
+
+            // Figure Caption (or `+ Add figure caption…` quick pill when selected)
+            if !img.caption.trim().is_empty() {
+                let cap_px = (10.2 * scale).clamp(9.0, 14.0);
+                let cap_txt = img.caption.trim();
+                let cap_w = fonts.measure_text(FontSlot::SerifRegular, cap_txt, cap_px);
+                let cap_x = match img.alignment {
+                    Alignment::Center => r.x + ((r.w - cap_w) * 0.5).max(0.0),
+                    Alignment::Right => r.x + (r.w - cap_w).max(0.0),
+                    _ => r.x,
+                };
+                let cap_hit = Rect::new(r.x, r.y + r.h + 2.0 * scale, r.w, 18.0 * scale);
+                surface.draw_text_clipped(
+                    fonts,
+                    FontSlot::SerifRegular,
+                    cap_px,
+                    cap_x,
+                    r.y + r.h + 14.0 * scale,
+                    r.w,
+                    DaylightTheme::INK_SUB,
+                    cap_txt,
+                );
+                hit_regions.push(HitRegion::button(
+                    cap_hit,
+                    UiAction::ExecCommand(CommandId::ImageEditCaption),
+                ));
+            } else if is_selected {
+                let pill_lbl = "+ Add figure caption…";
+                let pill_px = (9.8 * scale).clamp(9.0, 12.5);
+                let ptw = fonts.measure_text(FontSlot::SansRegular, pill_lbl, pill_px);
+                let pw = (ptw + 14.0 * scale).min(content_w);
+                let px = r.x + ((r.w - pw) * 0.5).max(0.0);
+                let pill_r = Rect::new(px, r.y + r.h + 3.0 * scale, pw, 16.5 * scale);
+                let phov = pill_r.contains(mouse_x, mouse_y);
+                surface.fill_rounded_rect(
+                    pill_r,
+                    3.5,
+                    if phov {
+                        DaylightTheme::WORD_SOFT
+                    } else {
+                        DaylightTheme::SIDEBAR
+                    },
+                );
+                surface.stroke_rounded_rect(pill_r, 3.5, 1.0, DaylightTheme::BORDER);
                 surface.draw_text(
                     fonts,
-                    FontSlot::SansBold,
-                    12.0 * scale,
-                    r.x + 14.0,
-                    r.y + 24.0,
-                    DaylightTheme::INK,
-                    &format!("[Embedded Figure: {}]", img.name),
+                    FontSlot::SansRegular,
+                    pill_px,
+                    pill_r.x + (pw - ptw) * 0.5,
+                    pill_r.y + pill_r.h * 0.72,
+                    if phov {
+                        DaylightTheme::WORD_ACCENT
+                    } else {
+                        DaylightTheme::INK_MUTED
+                    },
+                    pill_lbl,
                 );
+                hit_regions.push(HitRegion::button(
+                    pill_r,
+                    UiAction::ExecCommand(CommandId::ImageEditCaption),
+                ));
+            }
+
+            // Live Selection Overlay: Dimension Badge + 60–120Hz Aspect-Locked Corner Resize Handles!
+            if is_selected || is_hov {
+                let max_w_pt = (content_w / scale.max(0.4)).max(120.0);
+                let pct = ((img.width_pt / max_w_pt) * 100.0).round().clamp(10.0, 100.0) as i32;
+                let badge_txt =
+                    format!("{:.0}×{:.0} pt · {pct}%", img.width_pt, img.height_pt);
+                let bpx = (9.5 * scale).clamp(8.5, 12.0);
+                let btw = fonts.measure_text(FontSlot::MonoRegular, &badge_txt, bpx);
+                let bw = btw + 12.0 * scale;
+                let bh = 17.0 * scale;
+                if bw + 12.0 < r.w {
+                    let badge_r =
+                        Rect::new(r.x + r.w - bw - 6.0 * scale, r.y + 6.0 * scale, bw, bh);
+                    surface.fill_rounded_rect(badge_r, 3.5, Color::rgba(24, 28, 34, 205));
+                    surface.draw_text(
+                        fonts,
+                        FontSlot::MonoRegular,
+                        bpx,
+                        badge_r.x + 6.0 * scale,
+                        badge_r.y + bh * 0.73,
+                        DaylightTheme::PAPER,
+                        &badge_txt,
+                    );
+                }
+
+                let hs = (9.0 * scale).clamp(7.5, 12.0);
+                let hit_pad = (6.0 * scale).clamp(5.0, 9.0);
+                let right_factor = match img.alignment {
+                    Alignment::Center => 2.0,
+                    Alignment::Right => -1.0,
+                    _ => 1.0,
+                };
+                let left_factor = match img.alignment {
+                    Alignment::Center => -2.0,
+                    Alignment::Right => -1.0,
+                    _ => -1.0,
+                };
+
+                for (hx, hy, factor) in [
+                    (r.x + r.w, r.y + r.h, right_factor),
+                    (r.x + r.w, r.y + r.h * 0.5, right_factor),
+                    (r.x, r.y + r.h, left_factor),
+                ] {
+                    let vis_h = Rect::new(hx - hs * 0.5, hy - hs * 0.5, hs, hs);
+                    let hit_h = Rect::new(
+                        hx - hs * 0.5 - hit_pad,
+                        hy - hs * 0.5 - hit_pad,
+                        hs + hit_pad * 2.0,
+                        hs + hit_pad * 2.0,
+                    );
+                    surface.fill_rounded_rect(vis_h, 2.0, DaylightTheme::PAPER);
+                    surface.stroke_rounded_rect(vis_h, 2.0, 1.8, DaylightTheme::WORD_ACCENT);
+                    hit_regions.push(HitRegion::splitter(
+                        hit_h,
+                        UiAction::BeginDrag(DragInteraction::ImageResize {
+                            tab_idx,
+                            block_idx: item.block_idx,
+                            start_x: mouse_x,
+                            start_width_pt: img.width_pt,
+                            scale,
+                            anchor_factor: factor,
+                            max_width_pt: max_w_pt,
+                        }),
+                    ));
+                }
             }
         }
         Block::Table(t) => {
@@ -1015,8 +1203,6 @@ fn paint_laid_out_block(
                     let cell_opt = row.get(c_idx);
                     if let Some(bg) = cell_opt.and_then(|c| c.bg_color) {
                         surface.fill_rect(cell_r, Color::rgb(bg.r, bg.g, bg.b));
-                    } else if r_idx == 0 {
-                        surface.fill_rect(cell_r, Color::rgb(244, 241, 235));
                     }
 
                     let is_active_cell = is_focused
@@ -1058,6 +1244,10 @@ fn paint_laid_out_block(
                             };
                             let baseline =
                                 cell_r.y + cell_pad_y + txt_px * 0.88 + (li as f32) * line_h;
+                            let is_untouched_header_placeholder = r_idx == 0
+                                && cell_opt
+                                    .map(|c| c.text == format!("Column {}", c_idx + 1))
+                                    .unwrap_or(false);
                             if !ln.is_empty() {
                                 surface.draw_text(
                                     fonts,
@@ -1065,7 +1255,11 @@ fn paint_laid_out_block(
                                     txt_px,
                                     tx,
                                     baseline,
-                                    DaylightTheme::INK,
+                                    if is_untouched_header_placeholder {
+                                        DaylightTheme::INK_MUTED
+                                    } else {
+                                        DaylightTheme::INK
+                                    },
                                     ln,
                                 );
                             }
@@ -1609,6 +1803,99 @@ fn paint_paragraph_block(
             },
         ));
 
+        // Calm Empty-Paragraph Affordance: ghost hint + 1-click inline `+ Image` & `+ Table` launchers!
+        if cursor_in_block
+            && item.lines.len() == 1
+            && ln.text.is_empty()
+            && p.list_kind == ListKind::None
+            && !w.has_selection()
+            && content_w >= 260.0
+        {
+            let hint_px = (10.6 * scale).clamp(9.5, 13.0);
+            surface.draw_text_clipped(
+                fonts,
+                FontSlot::SansRegular,
+                hint_px,
+                draw_x + 8.0,
+                cur_y + ln.baseline_off,
+                (content_w - 168.0).max(80.0),
+                DaylightTheme::INK_MUTED,
+                "Type prose, /table 4x3, /image, or | Col A | Col B |…",
+            );
+
+            let chip_px = (10.0 * scale).clamp(9.2, 12.2);
+            let chip_h = (ln.line_h - 3.0).clamp(18.0, 24.0);
+            let chip_y = cur_y + (ln.line_h - chip_h) * 0.5;
+
+            let tbl_lbl = "+ Table";
+            let tbl_tw = fonts.measure_text(FontSlot::SansBold, tbl_lbl, chip_px);
+            let tbl_w = (tbl_tw + 15.0 * scale).round();
+            let tbl_r = Rect::new(x + content_w - tbl_w, chip_y, tbl_w, chip_h);
+
+            let img_lbl = "+ Image";
+            let img_tw = fonts.measure_text(FontSlot::SansBold, img_lbl, chip_px);
+            let img_w = (img_tw + 15.0 * scale).round();
+            let img_r = Rect::new(tbl_r.x - img_w - 5.0 * scale, chip_y, img_w, chip_h);
+
+            for (cr, clbl, ctw, action) in [
+                (
+                    img_r,
+                    img_lbl,
+                    img_tw,
+                    UiAction::ExecCommand(CommandId::InsertImage),
+                ),
+                (
+                    tbl_r,
+                    tbl_lbl,
+                    tbl_tw,
+                    UiAction::ToggleDropdown(ToolbarDropdown::TableCreator {
+                        anchor_x: (tbl_r.x - 170.0 * scale).max(16.0) as i32,
+                        anchor_y: (tbl_r.y + chip_h + 4.0) as i32,
+                        rows: 3,
+                        cols: 3,
+                    }),
+                ),
+            ] {
+                if cr.x <= draw_x + 70.0 {
+                    continue;
+                }
+                let chov = cr.contains(mouse_x, mouse_y);
+                surface.fill_rounded_rect(
+                    cr,
+                    4.0,
+                    if chov {
+                        DaylightTheme::WORD_SOFT
+                    } else {
+                        DaylightTheme::SIDEBAR
+                    },
+                );
+                surface.stroke_rounded_rect(
+                    cr,
+                    4.0,
+                    1.0,
+                    if chov {
+                        DaylightTheme::WORD_ACCENT
+                    } else {
+                        DaylightTheme::BORDER
+                    },
+                );
+                surface.draw_text(
+                    fonts,
+                    FontSlot::SansBold,
+                    chip_px,
+                    cr.x + (cr.w - ctw) * 0.5,
+                    cr.y + chip_h * 0.72,
+                    if chov {
+                        DaylightTheme::WORD_ACCENT
+                    } else {
+                        DaylightTheme::INK_SUB
+                    },
+                    clbl,
+                );
+                hit_regions.push(HitRegion::button(cr, action));
+            }
+        }
+
         cur_y += ln.line_h;
     }
 }
@@ -2020,24 +2307,108 @@ fn paint_word_ribbon(
 
     bx = draw_divider(surface, bx, bar.y, bar.h, s);
 
-    // 5. Insert Table + Page Tools + Export PDF
-    bx = draw_icon_text_btn(
-        surface,
-        fonts,
-        hit_regions,
-        mouse_x,
-        mouse_y,
-        bx,
-        by,
-        bh,
-        s,
-        max_x,
-        UiIcon::Table,
-        "Table",
-        w.active_table_cell.is_some(),
-        false,
-        CommandId::InsertTable,
-    );
+    // 5. Interactive Table Creator (`Table ▾`) + Page Tools + Export PDF
+    {
+        let lbl = "Table";
+        let tw = fonts.measure_text(FontSlot::SansBold, lbl, 11.5 * s);
+        let bw = (tw + 40.0 * s).round();
+        if bx + bw <= max_x {
+            let r = Rect::new(bx, by, bw, bh);
+            let hov = r.contains(mouse_x, mouse_y);
+            let active = w.active_table_cell.is_some();
+            if active || hov {
+                surface.fill_rounded_rect(
+                    r,
+                    5.0,
+                    if active {
+                        DaylightTheme::WORD_SOFT
+                    } else {
+                        DaylightTheme::HOVER
+                    },
+                );
+            }
+            if active {
+                surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::WORD_ACCENT);
+            }
+            let fg = if active {
+                DaylightTheme::WORD_ACCENT
+            } else {
+                DaylightTheme::INK
+            };
+            surface.draw_icon(UiIcon::Table, r.x + 11.0 * s, r.y + bh * 0.5, 13.0 * s, fg);
+            surface.draw_text(
+                fonts,
+                FontSlot::SansBold,
+                11.5 * s,
+                r.x + 21.0 * s,
+                r.y + bh * 0.67,
+                fg,
+                lbl,
+            );
+            surface.draw_icon(
+                UiIcon::ChevronDown,
+                r.x + bw - 9.5 * s,
+                r.y + bh * 0.52,
+                8.5 * s,
+                DaylightTheme::INK_SUB,
+            );
+            hit_regions.push(HitRegion::button(
+                r,
+                UiAction::ToggleDropdown(ToolbarDropdown::TableCreator {
+                    anchor_x: r.x as i32,
+                    anchor_y: (r.y + bh) as i32,
+                    rows: 3,
+                    cols: 3,
+                }),
+            ));
+            bx += bw + 4.0 * s;
+        }
+    }
+    // 1-Click `Image` Ribbon Button (`Ctrl+Shift+I`)
+    {
+        let lbl = "Image";
+        let tw = fonts.measure_text(FontSlot::SansBold, lbl, 11.5 * s);
+        let bw = (tw + 30.0 * s).round();
+        if bx + bw <= max_x {
+            let r = Rect::new(bx, by, bw, bh);
+            let hov = r.contains(mouse_x, mouse_y);
+            let active = w.selected_image_block.is_some();
+            if active || hov {
+                surface.fill_rounded_rect(
+                    r,
+                    5.0,
+                    if active {
+                        DaylightTheme::WORD_SOFT
+                    } else {
+                        DaylightTheme::HOVER
+                    },
+                );
+            }
+            if active {
+                surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::WORD_ACCENT);
+            }
+            let fg = if active {
+                DaylightTheme::WORD_ACCENT
+            } else {
+                DaylightTheme::INK
+            };
+            surface.draw_icon(UiIcon::Image, r.x + 11.0 * s, r.y + bh * 0.5, 13.0 * s, fg);
+            surface.draw_text(
+                fonts,
+                FontSlot::SansBold,
+                11.5 * s,
+                r.x + 21.0 * s,
+                r.y + bh * 0.67,
+                fg,
+                lbl,
+            );
+            hit_regions.push(HitRegion::button(
+                r,
+                UiAction::ExecCommand(CommandId::InsertImage),
+            ));
+            bx += bw + 4.0 * s;
+        }
+    }
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Break", FontSlot::SansRegular, false, false, CommandId::InsertPageBreak);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Track", FontSlot::SansBold, w.doc.track_changes, false, CommandId::ToggleTrackChanges);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "+Comment", FontSlot::SansRegular, !w.doc.comments.is_empty(), false, CommandId::AddReviewComment);
@@ -2223,6 +2594,114 @@ fn paint_contextual_review_bar(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn paint_contextual_image_bar(
+    surface: &mut Surface,
+    fonts: &mut FontBook,
+    hit_regions: &mut Vec<HitRegion>,
+    mouse_x: f32,
+    mouse_y: f32,
+    s: f32,
+    bar: Rect,
+    w: &WordTabState,
+) {
+    surface.fill_rect(bar, DaylightTheme::WORD_SOFT);
+    surface.fill_rect(
+        Rect::new(bar.x, bar.y + bar.h - 1.0, bar.w, 1.0),
+        DaylightTheme::BORDER,
+    );
+
+    let (img_info, cur_align) = w
+        .selected_image_block
+        .and_then(|b| match w.doc.blocks.get(b) {
+            Some(Block::Image(img)) => Some((
+                format!("IMAGE · {:.0}×{:.0} pt", img.width_pt, img.height_pt),
+                img.alignment,
+            )),
+            _ => None,
+        })
+        .unwrap_or_else(|| ("IMAGE".into(), Alignment::Center));
+
+    surface.draw_text(
+        fonts,
+        FontSlot::SansBold,
+        10.8 * s,
+        bar.x + 12.0 * s,
+        bar.y + bar.h * 0.64,
+        DaylightTheme::WORD_ACCENT,
+        &img_info,
+    );
+
+    let info_w = fonts.measure_text(FontSlot::SansBold, &img_info, 10.8 * s);
+    let bh = (25.0 * s).round();
+    let by = (bar.y + (bar.h - bh) * 0.5).round();
+    let mut bx = bar.x + info_w + 22.0 * s;
+    let max_x = bar.x + bar.w - 10.0 * s;
+
+    let actions: &[(&str, CommandId, bool, bool)] = &[
+        ("25%", CommandId::ImageScale25, false, false),
+        ("50%", CommandId::ImageScale50, false, false),
+        ("75%", CommandId::ImageScale75, false, false),
+        ("100%", CommandId::ImageScale100, false, false),
+        ("Left", CommandId::AlignLeft, cur_align == Alignment::Left, false),
+        ("Center", CommandId::AlignCenter, cur_align == Alignment::Center, false),
+        ("Right", CommandId::AlignRight, cur_align == Alignment::Right, false),
+        ("Caption", CommandId::ImageEditCaption, false, false),
+        ("Replace", CommandId::ImageReplace, false, false),
+        ("Delete", CommandId::ImageDelete, false, true),
+    ];
+
+    for (lbl, cmd, active, danger) in actions {
+        let tw = fonts.measure_text(FontSlot::SansBold, lbl, 11.0 * s);
+        let bw = (tw + 16.0 * s).round();
+        if bx + bw > max_x {
+            break;
+        }
+        let r = Rect::new(bx, by, bw, bh);
+        let hov = r.contains(mouse_x, mouse_y);
+        surface.fill_rounded_rect(
+            r,
+            4.0,
+            if *danger && hov {
+                DaylightTheme::PDF_SOFT
+            } else if *active || hov {
+                DaylightTheme::PAPER
+            } else {
+                Color::rgba(255, 255, 255, 210)
+            },
+        );
+        surface.stroke_rounded_rect(
+            r,
+            4.0,
+            1.0,
+            if *danger && hov {
+                DaylightTheme::PDF_ACCENT
+            } else if *active {
+                DaylightTheme::WORD_ACCENT
+            } else {
+                DaylightTheme::BORDER_STRONG
+            },
+        );
+        surface.draw_text(
+            fonts,
+            FontSlot::SansBold,
+            11.0 * s,
+            r.x + 8.0 * s,
+            r.y + bh * 0.68,
+            if *danger {
+                DaylightTheme::PDF_ACCENT
+            } else if *active {
+                DaylightTheme::WORD_ACCENT
+            } else {
+                DaylightTheme::INK
+            },
+            lbl,
+        );
+        hit_regions.push(HitRegion::button(r, UiAction::ExecCommand(*cmd)));
+        bx += bw + 5.0 * s;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn paint_contextual_table_bar(
     surface: &mut Surface,
     fonts: &mut FontBook,
@@ -2259,15 +2738,17 @@ fn paint_contextual_table_bar(
     let max_x = bar.x + bar.w - 10.0 * s;
 
     let actions: &[(&str, CommandId, bool)] = &[
-        ("+ Row Below", CommandId::TableAddRow, false),
-        ("+ Row Above", CommandId::TableInsertRowAbove, false),
+        ("+ Row", CommandId::TableAddRow, false),
+        ("+ Row ↑", CommandId::TableInsertRowAbove, false),
         ("- Row", CommandId::TableDeleteRow, false),
-        ("+ Col Right", CommandId::TableAddCol, false),
-        ("+ Col Left", CommandId::TableInsertColLeft, false),
+        ("+ Col", CommandId::TableAddCol, false),
         ("- Col", CommandId::TableDeleteCol, false),
-        ("Cell Bold", CommandId::TableToggleCellBold, false),
-        ("Shade Cell", CommandId::TableCycleCellFill, false),
-        ("Delete Table", CommandId::TableDelete, true),
+        ("Bold", CommandId::TableToggleCellBold, false),
+        ("Shade", CommandId::TableCycleCellFill, false),
+        ("Zebra", CommandId::TableToggleZebra, false),
+        ("Theme", CommandId::TableCycleTheme, false),
+        ("Equal", CommandId::TableEqualizeCols, false),
+        ("Delete", CommandId::TableDelete, true),
     ];
 
     for (lbl, cmd, danger) in actions {
@@ -2363,77 +2844,6 @@ fn draw_icon_btn(
     );
     hit_regions.push(HitRegion::button(r, action));
     bx + bw + 3.0 * s
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_icon_text_btn(
-    surface: &mut Surface,
-    fonts: &mut FontBook,
-    hit_regions: &mut Vec<HitRegion>,
-    mouse_x: f32,
-    mouse_y: f32,
-    bx: f32,
-    by: f32,
-    bh: f32,
-    s: f32,
-    max_x: f32,
-    icon: UiIcon,
-    label: &str,
-    active: bool,
-    accent: bool,
-    cmd: CommandId,
-) -> f32 {
-    let tw = fonts.measure_text(FontSlot::SansBold, label, 11.5 * s);
-    let bw = (tw + 30.0 * s).round();
-    if bx + bw > max_x {
-        return bx;
-    }
-    let r = Rect::new(bx, by, bw, bh);
-    let hov = r.contains(mouse_x, mouse_y);
-    if active || hov || accent {
-        surface.fill_rounded_rect(
-            r,
-            5.0,
-            if accent {
-                DaylightTheme::PDF_SOFT
-            } else if active {
-                DaylightTheme::WORD_SOFT
-            } else {
-                DaylightTheme::HOVER
-            },
-        );
-    }
-    if active || accent {
-        surface.stroke_rounded_rect(
-            r,
-            5.0,
-            1.0,
-            if accent {
-                DaylightTheme::PDF_ACCENT
-            } else {
-                DaylightTheme::WORD_ACCENT
-            },
-        );
-    }
-    let fg = if accent {
-        DaylightTheme::PDF_ACCENT
-    } else if active {
-        DaylightTheme::WORD_ACCENT
-    } else {
-        DaylightTheme::INK
-    };
-    surface.draw_icon(icon, r.x + 12.0 * s, r.y + bh * 0.5, 12.5 * s, fg);
-    surface.draw_text(
-        fonts,
-        FontSlot::SansBold,
-        11.5 * s,
-        r.x + 22.0 * s,
-        r.y + bh * 0.66,
-        fg,
-        label,
-    );
-    hit_regions.push(HitRegion::button(r, UiAction::ExecCommand(cmd)));
-    bx + bw + 4.0 * s
 }
 
 #[allow(clippy::too_many_arguments)]

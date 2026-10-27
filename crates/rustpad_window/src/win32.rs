@@ -119,6 +119,7 @@ extern "system" {
     fn GlobalAlloc(uFlags: UINT, dwBytes: usize) -> HGLOBAL;
     fn GlobalLock(hMem: HGLOBAL) -> *mut c_void;
     fn GlobalUnlock(hMem: HGLOBAL) -> BOOL;
+    fn GlobalSize(hMem: HGLOBAL) -> usize;
     fn GlobalFree(hMem: HGLOBAL) -> HGLOBAL;
 }
 
@@ -162,8 +163,16 @@ extern "system" {
     fn EmptyClipboard() -> BOOL;
     fn GetClipboardData(uFormat: UINT) -> HGLOBAL;
     fn SetClipboardData(uFormat: UINT, hMem: HGLOBAL) -> HGLOBAL;
+    fn RegisterClipboardFormatW(lpszFormat: *const u16) -> UINT;
     fn SetWindowLongPtrW(hWnd: HWND, nIndex: i32, dwNewLong: isize) -> isize;
     fn GetWindowLongPtrW(hWnd: HWND, nIndex: i32) -> isize;
+}
+
+#[link(name = "shell32")]
+extern "system" {
+    fn DragAcceptFiles(hWnd: HWND, fAccept: BOOL);
+    fn DragQueryFileW(hDrop: *mut c_void, iFile: UINT, lpszFile: *mut u16, cch: UINT) -> UINT;
+    fn DragFinish(hDrop: *mut c_void);
 }
 
 #[link(name = "gdi32")]
@@ -281,6 +290,40 @@ pub fn get_win32_clipboard_text() -> Option<String> {
         GlobalUnlock(hmem);
         CloseClipboard();
         Some(decoded)
+    }
+}
+
+pub fn get_win32_clipboard_image_bytes() -> Option<Vec<u8>> {
+    const CF_DIB: UINT = 8;
+    unsafe {
+        if OpenClipboard(std::ptr::null_mut()) == 0 {
+            return None;
+        }
+        let png_fmt1 = RegisterClipboardFormatW(to_wide("PNG").as_ptr());
+        let png_fmt2 = RegisterClipboardFormatW(to_wide("image/png").as_ptr());
+        for fmt in [png_fmt1, png_fmt2, CF_DIB] {
+            if fmt == 0 {
+                continue;
+            }
+            let hmem = GetClipboardData(fmt);
+            if hmem.is_null() {
+                continue;
+            }
+            let sz = GlobalSize(hmem);
+            if !(16..=64 * 1024 * 1024).contains(&sz) {
+                continue;
+            }
+            let ptr = GlobalLock(hmem) as *const u8;
+            if ptr.is_null() {
+                continue;
+            }
+            let data = std::slice::from_raw_parts(ptr, sz).to_vec();
+            GlobalUnlock(hmem);
+            CloseClipboard();
+            return Some(data);
+        }
+        CloseClipboard();
+        None
     }
 }
 
@@ -494,6 +537,20 @@ unsafe extern "system" fn wnd_proc(
             dispatch(WindowEvent::Tick);
             0
         }
+        0x0233 /* WM_DROPFILES */ => {
+            let hdrop = wparam as *mut c_void;
+            if !hdrop.is_null() {
+                let mut file_buf = vec![0u16; 1024];
+                let copied =
+                    DragQueryFileW(hdrop, 0, file_buf.as_mut_ptr(), file_buf.len() as UINT) as usize;
+                DragFinish(hdrop);
+                if copied > 0 && copied < file_buf.len() {
+                    let path_str = String::from_utf16_lossy(&file_buf[..copied]);
+                    dispatch(WindowEvent::DroppedFile(PathBuf::from(path_str)));
+                }
+            }
+            0
+        }
         0x0010 /* WM_CLOSE */ | 0x0002 /* WM_DESTROY */ => {
             let _ = ctx.app.on_event(WindowEvent::CloseRequested, &mut ctx.surface);
             PostQuitMessage(0);
@@ -558,6 +615,7 @@ pub fn run_win32_window(
         }
 
         SetWindowLongPtrW(hwnd, -21, (&mut ctx as *mut Win32Context<'_>) as isize);
+        DragAcceptFiles(hwnd, 1);
         // 16ms (~60Hz) tick drives smooth kinetic spring scroll, cursor blink & background AI worker polling
         SetTimer(hwnd, 1, 16, std::ptr::null());
         ShowWindow(hwnd, 5 /* SW_SHOW */);
@@ -569,6 +627,30 @@ pub fn run_win32_window(
         }
     }
     Ok(())
+}
+
+pub fn open_image_file_dialog(title: &str) -> Option<PathBuf> {
+    unsafe {
+        let mut file_buf = vec![0u16; 1024];
+        let filter: Vec<u16> =
+            "Images (*.png;*.jpg;*.jpeg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0All Files (*.*)\0*.*\0\0"
+                .encode_utf16()
+                .collect();
+        let wtitle = to_wide(title);
+        let mut ofn: OPENFILENAMEW = std::mem::zeroed();
+        ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as DWORD;
+        ofn.lpstrFilter = filter.as_ptr();
+        ofn.lpstrFile = file_buf.as_mut_ptr();
+        ofn.nMaxFile = file_buf.len() as DWORD;
+        ofn.lpstrTitle = wtitle.as_ptr();
+        ofn.Flags = 0x0008_0000 | 0x0000_1000; /* OFN_EXPLORER | OFN_FILEMUSTEXIST */
+        if GetOpenFileNameW(&mut ofn) != 0 {
+            let end = file_buf.iter().position(|&c| c == 0).unwrap_or(0);
+            Some(PathBuf::from(String::from_utf16_lossy(&file_buf[..end])))
+        } else {
+            None
+        }
+    }
 }
 
 pub fn open_file_dialog(title: &str) -> Option<PathBuf> {
