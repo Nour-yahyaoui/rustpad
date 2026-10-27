@@ -19,6 +19,14 @@ export interface CraftPillar {
   bullets: string[];
 }
 
+export interface EnterpriseBenchmarkRow {
+  capability: string;
+  rustpad: string;
+  cloudSaas: string;
+  electronApps: string;
+  legacySuites: string;
+}
+
 export interface AiProviderSpec {
   id: string;
   name: string;
@@ -53,7 +61,7 @@ export interface TourStep {
   body: string;
 }
 
-export const RELEASE_VERSION = 'v1.3.0';
+export const RELEASE_VERSION = 'v2.0.0';
 export const REPO_URL = 'https://github.com/Nour-yahyaoui/rustpad';
 export const RELEASE_TAG_URL = `${REPO_URL}/releases/tag/${RELEASE_VERSION}`;
 
@@ -78,24 +86,69 @@ export const AUTHOR = {
 
 export const HERO_METRICS = [
   {
-    value: '< 90 ms',
-    label: 'Cold Native Boot',
-    detail: 'Direct Win32 GDI & X11 windowing',
+    value: '100% Offline',
+    label: 'Air-Gapped Sovereign',
+    detail: 'Zero cloud lock-in · MDM DLP policy.json',
+  },
+  {
+    value: '0 Deps',
+    label: '0 crates.io Runtime',
+    detail: 'Auditable CycloneDX 1.5 SBOM built-in',
   },
   {
     value: '~3.8 MB',
-    label: 'Stripped Binary',
-    detail: 'Zero Electron / WebView runtime',
+    label: '< 90 ms Cold Boot',
+    detail: 'Native Win32 GDI/WinHTTP & Linux X11',
   },
   {
-    value: '9 Crates',
-    label: '0 crates.io Deps',
-    detail: 'Custom ZIP, TTF, DOCX & PDF stack',
+    value: 'ECMA + PDF/A',
+    label: 'Redline & Forensic PDF',
+    detail: 'w:ins/w:del, Stream Sanitize & SHA-256 Seal',
+  },
+];
+
+export const ENTERPRISE_BENCHMARKS: EnterpriseBenchmarkRow[] = [
+  {
+    capability: 'Air-Gapped Offline Operation',
+    rustpad: '100% Native Offline · 0 Telemetry',
+    cloudSaas: 'Cloud Account Mandatory',
+    electronApps: 'Partial / Cached Web App',
+    legacySuites: 'Offline + Activation Telemetry',
   },
   {
-    value: 'Local + API',
-    label: 'Pluggable AI Dock',
-    detail: 'nour-code, Ollama, Claude & OpenAI',
+    capability: '3rd-Party Package Supply Chain',
+    rustpad: '0 crates.io Deps · Built-in CycloneDX SBOM',
+    cloudSaas: 'Opaque SaaS Multi-Tenant',
+    electronApps: '500–1,100 npm/Chromium pkgs',
+    legacySuites: 'Dozens of C/C++ shared codecs',
+  },
+  {
+    capability: 'Legal Track Changes & Redline',
+    rustpad: 'ECMA-376 <w:ins>/<w:del> + rustpad redline',
+    cloudSaas: 'Proprietary Suggestion Mode',
+    electronApps: 'Rare / Markdown-only',
+    legacySuites: 'Full OOXML Track Changes',
+  },
+  {
+    capability: 'Forensic PDF Redaction & Seals',
+    rustpad: 'Purges Glyph Streams + PDF/A-2b + SHA-256',
+    cloudSaas: 'Requires Paid Add-ons',
+    electronApps: 'Visual Black-Box Overlay Risk',
+    legacySuites: 'Paid Acrobat Pro License',
+  },
+  {
+    capability: 'Enterprise AI Data Loss Prevention',
+    rustpad: 'MDM policy.json Localhost Lock + Audit Chain',
+    cloudSaas: 'Vendor Cloud Egress',
+    electronApps: 'Unrestricted API Keys',
+    legacySuites: 'Cloud Copilot Egress',
+  },
+  {
+    capability: 'Installer & Memory Footprint',
+    rustpad: '~3.8 MB Single Portable Binary',
+    cloudSaas: '400+ MB Browser Tab RAM',
+    electronApps: '220–450 MB Chromium Bundle',
+    legacySuites: '950 MB – 3.2 GB Suite',
   },
 ];
 
@@ -103,104 +156,104 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
   {
     id: 'word-ai',
     index: '01',
-    label: 'Word + AI Studio',
-    shortLabel: 'Word + AI',
-    badge: 'DOCX + AI DOCK',
-    windowTitle: 'RustPad v1.3.0 — Architecture_Spec_v1.3.docx · AI Studio Active',
+    label: 'Legal Redline + AI',
+    shortLabel: 'Redline + AI',
+    badge: 'ECMA-376 REDLINE',
+    windowTitle: 'RustPad v2.0.0 Enterprise — Enterprise_MSA_Redline.docx · DLP Verified',
     image: '/screenshots/word-studio.png',
-    alt: 'RustPad v1.3.0 Word Studio showing Warm Paper & Linen chrome, contextual Table Studio bar, wrapped multi-line OpenXML table with +Add Row bar, and right-side Pluggable AI Agent Studio dock connected to nour-code.',
+    alt: 'RustPad v2.0.0 Enterprise Word Studio showing ECMA-376 Track Changes legal redlines, threaded review comments, wrapped OpenXML SLA table, and DLP-governed local AI dock.',
     summary:
-      'Paginated A4/Letter Word (.docx) canvas paired with the contextual Table Studio ribbon and drag-resizable Pluggable AI Agent Dock running a local nour-code model.',
+      'Author and review enterprise contracts offline with ECMA-376 <w:ins> / <w:del> Track Changes, left-margin redline bars, threaded word/comments.xml, lossless OOXML passthrough, and DLP-governed local AI.',
     highlights: [
       {
-        tag: 'Wrapped .docx Tables',
-        detail: 'Multi-line cell wrapping, in-cell blinking caret, +Add Row bar & +Col rail',
+        tag: 'ECMA-376 Redlines',
+        detail: 'Live <w:ins> emerald & <w:del> crimson revisions, Accept/Reject All & word-level diff',
       },
       {
-        tag: 'Pluggable AI Dock',
-        detail: 'Switch between nour-code, Ollama, LM Studio, OpenAI & Claude (Ctrl+J)',
+        tag: 'Lossless .docx',
+        detail: 'Preserves corporate themes, customXml parts, threaded comments & multi-line tables',
       },
       {
-        tag: 'Paper & Linen UI',
-        detail: '12.5 pt comfortable typography, vector icons & HiDPI UI scale steppers',
+        tag: 'Air-Gapped AI DLP',
+        detail: 'MDM policy.json locks AI to localhost Ollama / nour-code or WinHTTP corporate proxy',
       },
     ],
   },
   {
     id: 'pdf-studio',
     index: '02',
-    label: 'Vector PDF Sign',
-    shortLabel: 'PDF Studio',
-    badge: 'ISO 32000 PDF',
-    windowTitle: 'RustPad v1.3.0 — Technical_Report.pdf · ISO 32000 Vector Stream',
+    label: 'Forensic PDF & Seal',
+    shortLabel: 'Forensic PDF',
+    badge: 'PDF/A-2B + SHA-256',
+    windowTitle: 'RustPad v2.0.0 Enterprise — Technical_Report.pdf · SHA-256 Sealed',
     image: '/screenshots/pdf-studio.png',
-    alt: 'RustPad v1.3.0 PDF Studio with drag-resizable page thumbnail rail, vector Bezier ink signature, APPROVED stamp, sticky note, and right PDF inspector.',
+    alt: 'RustPad v2.0.0 Forensic PDF Studio with Sanitize Redactions, SHA-256 Tamper Seal, Bezier ink signature, stamp, and PDF 1.5+ ObjStm parser.',
     summary:
-      'Open, inspect, annotate, redact, merge, split, and sign ISO 32000-1 PDF documents with real Bezier ink strokes and bidirectional PDF-to-Word conversion.',
+      'Unpack modern PDF 1.5+ compressed /ObjStm streams, physically purge redacted underlying glyph runs, export archival PDF/A-2b XMP packets, and embed verifiable SHA-256 tamper-evident seals.',
     highlights: [
       {
-        tag: 'Bezier Ink Sign',
-        detail: 'Draw vector signatures & place [APPROVED] stamps directly into PDF streams',
+        tag: 'Forensic Sanitize',
+        detail: 'Physically deletes underlying text runs & metadata inside redaction rectangles',
       },
       {
-        tag: 'Resizable Rails',
-        detail: 'Drag-resize or collapse Left Pages & Right PDF Inspector sidebars',
+        tag: 'SHA-256 Seal',
+        detail: 'Embeds /Type /RustPadSeal cryptographic content digests verified via rustpad verify',
       },
       {
-        tag: 'PDF <-> DOCX',
-        detail: '1-click structural conversion from PDF pages into editable Word blocks',
+        tag: 'PDF 1.5+ ObjStm',
+        detail: 'Unpacks compressed object streams & PNG predictors + Bezier ink signatures',
       },
     ],
   },
   {
     id: 'split-palette',
     index: '03',
-    label: 'Split + Ctrl+K',
-    shortLabel: 'Split View',
-    badge: '62 COMMANDS',
-    windowTitle: 'RustPad v1.3.0 — Dual Split Workspace + Instant Command Palette',
+    label: 'DLP & Audit Chain',
+    shortLabel: 'Governance',
+    badge: 'DLP + AUDIT',
+    windowTitle: 'RustPad v2.0.0 Enterprise — Dual Split Workspace + SHA-256 Governance Ledger',
     image: '/screenshots/split-command-palette.png',
-    alt: 'RustPad v1.3.0 Split View showing Word Studio on the left, unclipped PDF Studio on the right with draggable terracotta divider, and Ctrl+K command palette.',
+    alt: 'RustPad v2.0.0 Split Workspace with Enterprise DLP Policy and Tamper-Evident SHA-256 Hash-Chained Audit Trail Inspector.',
     summary:
-      'Reference a PDF spec on the right while drafting a .docx report on the left. Drag the center splitter anywhere from 24% to 76% or fire any of 62 commands via Ctrl+K.',
+      'Compare redlined .docx contracts against sealed PDFs side-by-side while inspecting the live MDM DLP policy state and tamper-evident SHA-256 hash-chained audit trail.',
     highlights: [
       {
-        tag: 'Draggable Split',
-        detail: 'Smooth SetCapture divider resize with auto-fitted, unclipped PDF sheet',
+        tag: 'MDM policy.json',
+        detail: '1-click Strict Air-Gapped mode blocks external cloud AI before DNS resolution',
       },
       {
-        tag: 'Ctrl+K Palette',
-        detail: 'Fuzzy-search 62 File, Format, Table, PDF, View & AI Agent actions',
+        tag: 'SHA-256 Audit Log',
+        detail: 'Cryptographically chained ledger across open, save, sanitize, seal & DLP events',
       },
       {
-        tag: 'Keyboard-First',
-        detail: 'Ctrl+\\ split, Ctrl+J AI dock, Ctrl+=/Ctrl+- UI scale, Ctrl+C/X/V clipboard',
+        tag: '72 Studio Actions',
+        detail: 'Ctrl+Shift+E Track Changes, Ctrl+Shift+M Comment, Ctrl+P OS Print, Ctrl+K Palette',
       },
     ],
   },
   {
     id: 'home-launchpad',
     index: '04',
-    label: 'Studio Launchpad',
+    label: 'Enterprise Hub',
     shortLabel: 'Launchpad',
-    badge: 'EDITORIAL HUB',
-    windowTitle: 'RustPad v1.3.0 — Asymmetric Editorial Home Launchpad',
+    badge: '7 TEMPLATES',
+    windowTitle: 'RustPad v2.0.0 Enterprise — Offline Sovereign Launchpad & Starter Templates',
     image: '/screenshots/home-hub.png',
-    alt: 'RustPad v1.3.0 Asymmetric Editorial Home Launchpad showing quick creation buttons, hairline Recent Workspace Ledger, and six A4 paper miniature templates.',
+    alt: 'RustPad v2.0.0 Editorial Home Launchpad with 7 starter templates including Enterprise MSA Legal Redline.',
     summary:
-      'Asymmetric editorial launchpad replacing generic SaaS cards with hairline workspace ledgers, instant .docx/.pdf/.md creation, and miniature A4 starter sheets.',
+      'Cold-boots in under 90 ms into a calm Warm Architectural Paper & Linen launchpad with 7 offline templates (including Enterprise MSA Redline), WAL crash recovery, and SMB lockfile protection.',
     highlights: [
       {
-        tag: '6 Starter Sheets',
-        detail: 'Blank, Welcome Guide, Modern Resume, Technical Report, Invoice & Letter',
+        tag: '7 Starter Sheets',
+        detail: 'Includes Enterprise MSA Redline, Technical Report, Invoice, Resume & Executive Letter',
       },
       {
-        tag: 'Recent Ledger',
-        detail: 'Zero-cloud local workspace history with instant DOCX / PDF format badges',
+        tag: 'Crash-Safe WAL',
+        detail: 'SHA-256 verified Write-Ahead Recovery frames + .~rustpad.lock shared-drive guards',
       },
       {
-        tag: 'Time-Machine',
-        detail: 'DEFLATE-compressed in-session document snapshots with 1-click restore',
+        tag: 'CycloneDX SBOM',
+        detail: 'Emit a complete CycloneDX 1.5 JSON bill of materials via rustpad sbom',
       },
     ],
   },
@@ -209,50 +262,50 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
 export const CRAFT_PILLARS: CraftPillar[] = [
   {
     index: '01',
-    tag: 'TABLES · ISSUE #12',
-    title: 'Interactive Multi-Line OpenXML Tables',
+    tag: 'LEGAL & OOXML · #23',
+    title: 'Lossless .docx, Track Changes & Redline Diff',
     summary:
-      'Tables are first-class layout citizens rather than rigid single-line boxes. Cells word-wrap cleanly, expand row height automatically, and expose direct canvas controls.',
+      'Built for real counterparty contract negotiation: unknown corporate OOXML parts pass through untouched while revisions round-trip cleanly with Microsoft Word and LibreOffice.',
     bullets: [
-      'On-canvas "+ Add Row" bottom bar and vertical "+" right-edge column rail',
-      'Contextual TABLE sub-bar (+Row Above/Below, +Col Left/Right, Header Bold, Shade, Delete)',
-      'Draggable column borders with ResizeEW cursor + Tab / Shift+Tab cell navigation',
+      'ECMA-376 <w:ins> & <w:del>/<w:delText> live typing (Ctrl+Shift+E) + Accept/Reject All',
+      'Offline word-level LCS contract diffing via `rustpad redline base.docx revised.docx`',
+      'Byte-for-byte passthrough of corporate themes/customXml + threaded word/comments.xml',
     ],
   },
   {
     index: '02',
-    tag: 'SMOOTHNESS · ISSUE #10',
-    title: 'Character-Exact Hit-Testing & 1:1 Scroll',
+    tag: 'PDF FORENSICS · #24',
+    title: 'True Stream Sanitization, PDF/A-2b & Seals',
     summary:
-      'Every mouse click resolves against true TrueType glyph advances across wrapped lines and table cells, paired with flicker-free GDI/X11 frame pacing.',
+      'Eliminates the #1 legal PDF failure mode — black overlay boxes that leave hidden text selectable underneath — and adds cryptographic tamper evidence.',
     bullets: [
-      'Click any character inside wrapped paragraphs or table cells to place the caret',
-      'Fixed 56 px/notch non-inverted wheel scrolling + interactive draggable scrollbar',
-      'Automatic scroll-to-caret viewport tracking while typing, Enter-splitting, or arrowing',
+      'Physical removal of intersecting PDF glyph runs & annotations + metadata scrubbing',
+      'ISO 32000-1 §7.5.7 /Type /ObjStm compressed object stream + PNG predictor unpacking',
+      'Archival PDF/A-2b XMP conformance + RFC 6234 SHA-256 `/RustPadSeal` verification',
     ],
   },
   {
     index: '03',
-    tag: 'ERGONOMICS · ISSUE #11',
-    title: 'HiDPI Auto-Scale & Native OS Clipboard',
+    tag: 'SECURITY & DLP · #9 #25 #26',
+    title: 'Zero-Crate Hardening, MDM DLP & WinHTTP TLS',
     summary:
-      'Designed for long engineering and writing sessions on 1080p, 1440p, and 4K displays without squinting or losing clipboard interoperability.',
+      'Designed to pass CISO, defense, and financial procurement reviews with zero transitive crates.io packages and deterministic parser ceilings.',
     bullets: [
-      'Auto-detects Win32 GetDpiForWindow & Linux Xft.dpi + live UI- / 100% / UI+ steppers',
-      '12.5 pt body typography at 112% default paper zoom on Warm Paper (#FFFFFF / #EAE6DC)',
-      'Native Win32 CF_UNICODETEXT & Linux xclip/xsel/wl-copy Ctrl+C, Ctrl+X, Ctrl+V',
+      'Bounded DEFLATE zip-bomb guards (200:1 max ratio), ZipSlip rejection & MAX_XML_DEPTH=128',
+      'System MDM policy.json locks AI to localhost or allowlisted Sovereign VPC gateways',
+      'Native Windows `winhttp.dll` Schannel TLS honoring corporate PAC proxies & Root CAs',
     ],
   },
   {
     index: '04',
-    tag: 'STUDIO CHROME · ISSUE #13',
-    title: 'Drag-Resizable Rails & Architectural UI',
+    tag: 'RESILIENCE & UX · #27',
+    title: 'Crash-Safe WAL, Wrapped Tables & OS Print',
     summary:
-      'Replaced noisy text-box ribbons with custom anti-aliased vector icons, floating typography menus, and smooth drag-resizable sidebars.',
+      'Combines enterprise durability with effortless daily ergonomics: 12.5 pt HiDPI typography, multi-line tables, RTL script alignment, and sub-frame GDI/X11 rendering.',
     bullets: [
-      'Drag-resize or collapse Word Outline, PDF Pages, PDF Inspector, Split View & AI Dock',
-      'Dynamic OS cursors: IBeam over text, Hand on controls, ResizeEW on splitters',
-      'Floating Paragraph Style & Font Family popovers with live typographic previews',
+      'SHA-256 Write-Ahead Crash Recovery Journal (WAL) + SMB/NFS advisory lockfiles',
+      'Word-wrapped multi-line tables with +Add Row/+Col rails & draggable column borders',
+      'Native Ctrl+P OS Print Spooler, UIA/AT-SPI `--a11y` JSON export & RTL auto-alignment',
     ],
   },
 ];
@@ -260,27 +313,27 @@ export const CRAFT_PILLARS: CraftPillar[] = [
 export const AI_PROVIDERS: AiProviderSpec[] = [
   {
     id: 'nour-code',
-    name: 'nour-code (Local)',
+    name: 'nour-code / vLLM (Air-Gapped)',
     mode: 'LOCAL HTTP',
     endpoint: 'http://127.0.0.1:8000/v1/chat/completions',
     defaultModel: 'nour-code',
-    transport: 'Pure-Rust std::net::TcpStream HTTP/1.1 (0 external deps)',
+    transport: 'Pure-Rust std::net::TcpStream + MDM EnterprisePolicy DLP check',
     cliExample:
-      'rustpad ai spec.docx --provider nour-code --task sections --prompt "Add latency benchmarks" -o spec_v2.docx',
+      'rustpad ai MSA_Redline.docx --provider nour-code --task summarize -o counsel_brief.md',
     notes:
-      'Connects directly to a local nour-code / vLLM / FastAPI OpenAI-compatible server on localhost with zero API keys and 100% air-gapped document privacy.',
+      'Permitted even under Strict Air-Gapped MDM policy (`air_gapped_mode: true`). Zero external DNS lookups, zero API keys, and 100% on-device sovereignty.',
   },
   {
     id: 'ollama',
-    name: 'Ollama (Local)',
+    name: 'Ollama (Local Workstation)',
     mode: 'LOCAL HTTP',
     endpoint: 'http://127.0.0.1:11434/v1/chat/completions',
     defaultModel: 'qwen2.5:7b',
     transport: 'Pure-Rust TcpStream + /api/tags live model auto-discovery',
     cliExample:
-      'rustpad ai report.pdf --provider ollama --model qwen2.5:7b --task summarize -o summary.md',
+      'rustpad ai report.pdf --provider ollama --model qwen2.5:7b --task sections -o report_v2.docx',
     notes:
-      'Click "Detect Local" inside the AI Studio Dock to query 127.0.0.1:11434/api/tags and populate installed local models as 1-click pills.',
+      'Click "Detect Local" inside the AI Studio Dock to query 127.0.0.1:11434/api/tags and populate installed sovereign local models as 1-click pills.',
   },
   {
     id: 'lm-studio',
@@ -290,154 +343,157 @@ export const AI_PROVIDERS: AiProviderSpec[] = [
     defaultModel: 'local-model',
     transport: 'Pure-Rust TcpStream HTTP/1.1 + chunked transfer decoder',
     cliExample:
-      'rustpad ai draft.docx --provider lm-studio --task grammar -o draft_polished.docx',
+      'rustpad ai contract.docx --provider lm-studio --task grammar -o contract_clean.docx',
     notes:
-      'Works out of the box with LM Studio local server (:1234) and llama-server --port 8080; strips <think>...</think> reasoning blocks automatically.',
+      'Works offline with LM Studio (:1234) and llama-server; automatically strips `<think>...</think>` reasoning traces before inserting OOXML blocks.',
   },
   {
     id: 'openai',
-    name: 'OpenAI / Groq / OpenRouter',
+    name: 'OpenAI / Sovereign VPC HTTPS',
     mode: 'CLOUD HTTPS',
     endpoint: 'https://api.openai.com/v1/chat/completions',
     defaultModel: 'gpt-4o-mini',
-    transport: 'Background worker thread via OS TLS bridge (RUSTPAD_AI_KEY / OPENAI_API_KEY)',
+    transport: 'Native Win32 WinHTTP Schannel TLS (Enterprise Root CA + Proxy) / Policy-Governed',
     cliExample:
       'OPENAI_API_KEY=sk-... rustpad ai proposal.docx --provider openai --task description',
     notes:
-      'Supports any HTTPS OpenAI-compatible endpoint (OpenAI, Groq, OpenRouter, Together, Mistral). API keys remain in session memory and are never written to disk.',
+      'Uses native `winhttp.dll` (`WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY`) on Windows for Zscaler/Netskope TLS inspection compatibility — and is automatically blocked when MDM `allow_cloud_ai: false` is set.',
   },
   {
     id: 'claude',
-    name: 'Anthropic Claude',
+    name: 'Anthropic Claude (Policy-Governed)',
     mode: 'CLOUD HTTPS',
     endpoint: 'https://api.anthropic.com/v1/messages',
     defaultModel: 'claude-3-5-sonnet-latest',
-    transport: 'Native Anthropic Messages v1 payload (x-api-key + anthropic-version)',
+    transport: 'Native WinHTTP Schannel / OS TLS + SHA-256 Audit Trail logging',
     cliExample:
-      'ANTHROPIC_API_KEY=sk-ant-... rustpad ai contract.pdf --provider claude --task ask --prompt "List obligations"',
+      'ANTHROPIC_API_KEY=sk-ant-... rustpad ai contract.pdf --provider claude --task ask --prompt "Flag indemnity caps"',
     notes:
-      'Formats native Anthropic Messages JSON with isolated <document_context> system prompts and parses Markdown responses into Word AST blocks.',
+      'Dispatches isolated `<document_context>` prompts when permitted by `allowed_ai_hosts` in `policy.json`, keeping API keys strictly in volatile session RAM.',
   },
 ];
 
 export const CRATE_LEDGER: CrateSpec[] = [
   {
     crateName: 'rustpad (app)',
-    layer: 'Desktop & CLI Shell',
-    standard: 'Win32 + X11 + CLI',
+    layer: 'Enterprise Studio & CLI',
+    standard: 'Win32 + X11 + 13 CLI Ops',
     responsibility:
-      'Multi-tab Word/PDF studio, contextual table ribbon, resizable AI dock, 62-command palette & headless CLI.',
+      'Native desktop Word/PDF studio, Legal Redline bar, DLP Governance modal & 13-command enterprise CLI.',
     keyModules: 'app/src/{main,state,word_view,pdf_view,ui_paint,commands}.rs',
   },
   {
     crateName: 'power_tools',
-    layer: 'AI & Workflows',
-    standard: 'HTTP/1.1 + Converters',
+    layer: 'DLP, WAL, SBOM & AI',
+    standard: 'CycloneDX 1.5 + WinHTTP',
     responsibility:
-      'Pluggable local/cloud AI Agent Bridge, DOCX <-> PDF <-> Markdown converters, offline spellcheck & DEFLATE snapshots.',
-    keyModules: 'crates/power_tools/src/{ai_agent,converter,spellcheck,snapshots,ocr}.rs',
+      'MDM policy.json DLP engine, SHA-256 AuditTrail, Crash WAL, Lockfiles, WinHTTP/TCP AI & CycloneDX SBOM.',
+    keyModules: 'crates/power_tools/src/{enterprise,ai_agent,converter,spellcheck,ocr}.rs',
   },
   {
     crateName: 'doc_model',
-    layer: 'Document AST',
-    standard: 'Rich Block Tree',
+    layer: 'OpenXML AST & Redline',
+    standard: 'Track Changes + LCS Diff',
     responsibility:
-      'Paragraphs, styled spans, wrapped multi-line TableBlock helpers, lists, checklists, undo/redo & 6 templates.',
+      'Document AST, RevisionMeta (<w:ins>/<w:del>), word-level diff_redline, Classification, RTL & Undo.',
     keyModules: 'crates/doc_model/src/{lib,templates}.rs',
   },
   {
     crateName: 'docx_io',
-    layer: 'Word Codec',
+    layer: 'Lossless Word Codec',
     standard: 'ECMA-376 OpenXML',
     responsibility:
-      'Zero-dependency XML pull/push reader & writer for word/document.xml, styles, numbering, relationships & tables.',
+      'Bounded-depth XML parser, <w:ins>/<w:del> revisions, word/comments.xml & byte-for-byte archive passthrough.',
     keyModules: 'crates/docx_io/src/{reader,writer,xml_lite}.rs',
   },
   {
-    crateName: 'pdf_create',
-    layer: 'Vector PDF Writer',
-    standard: 'ISO 32000-1.7',
+    crateName: 'pdf_engine',
+    layer: 'Forensic PDF & Seals',
+    standard: 'ISO 32000 ObjStm + SHA-256',
     responsibility:
-      'Paginated vector PDF generator with headers, footers, geometric rules, tables, watermarks & xref tables.',
+      'PDF 1.5+ /ObjStm & PNG predictor unpacker, forensic sanitize_redactions, /RustPadSeal signer & verifier.',
+    keyModules: 'crates/pdf_engine/src/{parser,writer,lib}.rs',
+  },
+  {
+    crateName: 'pdf_create',
+    layer: 'PDF 1.7 & PDF/A-2b',
+    standard: 'ISO 19005-2 PDF/A-2b',
+    responsibility:
+      'Paginated vector PDF & PDF/A-2b XMP generator with redline margin bars, tables, headers & Zlib streams.',
     keyModules: 'crates/pdf_create/src/lib.rs',
   },
   {
-    crateName: 'pdf_engine',
-    layer: 'PDF Parser & Editor',
-    standard: 'ISO 32000 Streams',
+    crateName: 'rustpad_zip',
+    layer: 'Hardened ZIP & Crypto',
+    standard: 'PKZIP + DEFLATE + SHA-256',
     responsibility:
-      'Content-stream parser, inline text editing, Bezier ink signatures, stamps, redactions, page merge/split & compression.',
-    keyModules: 'crates/pdf_engine/src/{parser,writer,lib}.rs',
+      'From-scratch DEFLATE/Zlib, bounded zip-bomb & ZipSlip guards, CRC32, Adler32 & RFC 6234 SHA-256.',
+    keyModules: 'crates/rustpad_zip/src/{checksum,inflate,deflate,zip_archive}.rs',
   },
   {
     crateName: 'rustpad_render',
     layer: '2D Framebuffer',
     standard: 'TrueType + SDF',
     responsibility:
-      'Pure-Rust .ttf glyph rasterizer, SDF rounded rects, anti-aliased vector UI icons, warm shadows & PNG codec.',
+      'Pure-Rust .ttf subpixel glyph rasterizer, SDF rounded rects, vector UI icons, paper shadows & PNG codec.',
     keyModules: 'crates/rustpad_render/src/{ttf,canvas,theme,png_codec}.rs',
   },
   {
     crateName: 'rustpad_window',
-    layer: 'OS Windowing FFI',
-    standard: 'Win32 GDI + libX11',
+    layer: 'OS Windowing & Print',
+    standard: 'Win32 GDI + libX11 + CUPS',
     responsibility:
-      'Zero-crate native window loop, HiDPI detection, dynamic OS cursors, mouse capture & OS clipboard integration.',
+      'Zero-crate native window loop, HiDPI scaling, clipboard, native dialogs & OS Print Spooler dispatch.',
     keyModules: 'crates/rustpad_window/src/{win32,linux_x11,lib}.rs',
-  },
-  {
-    crateName: 'rustpad_zip',
-    layer: 'Compression Core',
-    standard: 'RFC 1951 + PKZIP',
-    responsibility:
-      'From-scratch DEFLATE compressor, INFLATE decompressor, CRC-32/Adler-32 & ZIP archive engine powering .docx & PDF.',
-    keyModules: 'crates/rustpad_zip/src/{deflate,inflate,zip_archive,checksum}.rs',
   },
 ];
 
 export const CLI_RECIPES: CliRecipe[] = [
   {
-    label: 'Run Local AI Agent on a .docx or .pdf',
-    badge: 'AI CLI',
+    label: 'Offline Legal Contract Redline (ECMA-376 <w:ins> / <w:del>)',
+    badge: 'REDLINE',
     command:
-      'rustpad ai report.docx --provider nour-code --task summarize -o executive_summary.md',
+      'rustpad redline Base_MSA_v1.docx Counterparty_v2.docx -o MSA_Redline.docx --author "General Counsel"',
     detail:
-      'Streams document context to Ollama, nour-code, LM Studio, OpenAI, or Claude and writes clean Markdown or appends structured .docx blocks.',
+      'Computes word-level LCS revisions offline and emits a standards-compliant OpenXML .docx with tracked insertions and deletions.',
   },
   {
-    label: 'Convert Word (.docx) <-> Vector PDF <-> Markdown',
-    badge: 'CONVERT',
-    command: 'rustpad convert Architecture_Spec.docx Architecture_Spec.pdf',
+    label: 'Forensic PDF Redaction Sanitize + PDF/A-2b SHA-256 Seal',
+    badge: 'FORENSICS',
+    command:
+      'rustpad sanitize Exhibit.pdf -o Clean.pdf && rustpad sign Clean.pdf -o Sealed.pdf --pdfa && rustpad verify Sealed.pdf',
     detail:
-      'Deterministic offline conversion across .docx, .pdf, and .md in milliseconds — built for CI pipelines and batch scripts.',
+      'Physically purges underlying glyph runs inside redaction boxes, embeds PDF/A-2b XMP metadata, and seals content with RFC 6234 SHA-256.',
   },
   {
-    label: 'Merge & Inspect Multi-File PDF Packets',
-    badge: 'PDF OPS',
-    command: 'rustpad merge Release_Packet.pdf Cover.pdf Spec.pdf Signed_Appendix.pdf',
+    label: 'CycloneDX 1.5 SBOM & Strict Air-Gapped MDM Policy',
+    badge: 'CISO / DLP',
+    command:
+      'rustpad sbom -o rustpad-v2.0.0.cdx.json && rustpad policy --init-airgapped .rustpad-policy.json',
     detail:
-      'Combines multiple ISO 32000 PDFs into a compressed vector packet without ghostscript, Java, or cloud upload.',
+      'Generates a machine-readable CycloneDX 1.5 bill of materials proving 0 crates.io deps and locks AI sockets strictly to 127.0.0.1.',
   },
   {
-    label: 'Build Native Binary from Zero-Dependency Rust Source',
-    badge: 'SOURCE',
-    command: 'git clone https://github.com/Nour-yahyaoui/rustpad.git && cd rustpad && cargo run --release',
+    label: 'DLP-Governed Local AI & Accessibility Tree Audit',
+    badge: 'AI + A11Y',
+    command:
+      'rustpad ai MSA_Redline.docx --provider nour-code --task summarize -o brief.md && rustpad inspect --a11y MSA_Redline.docx',
     detail:
-      'Compiles all 9 workspace crates cleanly with stable rustc — zero crates.io downloads required.',
+      'Runs air-gapped local inference over pure-Rust HTTP and exports the semantic UIA/AT-SPI accessibility landmark tree as JSON.',
   },
 ];
 
 export const SCOPE_MATRIX = {
   builtFor: [
-    'Instant (<90 ms) daily drafting of clean .docx specs, resumes, letters, and technical reports',
-    'Interactive multi-line tables, headings, lists, checklists, undo/redo, and local version snapshots',
-    'Vector PDF export, page merge/split/reorder, Bezier ink signatures, stamps, and redactions',
-    'Air-gapped local AI workflows (Ollama, nour-code, LM Studio) + optional BYO-key OpenAI/Claude',
+    'Air-gapped legal, defense, healthcare, financial & engineering teams requiring 100% offline desktop sovereignty',
+    'Counterparty .docx contract redlining (<w:ins>/<w:del>), threaded comments, lossless corporate archive passthrough & wrapped tables',
+    'Forensic PDF stream sanitization, PDF 1.5+ /ObjStm parsing, PDF/A-2b archival export & SHA-256 tamper-evident sealing',
+    'Zero-supply-chain-sprawl procurement (0 crates.io deps, CycloneDX 1.5 SBOM, MDM policy.json AI DLP & hash-chained audit logs)',
   ],
   nonGoals: [
-    'Complex multi-author Word Track Changes, VBA macros, or OLE embedded spreadsheets',
-    'Arbitrary encrypted XFA PDF forms or CMYK prepress color-separation pipelines',
-    'Forced cloud accounts, background telemetry daemons, or 250 MB Chromium installers',
+    'Legacy VBA macro execution (`vbaProject.bin` is preserved passively on passthrough, never executed — eliminating macro malware)',
+    'Proprietary cloud collaboration accounts, telemetry beacons, or 300 MB Electron/Chromium installers',
+    'Hardware smartcard PKCS#11 X.509 certificate chains (v2.0 uses deterministic zero-dependency SHA-256 `/RustPadSeal` manifests)',
   ],
 };
 
@@ -445,32 +501,32 @@ export const TOUR_STEPS: TourStep[] = [
   {
     step: '01 / 05',
     targetSelector: '#hero',
-    title: 'Zero-WebView Native Rust Studio',
-    body: 'RustPad v1.3.0 packs a Word (.docx) processor, ISO 32000 PDF editor, and pluggable AI studio into a ~3.8 MB native binary.',
+    title: 'RustPad v2.0 Enterprise — Offline & Zero-Dependency',
+    body: 'A ~3.8 MB pure-Rust native desktop suite competing head-to-head with enterprise office & PDF tools while keeping 0 crates.io runtime dependencies.',
   },
   {
     step: '02 / 05',
-    targetSelector: '#studio',
-    specimenId: 'word-ai',
-    title: 'Live Studio Switchboard',
-    body: 'Tap through all 4 native studio views — Word + AI Studio, Vector PDF Sign, Split View + Ctrl+K, and the Editorial Launchpad.',
+    targetSelector: '#enterprise-matrix',
+    title: 'Enterprise Suite Benchmark Matrix',
+    body: 'Compare RustPad v2.0 against Cloud SaaS, Electron wrappers, and multi-gigabyte legacy suites across offline DLP, legal redlining, and PDF forensics.',
   },
   {
     step: '03 / 05',
-    targetSelector: '#craft',
-    title: 'Interactive Tables & Smooth Ergonomics',
-    body: 'v1.3.0 adds wrapped multi-line cells, +Add Row / +Col rails, draggable column dividers, character-exact clicks, and HiDPI scaling.',
+    targetSelector: '#studio',
+    specimenId: 'word-ai',
+    title: 'Live Redline, Forensic PDF & DLP Switchboard',
+    body: 'Inspect all 4 v2.0 desktop views: Legal Redline + Local AI, Forensic PDF + SHA-256 Seal, Split Governance Audit, and the 7-Template Launchpad.',
   },
   {
     step: '04 / 05',
     targetSelector: '#ai-studio',
-    title: 'Local & Cloud AI Agent Bridge',
-    body: 'Connect Ollama, nour-code, or LM Studio over pure-Rust HTTP, or plug in OpenAI / Claude keys for grammar, summaries, and new sections.',
+    title: 'MDM Policy-Governed Local & WinHTTP AI',
+    body: 'Lock AI strictly to localhost Ollama / nour-code in air-gapped labs, or route through corporate proxies via native Windows Schannel WinHTTP.',
   },
   {
     step: '05 / 05',
-    targetSelector: '#architecture',
-    title: '9 Pure-Rust Crates, Zero Bloat',
-    body: 'Inspect the 9-crate workspace from custom RFC 1951 DEFLATE/ZIP and TrueType rasterization up to ECMA-376 OpenXML and ISO 32000 PDF.',
+    targetSelector: '#cli',
+    title: 'Headless Legal, Forensic & CISO CLI',
+    body: 'Automate `rustpad redline`, `rustpad sanitize`, `rustpad sign --pdfa`, `rustpad verify`, and `rustpad sbom` directly in CI or e-discovery pipelines.',
   },
 ];

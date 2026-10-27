@@ -1,9 +1,11 @@
-//! ECMA-376 OpenXML (`.docx`) Serializer.
+//! ECMA-376 OpenXML (`.docx`) Serializer with Track Changes (`<w:ins>`/`<w:del>`),
+//! Threaded Comments (`word/comments.xml`), Settings, and Lossless Archive Passthrough.
 
 use crate::xml_lite::escape_xml;
 use crate::DocxError;
 use doc_model::{
-    Alignment, Block, Document, ListKind, Paragraph, ParagraphStyle, RgbColor, TableBlock,
+    Alignment, Block, DocComment, Document, ListKind, Paragraph, ParagraphStyle, RevisionKind,
+    RgbColor, TableBlock,
 };
 use rustpad_zip::ZipWriter;
 use std::path::Path;
@@ -27,15 +29,24 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
         }
     }
 
-    zw.add_file("[Content_Types].xml", build_content_types().into_bytes());
+    let has_comments = !doc.comments.is_empty();
+
+    zw.add_file(
+        "[Content_Types].xml",
+        build_content_types(has_comments).into_bytes(),
+    );
     zw.add_file("_rels/.rels", build_root_rels().into_bytes());
     zw.add_file("docProps/core.xml", build_core_props(doc).into_bytes());
     zw.add_file(
         "word/_rels/document.xml.rels",
-        build_doc_rels(&images).into_bytes(),
+        build_doc_rels(&images, has_comments).into_bytes(),
     );
     zw.add_file("word/styles.xml", build_styles_xml().into_bytes());
     zw.add_file("word/numbering.xml", build_numbering_xml().into_bytes());
+    zw.add_file(
+        "word/settings.xml",
+        build_settings_xml(doc.track_changes).into_bytes(),
+    );
     zw.add_file(
         "word/header1.xml",
         build_header_xml(&doc.page_setup.header_text).into_bytes(),
@@ -45,17 +56,39 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
         build_footer_xml(&doc.page_setup.footer_text, doc.page_setup.show_page_numbers)
             .into_bytes(),
     );
+    if has_comments {
+        zw.add_file(
+            "word/comments.xml",
+            build_comments_xml(&doc.comments).into_bytes(),
+        );
+    }
     zw.add_file("word/document.xml", build_document_xml(doc).into_bytes());
 
-    for (rel_path, data) in images {
-        zw.add_file(format!("word/{rel_path}"), data);
+    for (rel_path, data) in &images {
+        zw.add_file(format!("word/{rel_path}"), data.clone());
+    }
+
+    // Re-emit unmodeled enterprise passthrough parts (`customXml/*`, `word/theme/*`, etc.)
+    for (part_name, data) in &doc.passthrough_parts {
+        let collides_img = images
+            .iter()
+            .any(|(rel, _)| format!("word/{rel}") == *part_name);
+        if !collides_img {
+            zw.add_file(part_name.clone(), data.clone());
+        }
     }
 
     zw.finish()
 }
 
-fn build_content_types() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+fn build_content_types(has_comments: bool) -> String {
+    let comments_override = if has_comments {
+        "\n  <Override PartName=\"/word/comments.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml\"/>"
+    } else {
+        ""
+    };
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
@@ -65,11 +98,12 @@ fn build_content_types() -> String {
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
   <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
   <Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>
+  <Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
   <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
   <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
-  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>{comments_override}
 </Types>"#
-        .to_string()
+    )
 }
 
 fn build_root_rels() -> String {
@@ -90,23 +124,71 @@ fn build_core_props(doc: &Document) -> String {
   <dc:title>{}</dc:title>
   <dc:creator>{}</dc:creator>
   <cp:lastModifiedBy>{}</cp:lastModifiedBy>
+  <cp:category>{}</cp:category>
 </cp:coreProperties>"#,
         escape_xml(&doc.title),
         escape_xml(&doc.author),
         escape_xml(&doc.author),
+        escape_xml(doc.classification.slug()),
     )
 }
 
-fn build_doc_rels(images: &[(String, Vec<u8>)]) -> String {
+fn build_settings_xml(track_changes: bool) -> String {
+    let track_node = if track_changes {
+        "  <w:trackRevisions/>\n"
+    } else {
+        ""
+    };
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+{track_node}</w:settings>"#
+    )
+}
+
+fn build_comments_xml(comments: &[DocComment]) -> String {
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+"#,
+    );
+    for c in comments {
+        let done_val = if c.resolved { "1" } else { "0" };
+        let date_attr = if c.date_iso.is_empty() {
+            "2026-10-27T00:00:00Z"
+        } else {
+            c.date_iso.as_str()
+        };
+        xml.push_str(&format!(
+            r#"  <w:comment w:id="{}" w:author="{}" w:date="{}" w:done="{done_val}"><w:p><w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p></w:comment>"#,
+            c.id,
+            escape_xml(&c.author),
+            escape_xml(date_attr),
+            escape_xml(&c.text)
+        ));
+        xml.push('\n');
+    }
+    xml.push_str("</w:comments>");
+    xml
+}
+
+fn build_doc_rels(images: &[(String, Vec<u8>)], has_comments: bool) -> String {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
   <Relationship Id="rIdNumbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
+  <Relationship Id="rIdSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>
   <Relationship Id="rIdHeader1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
   <Relationship Id="rIdFooter1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>
 "#,
     );
+    if has_comments {
+        xml.push_str(
+            r#"  <Relationship Id="rIdComments" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/>"#,
+        );
+        xml.push('\n');
+    }
     for (idx, (target, _)) in images.iter().enumerate() {
         let id = idx + 1;
         xml.push_str(&format!(
@@ -235,7 +317,7 @@ fn jc_val(a: Alignment) -> &'static str {
     }
 }
 
-fn write_paragraph_xml(out: &mut String, p: &Paragraph) {
+fn write_paragraph_xml(out: &mut String, p: &Paragraph, anchored_comments: &[&DocComment]) {
     out.push_str("<w:p><w:pPr>");
     out.push_str(&format!(r#"<w:pStyle w:val="{}"/>"#, style_id(p.style)));
     if p.alignment != Alignment::Left {
@@ -264,6 +346,10 @@ fn write_paragraph_xml(out: &mut String, p: &Paragraph) {
     ));
     out.push_str("</w:pPr>");
 
+    for c in anchored_comments {
+        out.push_str(&format!(r#"<w:commentRangeStart w:id="{}"/>"#, c.id));
+    }
+
     if let ListKind::Checklist(done) = p.list_kind {
         let mark = if done { "☑ " } else { "☐ " };
         out.push_str(&format!(
@@ -272,41 +358,89 @@ fn write_paragraph_xml(out: &mut String, p: &Paragraph) {
     }
 
     for span in &p.spans {
-        out.push_str("<w:r><w:rPr>");
+        let mut r_xml = String::from("<w:r><w:rPr>");
         let font = span.style.font_family.docx_name();
-        out.push_str(&format!(
+        r_xml.push_str(&format!(
             r#"<w:rFonts w:ascii="{font}" w:hAnsi="{font}"/>"#
         ));
         if span.style.bold {
-            out.push_str("<w:b/>");
+            r_xml.push_str("<w:b/>");
         }
         if span.style.italic {
-            out.push_str("<w:i/>");
+            r_xml.push_str("<w:i/>");
         }
         if span.style.underline {
-            out.push_str(r#"<w:u w:val="single"/>"#);
+            r_xml.push_str(r#"<w:u w:val="single"/>"#);
         }
         if span.style.strikethrough {
-            out.push_str("<w:strike/>");
+            r_xml.push_str("<w:strike/>");
         }
         let half_pts = (span.style.font_size_pt * 2.0).round() as u32;
-        out.push_str(&format!(r#"<w:sz w:val="{half_pts}"/>"#));
-        out.push_str(&format!(
+        r_xml.push_str(&format!(r#"<w:sz w:val="{half_pts}"/>"#));
+        r_xml.push_str(&format!(
             r#"<w:color w:val="{}"/>"#,
             span.style.color.to_hex()
         ));
         if let Some(hl) = span.style.highlight {
-            out.push_str(&format!(
+            r_xml.push_str(&format!(
                 r#"<w:shd w:val="clear" w:color="auto" w:fill="{}"/>"#,
                 hl.to_hex()
             ));
         }
-        out.push_str("</w:rPr>");
+        r_xml.push_str("</w:rPr>");
+
+        match &span.revision {
+            Some(rev) if rev.kind == RevisionKind::Deletion => {
+                r_xml.push_str(&format!(
+                    r#"<w:delText xml:space="preserve">{}</w:delText></w:r>"#,
+                    escape_xml(&span.text)
+                ));
+                let date_attr = if rev.date_iso.is_empty() {
+                    "2026-10-27T00:00:00Z"
+                } else {
+                    rev.date_iso.as_str()
+                };
+                out.push_str(&format!(
+                    r#"<w:del w:id="{}" w:author="{}" w:date="{}">{r_xml}</w:del>"#,
+                    rev.id,
+                    escape_xml(&rev.author),
+                    escape_xml(date_attr)
+                ));
+            }
+            Some(rev) => {
+                r_xml.push_str(&format!(
+                    r#"<w:t xml:space="preserve">{}</w:t></w:r>"#,
+                    escape_xml(&span.text)
+                ));
+                let date_attr = if rev.date_iso.is_empty() {
+                    "2026-10-27T00:00:00Z"
+                } else {
+                    rev.date_iso.as_str()
+                };
+                out.push_str(&format!(
+                    r#"<w:ins w:id="{}" w:author="{}" w:date="{}">{r_xml}</w:ins>"#,
+                    rev.id,
+                    escape_xml(&rev.author),
+                    escape_xml(date_attr)
+                ));
+            }
+            None => {
+                r_xml.push_str(&format!(
+                    r#"<w:t xml:space="preserve">{}</w:t></w:r>"#,
+                    escape_xml(&span.text)
+                ));
+                out.push_str(&r_xml);
+            }
+        }
+    }
+
+    for c in anchored_comments {
         out.push_str(&format!(
-            r#"<w:t xml:space="preserve">{}</w:t></w:r>"#,
-            escape_xml(&span.text)
+            r#"<w:commentRangeEnd w:id="{id}"/><w:r><w:commentReference w:id="{id}"/></w:r>"#,
+            id = c.id
         ));
     }
+
     out.push_str("</w:p>\n");
 }
 
@@ -336,23 +470,27 @@ fn write_table_xml(out: &mut String, t: &TableBlock, content_width_twips: u32) {
                     bg.to_hex()
                 ));
             }
-            out.push_str("</w:tcPr><w:p><w:pPr>");
-            if cell.alignment != Alignment::Left {
-                out.push_str(&format!(r#"<w:jc w:val="{}"/>"#, jc_val(cell.alignment)));
+            out.push_str("</w:tcPr>");
+            for line in cell.text.split('\n') {
+                out.push_str("<w:p><w:pPr>");
+                if cell.alignment != Alignment::Left {
+                    out.push_str(&format!(r#"<w:jc w:val="{}"/>"#, jc_val(cell.alignment)));
+                }
+                out.push_str("</w:pPr><w:r><w:rPr>");
+                if cell.bold {
+                    out.push_str("<w:b/>");
+                }
+                out.push_str(&format!(
+                    r#"<w:color w:val="{}"/>"#,
+                    RgbColor::INK_SLATE.to_hex()
+                ));
+                out.push_str("</w:rPr>");
+                out.push_str(&format!(
+                    r#"<w:t xml:space="preserve">{}</w:t></w:r></w:p>"#,
+                    escape_xml(line)
+                ));
             }
-            out.push_str("</w:pPr><w:r><w:rPr>");
-            if cell.bold {
-                out.push_str("<w:b/>");
-            }
-            out.push_str(&format!(
-                r#"<w:color w:val="{}"/>"#,
-                RgbColor::INK_SLATE.to_hex()
-            ));
-            out.push_str("</w:rPr>");
-            out.push_str(&format!(
-                r#"<w:t xml:space="preserve">{}</w:t></w:r></w:p></w:tc>"#,
-                escape_xml(&cell.text)
-            ));
+            out.push_str("</w:tc>");
         }
         out.push_str("</w:tr>\n");
     }
@@ -384,9 +522,16 @@ fn build_document_xml(doc: &Document) -> String {
     );
 
     let mut img_counter = 0usize;
-    for block in &doc.blocks {
+    for (block_idx, block) in doc.blocks.iter().enumerate() {
         match block {
-            Block::Paragraph(p) => write_paragraph_xml(&mut xml, p),
+            Block::Paragraph(p) => {
+                let anchored: Vec<&DocComment> = doc
+                    .comments
+                    .iter()
+                    .filter(|c| c.block_index == block_idx)
+                    .collect();
+                write_paragraph_xml(&mut xml, p, &anchored);
+            }
             Block::Table(t) => write_table_xml(&mut xml, t, content_twips),
             Block::HorizontalRule => {
                 xml.push_str(

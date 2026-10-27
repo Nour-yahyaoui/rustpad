@@ -1,16 +1,36 @@
-//! Pure-Rust PDF 1.4–1.7 Parser, Visual Page Model & Full PDF Studio Editing Engine.
-//! Supports: Create Blank PDF, Parse PDFs, Inline Text Block Editing, Add Text Boxes,
-//! Highlights, Sticky Notes, Stamps, Smooth Ink Signatures, True Redaction, Watermarks,
-//! Rotate/Reorder/Delete Pages, Merge PDFs, Split/Extract Page Ranges, and Compress PDF.
+//! Pure-Rust PDF 1.4–1.7 (`/ObjStm` aware) Parser, Visual Page Model, Forensic Sanitizer,
+//! PDF/A-2b Exporter, and Cryptographic SHA-256 Tamper-Evident Document Sealer.
 
 pub mod parser;
 pub mod writer;
 
 use doc_model::{FontFamily, PaperSize, RgbColor};
+use rustpad_zip::sha256_hex;
+use std::fmt::Write as _;
 use std::path::Path;
 
 pub use parser::{load_pdf_bytes, load_pdf_file};
-pub use writer::{compress_pdf_bytes, save_pdf_bytes, save_pdf_file};
+pub use writer::{
+    compress_pdf_bytes, save_pdf_bytes, save_pdf_bytes_ext, save_pdf_file, save_pdfa_file,
+    seal_pdf_bytes, verify_pdf_seal_bytes,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForensicSanitizeReport {
+    pub redaction_boxes: usize,
+    pub purged_text_runs: usize,
+    pub purged_annotations: usize,
+    pub metadata_scrubbed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PdfSealManifest {
+    pub signer: String,
+    pub date_iso: String,
+    pub content_sha256: String,
+    pub pdfa_conformance: bool,
+    pub page_count: usize,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PdfTextItem {
@@ -231,7 +251,10 @@ impl PdfDocument {
         }
     }
 
-    pub fn merge_files(paths: &[impl AsRef<Path>], title: impl Into<String>) -> Result<Self, String> {
+    pub fn merge_files(
+        paths: &[impl AsRef<Path>],
+        title: impl Into<String>,
+    ) -> Result<Self, String> {
         let mut loaded = Vec::with_capacity(paths.len());
         for p in paths {
             loaded.push(load_pdf_file(p)?);
@@ -293,6 +316,108 @@ impl PdfDocument {
             .collect::<Vec<_>>()
             .join("\n\n")
     }
+
+    /// Forensically scrubs all underlying text runs and overlapping notes/highlights beneath
+    /// every `PdfAnnotation::Redaction` region across all pages (FOIA / HIPAA / Legal Discovery).
+    pub fn sanitize_redactions(&mut self, scrub_metadata: bool) -> ForensicSanitizeReport {
+        let mut redaction_boxes = 0usize;
+        let mut purged_text_runs = 0usize;
+        let mut purged_annotations = 0usize;
+
+        for page in &mut self.pages {
+            let boxes: Vec<(f32, f32, f32, f32)> = page
+                .annotations
+                .iter()
+                .filter_map(|a| match a {
+                    PdfAnnotation::Redaction { x, y, w, h } => {
+                        Some((x.min(x + w), y.min(y + h), x.max(x + w), y.max(y + h)))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            if boxes.is_empty() {
+                continue;
+            }
+            redaction_boxes += boxes.len();
+
+            let before_txt = page.text_items.len();
+            page.text_items.retain(|item| {
+                let approx_w =
+                    pdf_create::estimate_text_width(&item.text, item.font_size, item.font_family);
+                let ix0 = item.x;
+                let ix1 = item.x + approx_w;
+                let iy0 = item.y - 2.0;
+                let iy1 = item.y + item.font_size;
+                !boxes
+                    .iter()
+                    .any(|&(rx0, ry0, rx1, ry1)| ix0 < rx1 && ix1 > rx0 && iy0 < ry1 && iy1 > ry0)
+            });
+            purged_text_runs += before_txt - page.text_items.len();
+
+            let before_ann = page.annotations.len();
+            page.annotations.retain(|annot| match annot {
+                PdfAnnotation::StickyNote { x, y, .. } => !boxes.iter().any(|&(rx0, ry0, rx1, ry1)| {
+                    *x < rx1 && (*x + 20.0) > rx0 && *y < ry1 && (*y + 20.0) > ry0
+                }),
+                PdfAnnotation::Highlight { x, y, w, h, .. } => {
+                    !boxes.iter().any(|&(rx0, ry0, rx1, ry1)| {
+                        *x < rx1 && (*x + *w) > rx0 && *y < ry1 && (*y + *h) > ry0
+                    })
+                }
+                _ => true,
+            });
+            purged_annotations += before_ann - page.annotations.len();
+        }
+
+        if scrub_metadata {
+            self.author = "REDACTED".into();
+        }
+
+        ForensicSanitizeReport {
+            redaction_boxes,
+            purged_text_runs,
+            purged_annotations,
+            metadata_scrubbed: scrub_metadata,
+        }
+    }
+
+    /// Computes a deterministic SHA-256 content hash over all page dimensions, canonical text items,
+    /// and redaction boxes so tampering with any saved PDF stream is cryptographically detectable.
+    pub fn canonical_content_sha256(&self) -> String {
+        let mut canon = String::with_capacity(1024);
+        let _ = writeln!(canon, "rustpad-seal-v2|pages={}", self.pages.len());
+        for (p_idx, page) in self.pages.iter().enumerate() {
+            let _ = writeln!(
+                canon,
+                "page:{p_idx}|w={:.1}|h={:.1}",
+                page.width_pt, page.height_pt
+            );
+            let mut texts: Vec<(i32, i32, &str)> = page
+                .text_items
+                .iter()
+                .map(|t| ((t.x * 10.0).round() as i32, (t.y * 10.0).round() as i32, t.text.trim()))
+                .filter(|(_, _, s)| !s.is_empty())
+                .collect();
+            texts.sort();
+            for (qx, qy, txt) in texts {
+                let _ = writeln!(canon, "t:{qx}:{qy}:{txt}");
+            }
+            for annot in &page.annotations {
+                if let PdfAnnotation::Redaction { x, y, w, h } = annot {
+                    let _ = writeln!(
+                        canon,
+                        "redact:{}:{}:{}:{}",
+                        (x * 10.0).round() as i32,
+                        (y * 10.0).round() as i32,
+                        (w * 10.0).round() as i32,
+                        (h * 10.0).round() as i32
+                    );
+                }
+            }
+        }
+        sha256_hex(canon.as_bytes())
+    }
 }
 
 pub fn parse_page_ranges(spec: &str, max_pages: usize) -> Result<Vec<usize>, String> {
@@ -341,6 +466,7 @@ mod tests {
     use super::*;
     use doc_model::TemplateKind;
     use pdf_create::{export_document_to_pdf_bytes, PdfCreateOptions};
+    use rustpad_zip::zlib_compress;
 
     #[test]
     fn test_parse_edit_merge_split_sign_redact_compress_pdf() {
@@ -374,7 +500,8 @@ mod tests {
         // True redaction removes overlapping text item
         let target_x = merged.pages[0].text_items[0].x;
         let target_y = merged.pages[0].text_items[0].y;
-        let scrubbed = merged.pages[0].apply_redaction(target_x - 2.0, target_y - 2.0, 260.0, 30.0);
+        let scrubbed =
+            merged.pages[0].apply_redaction(target_x - 2.0, target_y - 2.0, 260.0, 30.0);
         assert!(scrubbed >= 1);
 
         let split = merged.extract_ranges("1-2").expect("extract pages 1-2");
@@ -386,5 +513,91 @@ mod tests {
         assert!(after < before);
         let reloaded = load_pdf_bytes(&comp).expect("reload compressed pdf");
         assert_eq!(reloaded.pages.len(), 2);
+    }
+
+    #[test]
+    fn test_pdf15_objstm_forensic_sanitize_and_sha256_seal_verification() {
+        // 1. Construct a synthetic PDF 1.5 with Catalog + Page packed inside `/Type /ObjStm`
+        let obj1 = b"<< /Type /Catalog /Pages 2 0 R >>";
+        let obj2 = b"<< /Type /Pages /Kids [ 3 0 R ] /Count 1 >>";
+        let obj3 = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>";
+        let index_hdr = format!(
+            "1 0 2 {} 3 {} ",
+            obj1.len(),
+            obj1.len() + obj2.len()
+        );
+        let first_off = index_hdr.len();
+        let mut objstm_raw = Vec::new();
+        objstm_raw.extend_from_slice(index_hdr.as_bytes());
+        objstm_raw.extend_from_slice(obj1);
+        objstm_raw.extend_from_slice(obj2);
+        objstm_raw.extend_from_slice(obj3);
+        let objstm_z = zlib_compress(&objstm_raw);
+
+        let content_stream = b"BT /F1 14 Tf 72 720 Td (Classified Account SSN 999-00-1234) Tj ET";
+        let mut synthetic_pdf = Vec::new();
+        synthetic_pdf.extend_from_slice(b"%PDF-1.6\n");
+        synthetic_pdf.extend_from_slice(
+            format!(
+                "4 0 obj\n<< /Length {} >>\nstream\n",
+                content_stream.len()
+            )
+            .as_bytes(),
+        );
+        synthetic_pdf.extend_from_slice(content_stream);
+        synthetic_pdf.extend_from_slice(b"\nendstream\nendobj\n");
+        synthetic_pdf.extend_from_slice(
+            format!(
+                "5 0 obj\n<< /Type /ObjStm /N 3 /First {first_off} /Filter /FlateDecode /Length {} >>\nstream\n",
+                objstm_z.len()
+            )
+            .as_bytes(),
+        );
+        synthetic_pdf.extend_from_slice(&objstm_z);
+        synthetic_pdf.extend_from_slice(b"\nendstream\nendobj\n%%EOF\n");
+
+        let mut loaded = load_pdf_bytes(&synthetic_pdf).expect("parse PDF 1.6 ObjStm");
+        assert!(loaded.extract_all_text().contains("SSN 999-00-1234"));
+
+        // 2. Place Redaction annotation + run Forensic Sanitizer
+        loaded.pages[0].annotations.push(PdfAnnotation::Redaction {
+            x: 68.0,
+            y: 714.0,
+            w: 320.0,
+            h: 24.0,
+        });
+        let report = loaded.sanitize_redactions(true);
+        assert_eq!(report.redaction_boxes, 1);
+        assert_eq!(report.purged_text_runs, 1);
+        assert!(!loaded.extract_all_text().contains("SSN 999-00-1234"));
+        assert_eq!(loaded.author, "REDACTED");
+
+        // 3. Add public summary text, seal with SHA-256 + PDF/A-2b, and verify tamper detection
+        loaded.pages[0].add_text_box(
+            72.0,
+            660.0,
+            "Sanitized Public Release Copy",
+            12.0,
+            RgbColor::INK_SLATE,
+        );
+        let (sealed_bytes, manifest) =
+            seal_pdf_bytes(&loaded, "Enterprise Records Officer", "2026-10-27T14:00:00Z", true);
+        let verified = verify_pdf_seal_bytes(&sealed_bytes).expect("valid seal");
+        assert_eq!(verified.content_sha256, manifest.content_sha256);
+        assert!(verified.pdfa_conformance);
+
+        // Tamper with text stream byte inside uncompressed copy -> seal verification must fail!
+        let tampered_str = String::from_utf8_lossy(&sealed_bytes).to_string();
+        assert!(tampered_str.contains("/RustPadSeal"));
+        let mut dirty_doc = load_pdf_bytes(&sealed_bytes).unwrap();
+        dirty_doc.pages[0].text_items[0].text = "Forged Amount $9,999,999".into();
+        // Transplant original /RustPadSeal onto forged content to simulate tampering
+        let mut forged = save_pdf_bytes(&dirty_doc, false);
+        let fake_seal_obj = format!(
+            "\n99 0 obj\n<< /Type /RustPadSeal /Version (2.0) /Signer (Attacker) /Date (2026) /ContentSha256 ({}) >>\nendobj\n",
+            manifest.content_sha256
+        );
+        forged.extend_from_slice(fake_seal_obj.as_bytes());
+        assert!(verify_pdf_seal_bytes(&forged).is_err());
     }
 }

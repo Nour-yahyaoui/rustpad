@@ -1,13 +1,16 @@
-//! Central Command Registry for RustPad's toolbars, shortcuts, dropdowns, and `Ctrl+K` Command Palette.
+//! Central Command Registry for RustPad v2.0 Enterprise Studio:
+//! Toolbars, Keyboard Shortcuts, Dropdowns, Governance Actions & `Ctrl+K` Command Palette.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandId {
     NewWordBlank,
     NewWordWelcome,
+    NewWordEnterpriseMsa,
     NewPdfBlank,
     OpenFile,
     SaveFile,
     SaveAsFile,
+    PrintDocument,
     ExportWordToPdf,
     ConvertPdfToWord,
     Undo,
@@ -40,11 +43,18 @@ pub enum CommandId {
     InsertPageBreak,
     CyclePaperSize,
     ToggleSpellcheck,
+    ToggleTrackChanges,
+    AcceptAllRevisions,
+    RejectAllRevisions,
+    AddReviewComment,
+    CycleClassification,
     PdfToolSelect,
     PdfToolAddText,
     PdfToolHighlight,
     PdfToolSticky,
     PdfToolRedact,
+    PdfSanitizeRedactions,
+    PdfSealDocument,
     OpenSignaturePad,
     StampApproved,
     PdfMergeFile,
@@ -64,6 +74,8 @@ pub enum CommandId {
     OpenSnapshotsDrawer,
     CaptureSnapshot,
     OpenFindReplace,
+    OpenGovernanceModal,
+    ToggleAirGappedDlp,
     ZoomIn,
     ZoomOut,
     ZoomReset,
@@ -82,13 +94,22 @@ pub struct CommandSpec {
 
 pub const ALL_COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: CommandId::NewWordBlank, category: "File", title: "New Blank Word Document (.docx)", shortcut: "Ctrl+N" },
-    CommandSpec { id: CommandId::NewWordWelcome, category: "File", title: "New Document from Welcome Guide", shortcut: "" },
+    CommandSpec { id: CommandId::NewWordEnterpriseMsa, category: "Enterprise", title: "New Enterprise MSA Legal Redline Contract (.docx)", shortcut: "" },
+    CommandSpec { id: CommandId::NewWordWelcome, category: "File", title: "New Document from Welcome Guide v2.0", shortcut: "" },
     CommandSpec { id: CommandId::NewPdfBlank, category: "PDF", title: "Create New Blank PDF Studio Tab (.pdf)", shortcut: "" },
     CommandSpec { id: CommandId::OpenFile, category: "File", title: "Open Word / PDF / Markdown File…", shortcut: "Ctrl+O" },
     CommandSpec { id: CommandId::SaveFile, category: "File", title: "Save Active Document", shortcut: "Ctrl+S" },
     CommandSpec { id: CommandId::SaveAsFile, category: "File", title: "Save Active Document As…", shortcut: "" },
+    CommandSpec { id: CommandId::PrintDocument, category: "File", title: "Print Active Document via Native OS Spooler", shortcut: "Ctrl+P" },
     CommandSpec { id: CommandId::ExportWordToPdf, category: "Convert", title: "Export Word Document to Vector PDF (.pdf)", shortcut: "Ctrl+E" },
     CommandSpec { id: CommandId::ConvertPdfToWord, category: "Convert", title: "Convert Active PDF to Editable Word (.docx)", shortcut: "" },
+    CommandSpec { id: CommandId::ToggleTrackChanges, category: "Review", title: "Toggle Legal Track Changes Mode (w:ins / w:del)", shortcut: "Ctrl+Shift+E" },
+    CommandSpec { id: CommandId::AcceptAllRevisions, category: "Review", title: "Accept All Tracked Revisions in Document", shortcut: "" },
+    CommandSpec { id: CommandId::RejectAllRevisions, category: "Review", title: "Reject All Tracked Revisions in Document", shortcut: "" },
+    CommandSpec { id: CommandId::AddReviewComment, category: "Review", title: "Add Threaded Review Comment to Paragraph…", shortcut: "Ctrl+Shift+M" },
+    CommandSpec { id: CommandId::CycleClassification, category: "Governance", title: "Cycle Security Classification (PUBLIC / INTERNAL / CONFIDENTIAL / RESTRICTED)", shortcut: "" },
+    CommandSpec { id: CommandId::OpenGovernanceModal, category: "Governance", title: "Open Enterprise DLP Policy & SHA-256 Audit Chain Inspector", shortcut: "" },
+    CommandSpec { id: CommandId::ToggleAirGappedDlp, category: "Governance", title: "Toggle Strict Air-Gapped AI DLP Cloud Lockout", shortcut: "" },
     CommandSpec { id: CommandId::ToggleAiDock, category: "AI", title: "Toggle Pluggable AI Agent Studio Dock (Ollama / nour-code / Cloud)", shortcut: "Ctrl+J" },
     CommandSpec { id: CommandId::AiRunFixGrammar, category: "AI", title: "AI Agent: Proofread & Fix Grammar", shortcut: "" },
     CommandSpec { id: CommandId::AiRunSummarize, category: "AI", title: "AI Agent: Summarize Active Document", shortcut: "" },
@@ -124,6 +145,8 @@ pub const ALL_COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: CommandId::InsertPageBreak, category: "Word", title: "Insert Physical Page Break", shortcut: "" },
     CommandSpec { id: CommandId::CyclePaperSize, category: "Word", title: "Switch Paper Size (A4 / US Letter / US Legal)", shortcut: "" },
     CommandSpec { id: CommandId::ToggleSpellcheck, category: "Tools", title: "Toggle Offline Live Spellchecker", shortcut: "" },
+    CommandSpec { id: CommandId::PdfSanitizeRedactions, category: "PDF", title: "PDF Forensics: Sanitize & Purge Redacted Underlying Text", shortcut: "" },
+    CommandSpec { id: CommandId::PdfSealDocument, category: "PDF", title: "PDF Security: Embed SHA-256 Tamper-Evident Seal & PDF/A-2b", shortcut: "" },
     CommandSpec { id: CommandId::OpenSignaturePad, category: "PDF", title: "Draw & Place Ink Signature on PDF", shortcut: "" },
     CommandSpec { id: CommandId::StampApproved, category: "PDF", title: "Place [APPROVED] Vector Stamp on PDF", shortcut: "" },
     CommandSpec { id: CommandId::PdfToolAddText, category: "PDF", title: "PDF Tool: Click Page to Add Text Box", shortcut: "" },
@@ -147,7 +170,7 @@ pub const ALL_COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: CommandId::UiScaleUp, category: "View", title: "Increase Interface Font & UI Scale (+10%)", shortcut: "" },
     CommandSpec { id: CommandId::UiScaleDown, category: "View", title: "Decrease Interface Font & UI Scale (-10%)", shortcut: "" },
     CommandSpec { id: CommandId::UiScaleReset, category: "View", title: "Reset Interface UI Scale to 100%", shortcut: "" },
-    CommandSpec { id: CommandId::OpenAbout, category: "Help", title: "About RustPad & Author Info", shortcut: "" },
+    CommandSpec { id: CommandId::OpenAbout, category: "Help", title: "About RustPad v2.0 Enterprise & Author Info", shortcut: "" },
 ];
 
 pub fn filter_commands(query: &str) -> Vec<&'static CommandSpec> {

@@ -1,8 +1,9 @@
-//! Pure-Rust PDF 1.7 Serializer & Stream Optimizer for `PdfDocument`.
+//! Pure-Rust PDF 1.7 / PDF-A-2b Serializer, Stream Optimizer & SHA-256 Tamper-Evident Sealer.
 
-use crate::{load_pdf_bytes, PdfAnnotation, PdfDocument, PdfPage};
+use crate::parser::scan_and_expand_objects;
+use crate::{load_pdf_bytes, PdfAnnotation, PdfDocument, PdfPage, PdfSealManifest};
 use doc_model::RgbColor;
-use pdf_create::{escape_pdf_winansi, select_pdf_font, write_pdf_text_cmd};
+use pdf_create::{build_pdfa_xmp_packet, escape_pdf_winansi, select_pdf_font, write_pdf_text_cmd};
 use rustpad_zip::zlib_compress;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -16,6 +17,11 @@ pub fn save_pdf_file(
     std::fs::write(path, bytes).map_err(|e| e.to_string())
 }
 
+pub fn save_pdfa_file(path: impl AsRef<Path>, doc: &PdfDocument) -> Result<(), String> {
+    let bytes = save_pdf_bytes_ext(doc, true, true, None);
+    std::fs::write(path, bytes).map_err(|e| e.to_string())
+}
+
 pub fn compress_pdf_bytes(input: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
     let before = input.len();
     let doc = load_pdf_bytes(input)?;
@@ -25,6 +31,92 @@ pub fn compress_pdf_bytes(input: &[u8]) -> Result<(Vec<u8>, usize, usize), Strin
 }
 
 pub fn save_pdf_bytes(doc: &PdfDocument, compress: bool) -> Vec<u8> {
+    save_pdf_bytes_ext(doc, compress, false, None)
+}
+
+/// Seals a `PdfDocument` with a canonical RFC 6234 SHA-256 digest and optional PDF/A-2b XMP conformance.
+pub fn seal_pdf_bytes(
+    doc: &PdfDocument,
+    signer: &str,
+    date_iso: &str,
+    pdfa: bool,
+) -> (Vec<u8>, PdfSealManifest) {
+    let clean_signer = if signer.trim().is_empty() {
+        "RustPad Enterprise Authority"
+    } else {
+        signer.trim()
+    };
+    let clean_date = if date_iso.trim().is_empty() {
+        "2026-10-27T00:00:00Z"
+    } else {
+        date_iso.trim()
+    };
+    let content_sha256 = doc.canonical_content_sha256();
+    let bytes = save_pdf_bytes_ext(doc, true, pdfa, Some((clean_signer, clean_date)));
+    let manifest = PdfSealManifest {
+        signer: clean_signer.to_string(),
+        date_iso: clean_date.to_string(),
+        content_sha256,
+        pdfa_conformance: pdfa,
+        page_count: doc.pages.len(),
+    };
+    (bytes, manifest)
+}
+
+/// Verifies an embedded `/Type /RustPadSeal` dictionary against the parsed PDF's canonical SHA-256 content hash.
+pub fn verify_pdf_seal_bytes(pdf_bytes: &[u8]) -> Result<PdfSealManifest, String> {
+    let objects = scan_and_expand_objects(pdf_bytes);
+    let mut seal_hdr: Option<String> = None;
+    let mut has_pdfa = false;
+
+    for body in objects.values() {
+        let text = String::from_utf8_lossy(body);
+        if text.contains("pdfaid:part") {
+            has_pdfa = true;
+        }
+        if text.contains("/Type /RustPadSeal") {
+            seal_hdr = Some(text.into_owned());
+        }
+    }
+
+    let hdr = seal_hdr
+        .ok_or_else(|| "PDF does not contain an embedded /RustPadSeal cryptographic manifest".to_string())?;
+    let signer = extract_paren(&hdr, "/Signer").unwrap_or_else(|| "Unknown".into());
+    let date_iso = extract_paren(&hdr, "/Date").unwrap_or_default();
+    let expected_hash = extract_paren(&hdr, "/ContentSha256")
+        .ok_or_else(|| "Malformed /RustPadSeal: missing /ContentSha256".to_string())?;
+
+    let doc = load_pdf_bytes(pdf_bytes)?;
+    let actual_hash = doc.canonical_content_sha256();
+    if actual_hash != expected_hash {
+        return Err(format!(
+            "TAMPER DETECTED: canonical content SHA-256 ({actual_hash}) does not match sealed digest ({expected_hash})"
+        ));
+    }
+
+    Ok(PdfSealManifest {
+        signer,
+        date_iso,
+        content_sha256: actual_hash,
+        pdfa_conformance: has_pdfa,
+        page_count: doc.pages.len(),
+    })
+}
+
+fn extract_paren(text: &str, key: &str) -> Option<String> {
+    let pos = text.find(key)?;
+    let rest = text[pos + key.len()..].trim_start();
+    let inner = rest.strip_prefix('(')?;
+    let end = inner.find(')')?;
+    Some(inner[..end].to_string())
+}
+
+pub fn save_pdf_bytes_ext(
+    doc: &PdfDocument,
+    compress: bool,
+    pdfa: bool,
+    seal: Option<(&str, &str)>,
+) -> Vec<u8> {
     const FONT_NAMES: [(&str, &str); 12] = [
         ("F1", "Helvetica"),
         ("F2", "Helvetica-Bold"),
@@ -40,12 +132,18 @@ pub fn save_pdf_bytes(doc: &PdfDocument, compress: bool) -> Vec<u8> {
         ("F12", "Courier-BoldOblique"),
     ];
 
+    let canonical_hash = if seal.is_some() {
+        Some(doc.canonical_content_sha256())
+    } else {
+        None
+    };
+
     let mut objects: Vec<Vec<u8>> = Vec::new();
-    objects.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec()); // 1
+    objects.push(Vec::new()); // 1: placeholder for /Catalog
     objects.push(Vec::new()); // 2: placeholder for /Pages
     objects.push(
         format!(
-            "<< /Title ({}) /Author ({}) /Creator (RustPad PDF Studio) /Producer (RustPad PDF 1.7) >>",
+            "<< /Title ({}) /Author ({}) /Creator (RustPad v2.0 PDF Studio) /Producer (RustPad PDF 1.7 Engine) >>",
             escape_pdf_winansi(&doc.title),
             escape_pdf_winansi(&doc.author)
         )
@@ -123,6 +221,37 @@ pub fn save_pdf_bytes(doc: &PdfDocument, compress: bool) -> Vec<u8> {
             .into_bytes(),
         );
     }
+
+    let mut catalog_extras = String::new();
+    if pdfa {
+        let xmp = build_pdfa_xmp_packet(&doc.title, &doc.author);
+        let xmp_id = objects.len() + 1;
+        let mut meta_obj = format!(
+            "<< /Type /Metadata /Subtype /XML /Length {} >>\nstream\n",
+            xmp.len()
+        )
+        .into_bytes();
+        meta_obj.extend_from_slice(xmp.as_bytes());
+        meta_obj.extend_from_slice(b"\nendstream");
+        objects.push(meta_obj);
+        let _ = write!(catalog_extras, " /Metadata {xmp_id} 0 R");
+    }
+
+    if let (Some((signer, date_iso)), Some(hash)) = (seal, canonical_hash) {
+        let seal_id = objects.len() + 1;
+        objects.push(
+            format!(
+                "<< /Type /RustPadSeal /Version (2.0) /Algorithm (SHA-256) /Signer ({}) /Date ({}) /ContentSha256 ({}) >>",
+                escape_pdf_winansi(signer),
+                escape_pdf_winansi(date_iso),
+                hash
+            )
+            .into_bytes(),
+        );
+        let _ = write!(catalog_extras, " /RustPadSeal {seal_id} 0 R");
+    }
+
+    objects[0] = format!("<< /Type /Catalog /Pages 2 0 R{catalog_extras} >>").into_bytes();
 
     let mut kids = String::new();
     for pid in &page_obj_ids {

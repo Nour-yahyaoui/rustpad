@@ -1107,7 +1107,7 @@ fn paint_home_hub(
         y,
         DaylightTheme::RUST_ORANGE,
         &format!(
-            "RUSTPAD STUDIO v{} · PURE-RUST NATIVE DESKTOP · ZERO WEBVIEW",
+            "RUSTPAD v{} ENTERPRISE · OFFLINE-FIRST NATIVE SUITE · 0 CRATES.IO DEPS",
             env!("CARGO_PKG_VERSION")
         ),
     );
@@ -1526,7 +1526,7 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         },
     );
 
-    let controls_w = 368.0 * s;
+    let controls_w = 508.0 * s;
     surface.draw_text_clipped(
         &mut app.fonts,
         FontSlot::SansRegular,
@@ -1544,10 +1544,61 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         _ => 100,
     };
     let ui_pct = (app.ui_scale * 100.0).round() as i32;
+    let active_cls = match app.tabs.get(app.active_tab) {
+        Some(StudioTab::Word(w)) => w.doc.classification.label(),
+        _ => app.policy.default_classification.label(),
+    };
+    let dlp_tag = if app.policy.air_gapped_mode {
+        "AIR-GAPPED DLP"
+    } else {
+        active_cls
+    };
 
     let bh = (22.0 * s).round();
     let by = (bar.y + (bar.h - bh) * 0.5).round();
     let mut rx = (bar.w - controls_w).max(160.0);
+
+    // 0. Enterprise DLP & Security Classification Pill -> Opens Governance & Audit Chain Inspector
+    let pill_w = (128.0 * s).round();
+    let pill_r = Rect::new(rx, by, pill_w, bh);
+    surface.fill_rounded_rect(
+        pill_r,
+        4.0,
+        if app.policy.air_gapped_mode {
+            DaylightTheme::PDF_SOFT
+        } else {
+            DaylightTheme::WORD_SOFT
+        },
+    );
+    surface.stroke_rounded_rect(
+        pill_r,
+        4.0,
+        1.0,
+        if app.policy.air_gapped_mode {
+            DaylightTheme::PDF_ACCENT
+        } else {
+            DaylightTheme::WORD_ACCENT
+        },
+    );
+    let ptw = app.fonts.measure_text(FontSlot::MonoRegular, dlp_tag, 9.6 * s);
+    surface.draw_text(
+        &mut app.fonts,
+        FontSlot::MonoRegular,
+        9.6 * s,
+        pill_r.x + ((pill_r.w - ptw) * 0.5).max(4.0),
+        pill_r.y + bh * 0.68,
+        if app.policy.air_gapped_mode {
+            DaylightTheme::PDF_ACCENT
+        } else {
+            DaylightTheme::WORD_ACCENT
+        },
+        dlp_tag,
+    );
+    app.hit_regions.push(HitRegion::button(
+        pill_r,
+        UiAction::ExecCommand(CommandId::OpenGovernanceModal),
+    ));
+    rx += pill_w + 8.0 * s;
 
     let ui_lbl = format!("{ui_pct}%");
     let zoom_lbl = format!("{zoom_pct}%");
@@ -1983,6 +2034,135 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             );
         }
 
+        ActiveModal::AddComment { text } => {
+            let cmt = text.clone();
+            paint_single_input_modal(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                s,
+                screen,
+                "Add Threaded Review Comment (word/comments.xml)",
+                "Attach an ECMA-376 review comment to the active paragraph:",
+                &cmt,
+                "Attach Comment",
+            );
+        }
+
+        ActiveModal::Governance => {
+            let mw = (560.0 * s).min(screen.w - 32.0);
+            let mh = 368.0 * s;
+            let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
+
+            surface.draw_paper_shadow(card, 8.0, 18.0, 32);
+            surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
+            surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
+
+            surface.draw_text(
+                &mut app.fonts,
+                FontSlot::SansBold,
+                15.2 * s,
+                card.x + 20.0 * s,
+                card.y + 30.0 * s,
+                DaylightTheme::INK,
+                "Enterprise DLP Governance & SHA-256 Audit Chain",
+            );
+
+            let chain_ok = app.audit_trail.verify_chain().is_ok();
+            let dlp_mode = if app.policy.air_gapped_mode {
+                "STRICT AIR-GAPPED (Cloud AI Locked to 127.0.0.1)"
+            } else {
+                "HYBRID WORKSTATION (Local + Allowlisted HTTPS)"
+            };
+            let meta_lines = [
+                format!("Organization:   {}", app.policy.organization),
+                format!("DLP Mode:       {dlp_mode}"),
+                format!(
+                    "Audit Chain:    {} ({} SHA-256 linked events)",
+                    if chain_ok { "VERIFIED INTACT" } else { "TAMPER ALERT" },
+                    app.audit_trail.events.len()
+                ),
+                "Supply Chain:   0 external crates.io deps · CycloneDX 1.5 SBOM ready".to_string(),
+            ];
+            let mut my = card.y + 56.0 * s;
+            for ln in &meta_lines {
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::MonoRegular,
+                    11.0 * s,
+                    card.x + 20.0 * s,
+                    my,
+                    card.w - 40.0 * s,
+                    DaylightTheme::INK,
+                    ln,
+                );
+                my += 19.0 * s;
+            }
+
+            surface.fill_rect(
+                Rect::new(card.x + 20.0 * s, my + 2.0 * s, card.w - 40.0 * s, 1.0),
+                DaylightTheme::BORDER,
+            );
+            my += 20.0 * s;
+            surface.draw_text(
+                &mut app.fonts,
+                FontSlot::SansBold,
+                10.5 * s,
+                card.x + 20.0 * s,
+                my,
+                DaylightTheme::INK_MUTED,
+                "RECENT HASH-CHAINED AUDIT TRAIL",
+            );
+            my += 12.0 * s;
+
+            let recent_events: Vec<(u64, String, String, String)> = app
+                .audit_trail
+                .events
+                .iter()
+                .rev()
+                .take(4)
+                .map(|ev| {
+                    (
+                        ev.seq,
+                        ev.action.clone(),
+                        ev.subject.clone(),
+                        ev.entry_sha256[..12].to_string(),
+                    )
+                })
+                .collect();
+
+            for (seq, act, subj, short_hash) in recent_events {
+                let row = Rect::new(card.x + 20.0 * s, my, card.w - 40.0 * s, 28.0 * s);
+                surface.fill_rounded_rect(row, 4.0, DaylightTheme::SIDEBAR);
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::MonoRegular,
+                    10.4 * s,
+                    row.x + 10.0 * s,
+                    row.y + 18.5 * s,
+                    row.w - 20.0 * s,
+                    DaylightTheme::INK_SUB,
+                    &format!("#{seq:02} {act} · {subj} [{short_hash}…]"),
+                );
+                my += 32.0 * s;
+            }
+
+            let toggle_lbl = if app.policy.air_gapped_mode {
+                "Disable Air-Gapped Lock"
+            } else {
+                "Enable Air-Gapped DLP"
+            };
+            draw_modal_footer_buttons(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                s,
+                card,
+                Some((toggle_lbl, UiAction::ExecCommand(CommandId::ToggleAirGappedDlp))),
+                ("Done", UiAction::ModalClose),
+            );
+        }
+
         ActiveModal::SnapshotsDrawer => {
             let entries = match app.tabs.get(app.active_tab) {
                 Some(StudioTab::Word(w)) => w
@@ -2093,14 +2273,14 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 card.x + 98.0 * s,
                 card.y + 66.0 * s,
                 DaylightTheme::INK_SUB,
-                "Pure-Rust Native Word (.docx), Vector PDF & AI Studio",
+                "Enterprise Offline Word (.docx), Forensic PDF & Local AI Suite",
             );
 
             let lines = [
                 "Author:   Nour Yahyaoui <nourryahyaoui@gmail.com>",
                 "GitHub:   https://github.com/Nour-yahyaoui/rustpad",
                 "LinkedIn: linkedin.com/in/nour-yahyaoui-86987b36b",
-                "License:  MIT · Zero WebView · Local + Cloud AI Ready",
+                "Security: MIT · 0 crates.io deps · DLP & PDF/A-2b Ready",
             ];
             let mut ly = card.y + 112.0 * s;
             for ln in lines {

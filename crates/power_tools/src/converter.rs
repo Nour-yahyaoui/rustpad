@@ -108,6 +108,7 @@ pub fn pdf_to_word(pdf: &PdfDocument) -> Document {
                         color: item.color,
                         highlight: None,
                     },
+                    revision: None,
                 });
             }
 
@@ -154,9 +155,12 @@ pub fn pdf_to_word(pdf: &PdfDocument) -> Document {
     let mut doc = Document {
         title: pdf.title.clone(),
         author: pdf.author.clone(),
+        classification: doc_model::SecurityClassification::Unclassified,
+        track_changes: false,
         page_setup: doc_model::PageSetup::default(),
         blocks,
         comments: Vec::new(),
+        passthrough_parts: std::collections::BTreeMap::new(),
     };
     doc.ensure_non_empty();
     doc
@@ -259,9 +263,12 @@ pub fn markdown_to_word(md: &str, title: impl Into<String>) -> Document {
     let mut doc = Document {
         title: title.into(),
         author: "Nour Yahyaoui".into(),
+        classification: doc_model::SecurityClassification::Unclassified,
+        track_changes: false,
         page_setup: doc_model::PageSetup::default(),
         blocks,
         comments: Vec::new(),
+        passthrough_parts: std::collections::BTreeMap::new(),
     };
     doc.ensure_non_empty();
     doc

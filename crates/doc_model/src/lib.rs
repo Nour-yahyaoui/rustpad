@@ -1,8 +1,10 @@
-//! Structured Rich Document Model (`Document`, `Block`, `Paragraph`, `TableBlock`, `SpanStyle`),
-//! Page Setup (A4/Letter/Legal), Undo/Redo history, Find/Replace, Outline extraction, and Starter Templates.
+//! Enterprise Structured Rich Document Model (`Document`, `Block`, `Paragraph`, `TableBlock`,
+//! `SpanStyle`, `RevisionMeta` Track Changes, `DocComment`, `SecurityClassification`,
+//! Lossless OOXML `passthrough_parts`, Word-Level Legal Redline Diffing, and Undo/Redo).
 
 pub mod templates;
 
+use std::collections::BTreeMap;
 pub use templates::TemplateKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +48,97 @@ impl RgbColor {
         let b = u8::from_str_radix(&s[4..6], 16).ok()?;
         Some(Self { r, g, b })
     }
+}
+
+/// Enterprise data-governance classification banner & metadata level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecurityClassification {
+    Unclassified,
+    Internal,
+    Confidential,
+    Restricted,
+}
+
+impl Default for SecurityClassification {
+    fn default() -> Self {
+        Self::Unclassified
+    }
+}
+
+impl SecurityClassification {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Unclassified => "UNCLASSIFIED",
+            Self::Internal => "INTERNAL USE",
+            Self::Confidential => "CONFIDENTIAL",
+            Self::Restricted => "RESTRICTED // AIR-GAPPED",
+        }
+    }
+
+    pub fn short_badge(self) -> &'static str {
+        match self {
+            Self::Unclassified => "PUBLIC",
+            Self::Internal => "INTERNAL",
+            Self::Confidential => "CONFIDENTIAL",
+            Self::Restricted => "RESTRICTED",
+        }
+    }
+
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Unclassified => "unclassified",
+            Self::Internal => "internal",
+            Self::Confidential => "confidential",
+            Self::Restricted => "restricted",
+        }
+    }
+
+    pub fn from_slug(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "internal" | "internal use" => Self::Internal,
+            "confidential" => Self::Confidential,
+            "restricted" | "secret" | "air-gapped" => Self::Restricted,
+            _ => Self::Unclassified,
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Unclassified => Self::Internal,
+            Self::Internal => Self::Confidential,
+            Self::Confidential => Self::Restricted,
+            Self::Restricted => Self::Unclassified,
+        }
+    }
+
+    pub fn cycle_next(self) -> Self {
+        self.next()
+    }
+
+    pub fn badge_color(self) -> RgbColor {
+        match self {
+            Self::Unclassified => RgbColor::MUTED_GRAY,
+            Self::Internal => RgbColor::COBALT,
+            Self::Confidential => RgbColor::new(180, 83, 9),
+            Self::Restricted => RgbColor::CORAL,
+        }
+    }
+}
+
+/// ECMA-376 OpenXML Track Changes revision kind (`<w:ins>` vs `<w:del>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevisionKind {
+    Insertion,
+    Deletion,
+}
+
+/// Attribution metadata attached to a tracked insertion or deletion span.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisionMeta {
+    pub id: u32,
+    pub kind: RevisionKind,
+    pub author: String,
+    pub date_iso: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,6 +213,7 @@ impl Default for SpanStyle {
 pub struct TextSpan {
     pub text: String,
     pub style: SpanStyle,
+    pub revision: Option<RevisionMeta>,
 }
 
 impl TextSpan {
@@ -127,6 +221,7 @@ impl TextSpan {
         Self {
             text: text.into(),
             style: SpanStyle::default(),
+            revision: None,
         }
     }
 
@@ -134,6 +229,15 @@ impl TextSpan {
         Self {
             text: text.into(),
             style,
+            revision: None,
+        }
+    }
+
+    pub fn tracked(text: impl Into<String>, style: SpanStyle, revision: RevisionMeta) -> Self {
+        Self {
+            text: text.into(),
+            style,
+            revision: Some(revision),
         }
     }
 }
@@ -207,6 +311,16 @@ pub enum ListKind {
     Checklist(bool),
 }
 
+/// Detects whether `text` contains Right-to-Left (Arabic / Hebrew) script code points (`UAX #9`).
+pub fn contains_rtl_script(text: &str) -> bool {
+    text.chars().any(|ch| {
+        let u = ch as u32;
+        (0x0590..=0x08FF).contains(&u)
+            || (0xFB1D..=0xFDFF).contains(&u)
+            || (0xFE70..=0xFEFF).contains(&u)
+    })
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Paragraph {
     pub style: ParagraphStyle,
@@ -228,13 +342,19 @@ impl Paragraph {
             span_style.color = RgbColor::MUTED_GRAY;
             span_style.italic = style == ParagraphStyle::Quote;
         }
+        let s: String = text.into();
+        let alignment = if contains_rtl_script(&s) {
+            Alignment::Right
+        } else {
+            Alignment::Left
+        };
         Self {
             style,
-            alignment: Alignment::Left,
+            alignment,
             list_kind: ListKind::None,
             line_spacing: 1.35,
             indent_level: 0,
-            spans: vec![TextSpan::styled(text, span_style)],
+            spans: vec![TextSpan::styled(s, span_style)],
         }
     }
 
@@ -244,6 +364,25 @@ impl Paragraph {
             out.push_str(&s.text);
         }
         out
+    }
+
+    /// Returns paragraph text with tracked deletions omitted (the accepted view).
+    pub fn accepted_plain_text(&self) -> String {
+        let mut out = String::new();
+        for s in &self.spans {
+            if s.revision.as_ref().map(|r| r.kind) != Some(RevisionKind::Deletion) {
+                out.push_str(&s.text);
+            }
+        }
+        out
+    }
+
+    pub fn has_revisions(&self) -> bool {
+        self.spans.iter().any(|s| s.revision.is_some())
+    }
+
+    pub fn is_rtl(&self) -> bool {
+        contains_rtl_script(&self.plain_text())
     }
 
     pub fn normalize_spans(&mut self) {
@@ -264,7 +403,12 @@ impl Paragraph {
                 continue;
             }
             if let Some(last) = merged.last_mut() {
-                if last.style == span.style {
+                let same_rev = match (&last.revision, &span.revision) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => a.kind == b.kind && a.author == b.author,
+                    _ => false,
+                };
+                if last.style == span.style && same_rev {
                     last.text.push_str(&span.text);
                     continue;
                 }
@@ -505,7 +649,9 @@ pub struct DocComment {
     pub id: u32,
     pub block_index: usize,
     pub author: String,
+    pub date_iso: String,
     pub text: String,
+    pub resolved: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -516,6 +662,9 @@ pub struct DocumentStats {
     pub paragraphs: usize,
     pub tables: usize,
     pub reading_time_minutes: usize,
+    pub insertions: usize,
+    pub deletions: usize,
+    pub comments: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -529,9 +678,13 @@ pub struct OutlineItem {
 pub struct Document {
     pub title: String,
     pub author: String,
+    pub classification: SecurityClassification,
+    pub track_changes: bool,
     pub page_setup: PageSetup,
     pub blocks: Vec<Block>,
     pub comments: Vec<DocComment>,
+    /// Unmodeled OOXML ZIP entries preserved verbatim for lossless enterprise round-trip saving.
+    pub passthrough_parts: BTreeMap<String, Vec<u8>>,
 }
 
 impl Default for Document {
@@ -545,9 +698,12 @@ impl Document {
         Self {
             title: "Untitled Document".into(),
             author: "Nour Yahyaoui".into(),
+            classification: SecurityClassification::Unclassified,
+            track_changes: false,
             page_setup: PageSetup::default(),
             blocks: vec![Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, ""))],
             comments: Vec::new(),
+            passthrough_parts: BTreeMap::new(),
         }
     }
 
@@ -558,16 +714,242 @@ impl Document {
         }
     }
 
+    pub fn next_revision_id(&self) -> u32 {
+        let mut max_id = 0u32;
+        for block in &self.blocks {
+            if let Block::Paragraph(p) = block {
+                for s in &p.spans {
+                    if let Some(r) = &s.revision {
+                        max_id = max_id.max(r.id);
+                    }
+                }
+            }
+        }
+        max_id.saturating_add(1)
+    }
+
+    pub fn revision_counts(&self) -> (usize, usize) {
+        let mut ins = 0usize;
+        let mut del = 0usize;
+        for block in &self.blocks {
+            if let Block::Paragraph(p) = block {
+                for s in &p.spans {
+                    if let Some(r) = &s.revision {
+                        match r.kind {
+                            RevisionKind::Insertion => ins += 1,
+                            RevisionKind::Deletion => del += 1,
+                        }
+                    }
+                }
+            }
+        }
+        (ins, del)
+    }
+
+    /// Accepts all tracked changes: keeps inserted runs as clean text and permanently purges deleted runs.
+    pub fn accept_all_revisions(&mut self) -> usize {
+        let mut count = 0usize;
+        for block in &mut self.blocks {
+            if let Block::Paragraph(p) = block {
+                let mut next_spans = Vec::with_capacity(p.spans.len());
+                for mut s in p.spans.drain(..) {
+                    match s.revision.take().map(|r| r.kind) {
+                        Some(RevisionKind::Insertion) => {
+                            count += 1;
+                            next_spans.push(s);
+                        }
+                        Some(RevisionKind::Deletion) => {
+                            count += 1;
+                        }
+                        None => next_spans.push(s),
+                    }
+                }
+                p.spans = next_spans;
+                p.normalize_spans();
+            }
+        }
+        count
+    }
+
+    /// Rejects all tracked changes: discards inserted runs and restores deleted runs to clean text.
+    pub fn reject_all_revisions(&mut self) -> usize {
+        let mut count = 0usize;
+        for block in &mut self.blocks {
+            if let Block::Paragraph(p) = block {
+                let mut next_spans = Vec::with_capacity(p.spans.len());
+                for mut s in p.spans.drain(..) {
+                    match s.revision.take().map(|r| r.kind) {
+                        Some(RevisionKind::Insertion) => {
+                            count += 1;
+                        }
+                        Some(RevisionKind::Deletion) => {
+                            count += 1;
+                            next_spans.push(s);
+                        }
+                        None => next_spans.push(s),
+                    }
+                }
+                p.spans = next_spans;
+                p.normalize_spans();
+            }
+        }
+        count
+    }
+
+    pub fn add_comment(
+        &mut self,
+        block_index: usize,
+        author: impl Into<String>,
+        date_iso: impl Into<String>,
+        text: impl Into<String>,
+    ) -> u32 {
+        let id = self
+            .comments
+            .iter()
+            .map(|c| c.id)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        self.comments.push(DocComment {
+            id,
+            block_index: block_index.min(self.blocks.len().saturating_sub(1)),
+            author: author.into(),
+            date_iso: date_iso.into(),
+            text: text.into(),
+            resolved: false,
+        });
+        id
+    }
+
+    pub fn toggle_comment_resolved(&mut self, comment_id: u32) -> bool {
+        if let Some(c) = self.comments.iter_mut().find(|c| c.id == comment_id) {
+            c.resolved = !c.resolved;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Generates an ECMA-376 legal redline document comparing `base` against `revised` word-by-word.
+    pub fn diff_redline(
+        base: &Document,
+        revised: &Document,
+        reviewer: &str,
+        date_iso: &str,
+    ) -> Document {
+        let mut out = revised.clone();
+        out.title = format!("{} (Redline)", revised.title);
+        out.track_changes = true;
+        out.blocks.clear();
+
+        let max_len = base.blocks.len().max(revised.blocks.len());
+        let mut rev_id = 1u32;
+
+        for idx in 0..max_len {
+            match (base.blocks.get(idx), revised.blocks.get(idx)) {
+                (Some(Block::Paragraph(bp)), Some(Block::Paragraph(rp))) => {
+                    let b_text = bp.accepted_plain_text();
+                    let r_text = rp.accepted_plain_text();
+                    if b_text == r_text {
+                        out.blocks.push(Block::Paragraph(rp.clone()));
+                    } else {
+                        let base_style = rp
+                            .spans
+                            .first()
+                            .map(|s| s.style.clone())
+                            .unwrap_or_else(|| SpanStyle {
+                                font_size_pt: rp.style.default_font_size(),
+                                bold: rp.style.is_bold_by_default(),
+                                ..SpanStyle::default()
+                            });
+                        let spans = diff_words_to_spans(
+                            &b_text,
+                            &r_text,
+                            &base_style,
+                            reviewer,
+                            date_iso,
+                            &mut rev_id,
+                        );
+                        let mut p = rp.clone();
+                        p.spans = spans;
+                        p.normalize_spans();
+                        out.blocks.push(Block::Paragraph(p));
+                    }
+                }
+                (None, Some(Block::Paragraph(rp))) => {
+                    let mut p = rp.clone();
+                    let r_text = rp.accepted_plain_text();
+                    if !r_text.is_empty() {
+                        let base_style = rp
+                            .spans
+                            .first()
+                            .map(|s| s.style.clone())
+                            .unwrap_or_default();
+                        p.spans = vec![TextSpan::tracked(
+                            r_text,
+                            base_style,
+                            RevisionMeta {
+                                id: rev_id,
+                                kind: RevisionKind::Insertion,
+                                author: reviewer.to_string(),
+                                date_iso: date_iso.to_string(),
+                            },
+                        )];
+                        rev_id += 1;
+                    }
+                    out.blocks.push(Block::Paragraph(p));
+                }
+                (Some(Block::Paragraph(bp)), None) => {
+                    let b_text = bp.accepted_plain_text();
+                    if !b_text.is_empty() {
+                        let mut p = bp.clone();
+                        let base_style = bp
+                            .spans
+                            .first()
+                            .map(|s| s.style.clone())
+                            .unwrap_or_default();
+                        p.spans = vec![TextSpan::tracked(
+                            b_text,
+                            base_style,
+                            RevisionMeta {
+                                id: rev_id,
+                                kind: RevisionKind::Deletion,
+                                author: reviewer.to_string(),
+                                date_iso: date_iso.to_string(),
+                            },
+                        )];
+                        rev_id += 1;
+                        out.blocks.push(Block::Paragraph(p));
+                    }
+                }
+                (_, Some(other)) => out.blocks.push(other.clone()),
+                (Some(other), None) => out.blocks.push(other.clone()),
+                (None, None) => {}
+            }
+        }
+
+        out.ensure_non_empty();
+        out
+    }
+
     pub fn stats(&self) -> DocumentStats {
         let mut stats = DocumentStats::default();
         for block in &self.blocks {
             match block {
                 Block::Paragraph(p) => {
                     stats.paragraphs += 1;
-                    let text = p.plain_text();
+                    let text = p.accepted_plain_text();
                     stats.words += text.split_whitespace().count();
                     stats.chars += text.chars().count();
                     stats.chars_no_spaces += text.chars().filter(|c| !c.is_whitespace()).count();
+                    for s in &p.spans {
+                        if let Some(r) = &s.revision {
+                            match r.kind {
+                                RevisionKind::Insertion => stats.insertions += 1,
+                                RevisionKind::Deletion => stats.deletions += 1,
+                            }
+                        }
+                    }
                 }
                 Block::Table(t) => {
                     stats.tables += 1;
@@ -583,6 +965,7 @@ impl Document {
                 _ => {}
             }
         }
+        stats.comments = self.comments.len();
         stats.reading_time_minutes = if stats.words == 0 {
             0
         } else {
@@ -596,7 +979,7 @@ impl Document {
         for (idx, block) in self.blocks.iter().enumerate() {
             if let Block::Paragraph(p) = block {
                 if let Some(level) = p.style.heading_level() {
-                    let title = p.plain_text().trim().to_string();
+                    let title = p.accepted_plain_text().trim().to_string();
                     if !title.is_empty() {
                         items.push(OutlineItem {
                             block_index: idx,
@@ -676,7 +1059,7 @@ impl Document {
                         }
                         ListKind::None => {}
                     }
-                    out.push_str(&p.plain_text());
+                    out.push_str(&p.accepted_plain_text());
                     out.push('\n');
                 }
                 Block::Table(t) => {
@@ -693,6 +1076,152 @@ impl Document {
         }
         out
     }
+}
+
+fn tokenize_preserving_ws(s: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut start = 0usize;
+    let mut in_ws: Option<bool> = None;
+    for (idx, ch) in s.char_indices() {
+        let ws = ch.is_whitespace();
+        if let Some(prev_ws) = in_ws {
+            if prev_ws != ws {
+                tokens.push(&s[start..idx]);
+                start = idx;
+                in_ws = Some(ws);
+            }
+        } else {
+            in_ws = Some(ws);
+        }
+    }
+    if start < s.len() {
+        tokens.push(&s[start..]);
+    }
+    tokens
+}
+
+fn diff_words_to_spans(
+    old_text: &str,
+    new_text: &str,
+    style: &SpanStyle,
+    reviewer: &str,
+    date_iso: &str,
+    rev_id: &mut u32,
+) -> Vec<TextSpan> {
+    let a = tokenize_preserving_ws(old_text);
+    let b = tokenize_preserving_ws(new_text);
+
+    // Guard quadratic DP on unusually huge paragraphs (> 600 tokens)
+    if a.len() > 600 || b.len() > 600 {
+        let mut spans = Vec::new();
+        if !old_text.is_empty() {
+            spans.push(TextSpan::tracked(
+                old_text,
+                style.clone(),
+                RevisionMeta {
+                    id: *rev_id,
+                    kind: RevisionKind::Deletion,
+                    author: reviewer.to_string(),
+                    date_iso: date_iso.to_string(),
+                },
+            ));
+            *rev_id += 1;
+        }
+        if !new_text.is_empty() {
+            spans.push(TextSpan::tracked(
+                new_text,
+                style.clone(),
+                RevisionMeta {
+                    id: *rev_id,
+                    kind: RevisionKind::Insertion,
+                    author: reviewer.to_string(),
+                    date_iso: date_iso.to_string(),
+                },
+            ));
+            *rev_id += 1;
+        }
+        return spans;
+    }
+
+    let n = a.len();
+    let m = b.len();
+    let stride = m + 1;
+    let mut dp = vec![0u16; (n + 1) * stride];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            dp[i * stride + j] = if a[i] == b[j] {
+                dp[(i + 1) * stride + (j + 1)] + 1
+            } else {
+                dp[(i + 1) * stride + j].max(dp[i * stride + (j + 1)])
+            };
+        }
+    }
+
+    let mut spans: Vec<TextSpan> = Vec::new();
+    let mut i = 0usize;
+    let mut j = 0usize;
+    while i < n && j < m {
+        if a[i] == b[j] {
+            spans.push(TextSpan::styled(a[i], style.clone()));
+            i += 1;
+            j += 1;
+        } else if dp[(i + 1) * stride + j] >= dp[i * stride + (j + 1)] {
+            spans.push(TextSpan::tracked(
+                a[i],
+                style.clone(),
+                RevisionMeta {
+                    id: *rev_id,
+                    kind: RevisionKind::Deletion,
+                    author: reviewer.to_string(),
+                    date_iso: date_iso.to_string(),
+                },
+            ));
+            *rev_id += 1;
+            i += 1;
+        } else {
+            spans.push(TextSpan::tracked(
+                b[j],
+                style.clone(),
+                RevisionMeta {
+                    id: *rev_id,
+                    kind: RevisionKind::Insertion,
+                    author: reviewer.to_string(),
+                    date_iso: date_iso.to_string(),
+                },
+            ));
+            *rev_id += 1;
+            j += 1;
+        }
+    }
+    while i < n {
+        spans.push(TextSpan::tracked(
+            a[i],
+            style.clone(),
+            RevisionMeta {
+                id: *rev_id,
+                kind: RevisionKind::Deletion,
+                author: reviewer.to_string(),
+                date_iso: date_iso.to_string(),
+            },
+        ));
+        *rev_id += 1;
+        i += 1;
+    }
+    while j < m {
+        spans.push(TextSpan::tracked(
+            b[j],
+            style.clone(),
+            RevisionMeta {
+                id: *rev_id,
+                kind: RevisionKind::Insertion,
+                author: reviewer.to_string(),
+                date_iso: date_iso.to_string(),
+            },
+        ));
+        *rev_id += 1;
+        j += 1;
+    }
+    spans
 }
 
 #[derive(Debug, Clone)]
@@ -801,5 +1330,37 @@ mod tests {
         assert_eq!(tbl.rows.len(), 2);
         assert!(tbl.delete_column(1));
         assert_eq!(tbl.cols, 2);
+    }
+
+    #[test]
+    fn test_track_changes_diff_accept_and_reject() {
+        let mut base = Document::blank();
+        base.blocks = vec![Block::Paragraph(Paragraph::new(
+            ParagraphStyle::Normal,
+            "Payment due within 30 calendar days of invoice receipt.",
+        ))];
+        let mut revised = Document::blank();
+        revised.blocks = vec![Block::Paragraph(Paragraph::new(
+            ParagraphStyle::Normal,
+            "Payment due within 14 business days of verified invoice receipt.",
+        ))];
+
+        let redline = Document::diff_redline(&base, &revised, "Legal Counsel", "2026-10-27T10:00:00Z");
+        let (ins, del) = redline.revision_counts();
+        assert!(ins >= 1 && del >= 1);
+
+        let mut accepted = redline.clone();
+        assert!(accepted.accept_all_revisions() >= 2);
+        assert_eq!(
+            accepted.to_plain_text().trim(),
+            "Payment due within 14 business days of verified invoice receipt."
+        );
+
+        let mut rejected = redline;
+        assert!(rejected.reject_all_revisions() >= 2);
+        assert_eq!(
+            rejected.to_plain_text().trim(),
+            "Payment due within 30 calendar days of invoice receipt."
+        );
     }
 }

@@ -1,14 +1,18 @@
-//! Built-in Starter Templates for RustPad (Welcome Guide, Resume, Report, Invoice, Letter).
+//! Built-in Starter & Enterprise Templates for RustPad v2.0
+//! (Welcome Guide, Enterprise MSA Redline, Modern Resume, Technical Report, Invoice, Letter).
 
 use crate::{
-    Alignment, Block, Document, FontFamily, ListKind, PageSetup, Paragraph, ParagraphStyle,
-    RgbColor, SpanStyle, TableBlock, TableCell, TextSpan,
+    Alignment, Block, DocComment, Document, FontFamily, ListKind, PageSetup, Paragraph,
+    ParagraphStyle, RevisionKind, RevisionMeta, RgbColor, SecurityClassification, SpanStyle,
+    TableBlock, TableCell, TextSpan,
 };
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemplateKind {
     Blank,
     WelcomeGuide,
+    EnterpriseContract,
     ModernResume,
     AcademicReport,
     BusinessInvoice,
@@ -16,9 +20,10 @@ pub enum TemplateKind {
 }
 
 impl TemplateKind {
-    pub const ALL: [TemplateKind; 6] = [
+    pub const ALL: [TemplateKind; 7] = [
         Self::Blank,
         Self::WelcomeGuide,
+        Self::EnterpriseContract,
         Self::ModernResume,
         Self::AcademicReport,
         Self::BusinessInvoice,
@@ -28,22 +33,24 @@ impl TemplateKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Blank => "Blank Document",
-            Self::WelcomeGuide => "Welcome to RustPad",
+            Self::WelcomeGuide => "Welcome to RustPad v2.0",
+            Self::EnterpriseContract => "Enterprise MSA Redline",
             Self::ModernResume => "Modern Resume / CV",
-            Self::AcademicReport => "Technical Report",
-            Self::BusinessInvoice => "Business Invoice",
-            Self::FormalLetter => "Executive Letter",
+            Self::AcademicReport => "Technical Architecture Spec",
+            Self::BusinessInvoice => "Enterprise Invoice",
+            Self::FormalLetter => "Executive Correspondence",
         }
     }
 
     pub fn subtitle(self) -> &'static str {
         match self {
             Self::Blank => "Clean A4 sheet ready for writing",
-            Self::WelcomeGuide => "Interactive tour of Word, PDF & Power Tools",
-            Self::ModernResume => "Crisp 1-page developer & engineer CV",
-            Self::AcademicReport => "Structured sections, metrics table & references",
-            Self::BusinessInvoice => "Itemized billing table with summary totals",
-            Self::FormalLetter => "Polished cover or business correspondence",
+            Self::WelcomeGuide => "Tour of Offline Enterprise Word, PDF & DLP AI",
+            Self::EnterpriseContract => "Live ECMA-376 Track Changes (w:ins/w:del) & legal comments",
+            Self::ModernResume => "Crisp 1-page systems & software engineer CV",
+            Self::AcademicReport => "Structured sections, benchmark matrix & governance",
+            Self::BusinessInvoice => "Itemized billing schedule with summary totals",
+            Self::FormalLetter => "Formal executive or legal cover correspondence",
         }
     }
 
@@ -51,6 +58,7 @@ impl TemplateKind {
         match self {
             Self::Blank => Document::blank(),
             Self::WelcomeGuide => build_welcome_guide(),
+            Self::EnterpriseContract => build_enterprise_contract(),
             Self::ModernResume => build_modern_resume(),
             Self::AcademicReport => build_academic_report(),
             Self::BusinessInvoice => build_invoice(),
@@ -73,14 +81,14 @@ fn checklist(text: &str, done: bool) -> Block {
 
 fn build_welcome_guide() -> Document {
     let mut setup = PageSetup::default();
-    setup.header_text = "RustPad — Pure-Rust Word & PDF Desktop Studio".into();
-    setup.footer_text = "Created by Nour Yahyaoui · github.com/Nour-yahyaoui/rustpad".into();
+    setup.header_text = "RustPad v2.0 — Pure-Rust Offline Enterprise Document & PDF Suite".into();
+    setup.footer_text = "Open-Source MIT · github.com/Nour-yahyaoui/rustpad".into();
 
     let mut intro = Paragraph::new(ParagraphStyle::Normal, "");
     intro.spans = vec![
         TextSpan::plain("Welcome to "),
         TextSpan::styled(
-            "RustPad",
+            "RustPad v2.0 Enterprise",
             SpanStyle {
                 bold: true,
                 color: RgbColor::COBALT,
@@ -88,60 +96,59 @@ fn build_welcome_guide() -> Document {
             },
         ),
         TextSpan::plain(
-            " — your 100% pure-Rust native desktop studio for creating & editing ",
+            " — an air-gapped, zero-dependency native desktop suite for authoring ",
         ),
         TextSpan::styled(
-            "Microsoft Word (.docx)",
+            "ECMA-376 Word (.docx)",
             SpanStyle {
                 bold: true,
                 ..SpanStyle::default()
             },
         ),
-        TextSpan::plain(" and "),
+        TextSpan::plain(" with legal Track Changes and "),
         TextSpan::styled(
-            "PDF (.pdf)",
+            "ISO 32000 PDF (.pdf)",
             SpanStyle {
                 bold: true,
                 color: RgbColor::CORAL,
                 ..SpanStyle::default()
             },
         ),
-        TextSpan::plain(" files offline with a calm "),
-        TextSpan::styled(
-            "Paper & Daylight",
-            SpanStyle {
-                highlight: Some(RgbColor::AMBER_HIGHLIGHT),
-                ..SpanStyle::default()
-            },
-        ),
-        TextSpan::plain(" light interface."),
+        TextSpan::plain(" with forensic redaction sanitization & SHA-256 tamper seals."),
     ];
 
-    let mut table = TableBlock::new(4, 3);
+    let mut table = TableBlock::new(5, 3);
     table.rows[0] = vec![
-        TableCell::header("Studio Pillar"),
-        TableCell::header("Key Capabilities"),
-        TableCell::header("Shortcut"),
+        TableCell::header("Enterprise Subsystem"),
+        TableCell::header("v2.0 Capabilities"),
+        TableCell::header("Shortcut / CLI"),
     ];
     table.rows[1] = vec![
-        TableCell::plain("Word Studio (.docx)"),
-        TableCell::plain("Paginated A4/Letter sheets, wrapped multi-line tables, styles & spellcheck"),
-        TableCell::plain("Ctrl+N / Ctrl+S"),
+        TableCell::plain("OOXML Word Studio (.docx)"),
+        TableCell::plain("Lossless ZIP passthrough, Track Changes (w:ins/w:del), comments & tables"),
+        TableCell::plain("Ctrl+Shift+E"),
     ];
     table.rows[2] = vec![
-        TableCell::plain("PDF Studio (.pdf)"),
-        TableCell::plain("Vector PDF export, inline text edit, highlight, sign, merge, split & redact"),
-        TableCell::plain("Ctrl+E / Ctrl+M"),
+        TableCell::plain("Forensic PDF Studio (.pdf)"),
+        TableCell::plain("ObjStm parser, forensic glyph-scrub redaction, PDF/A-2b & SHA-256 seal"),
+        TableCell::plain("rustpad sanitize"),
     ];
     table.rows[3] = vec![
-        TableCell::plain("AI Agent Dock"),
-        TableCell::plain("Local Ollama, nour-code, LM Studio, OpenAI & Claude writing assistant"),
-        TableCell::plain("Ctrl+J / Ctrl+K"),
+        TableCell::plain("Air-Gapped AI + DLP Policy"),
+        TableCell::plain("Local Ollama / nour-code + MDM policy.json cloud lockout & WinHTTP TLS"),
+        TableCell::plain("Ctrl+J / policy"),
+    ];
+    table.rows[4] = vec![
+        TableCell::plain("Crash WAL & Supply Chain"),
+        TableCell::plain("SHA-256 WAL journal, SMB lockfiles, 0 crates.io deps & CycloneDX SBOM"),
+        TableCell::plain("rustpad sbom"),
     ];
 
     Document {
         title: "Welcome to RustPad".into(),
         author: "Nour Yahyaoui".into(),
+        classification: SecurityClassification::Internal,
+        track_changes: false,
         page_setup: setup,
         blocks: vec![
             Block::Paragraph(Paragraph::new(
@@ -150,30 +157,172 @@ fn build_welcome_guide() -> Document {
             )),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Subtitle,
-                "Pure-Rust Native Desktop Suite · Zero WebView · Designed by Nour Yahyaoui",
+                "v2.0 Offline Enterprise Suite · Zero External Dependencies · Paper & Daylight Studio",
             )),
             Block::Paragraph(intro),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Heading1,
-                "1. Core Capabilities at Your Fingertips",
+                "1. Enterprise Offline Capabilities",
             )),
-            bullet("Open, create, format, and save standards-compliant Microsoft Word (.docx) files with character-accurate caret placement."),
-            bullet("Click inside any table cell to wrap multi-line text, press Tab to add rows, or drag column borders to resize."),
-            bullet("Press Ctrl+J to open the resizable AI Agent Dock (local Ollama, nour-code, or cloud APIs) or Ctrl+K for 45+ instant tools."),
+            bullet("Lossless OpenXML (.docx) passthrough preserves corporate themes, customXml schemas, Track Changes (<w:ins>/<w:del>), and threaded review comments."),
+            bullet("Forensic PDF sanitization strips underlying glyph streams inside redaction bounds, exports archival PDF/A-2b, and embeds verifiable SHA-256 document seals."),
+            bullet("IT MDM policy.json governance locks AI tasks strictly to on-prem / localhost endpoints (Ollama, nour-code, vLLM) with hash-chained audit logging."),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Heading2,
-                "2. Studio Feature Matrix",
+                "2. Subsystem Capability Matrix",
             )),
             Block::Table(table),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Heading2,
-                "3. Quick Hands-On Tour",
+                "3. Interactive Studio Verification",
             )),
-            checklist("Click any word on this sheet or drag the sidebar splitter to resize", true),
-            checklist("Hover or click the table above to add rows (+ Row) and columns (+ Col)", false),
-            checklist("Open the AI Assistant dock (Ctrl+J) to proofread, summarize, or draft sections", false),
+            checklist("Toggle Track Changes (Ctrl+Shift+E) to inspect live legal redline insertions & deletions", true),
+            checklist("Click inside any table cell to wrap multi-line text or drag column dividers", true),
+            checklist("Open the AI Dock (Ctrl+J) or Governance Policy inspector (Ctrl+K -> Policy)", false),
         ],
-        comments: Vec::new(),
+        comments: vec![DocComment {
+            id: 1,
+            block_index: 4,
+            author: "Security Architecture".into(),
+            date_iso: "2026-10-27T09:30:00Z".into(),
+            text: "Verified 0 crates.io runtime dependencies via `rustpad sbom` CycloneDX audit.".into(),
+            resolved: false,
+        }],
+        passthrough_parts: BTreeMap::new(),
+    }
+}
+
+fn build_enterprise_contract() -> Document {
+    let mut setup = PageSetup::default();
+    setup.header_text = "MASTER SERVICES & DATA SOVEREIGNTY AGREEMENT — CONFIDENTIAL".into();
+    setup.footer_text = "Legal Redline Draft v2.4 · ECMA-376 Tracked Revisions Active".into();
+    setup.watermark = Some("CONFIDENTIAL".into());
+
+    let mut clause_payment = Paragraph::new(ParagraphStyle::Normal, "");
+    clause_payment.spans = vec![
+        TextSpan::plain("2.1 Invoicing & Settlement. Client shall remit undisputed fees within "),
+        TextSpan::tracked(
+            "forty-five (45) calendar",
+            SpanStyle::default(),
+            RevisionMeta {
+                id: 1,
+                kind: RevisionKind::Deletion,
+                author: "General Counsel".into(),
+                date_iso: "2026-10-27T11:15:00Z".into(),
+            },
+        ),
+        TextSpan::plain(" "),
+        TextSpan::tracked(
+            "twenty (20) business",
+            SpanStyle {
+                bold: true,
+                ..SpanStyle::default()
+            },
+            RevisionMeta {
+                id: 2,
+                kind: RevisionKind::Insertion,
+                author: "General Counsel".into(),
+                date_iso: "2026-10-27T11:15:00Z".into(),
+            },
+        ),
+        TextSpan::plain(" days following receipt of a cryptographically sealed PDF/A-2b invoice."),
+    ];
+
+    let mut clause_dlp = Paragraph::new(ParagraphStyle::Normal, "");
+    clause_dlp.spans = vec![
+        TextSpan::plain("3.2 Sovereign Processing. All automated document analysis shall execute "),
+        TextSpan::tracked(
+            "exclusively on Customer-controlled on-premises hardware (127.0.0.1 / Sovereign VPC)",
+            SpanStyle {
+                bold: true,
+                ..SpanStyle::default()
+            },
+            RevisionMeta {
+                id: 3,
+                kind: RevisionKind::Insertion,
+                author: "CISO Office".into(),
+                date_iso: "2026-10-27T11:42:00Z".into(),
+            },
+        ),
+        TextSpan::plain(" with external public cloud AI endpoints disabled via MDM policy.json."),
+    ];
+
+    let mut sla_table = TableBlock::new(4, 3);
+    sla_table.rows[0] = vec![
+        TableCell::header("Control Domain"),
+        TableCell::header("Contractual Standard"),
+        TableCell::header("Verification Artifact"),
+    ];
+    sla_table.rows[1] = vec![
+        TableCell::plain("Supply-Chain Integrity"),
+        TableCell::plain("Zero third-party crates.io runtime dependencies"),
+        TableCell::plain("CycloneDX 1.5 JSON SBOM"),
+    ];
+    sla_table.rows[2] = vec![
+        TableCell::plain("Redaction Sanitization"),
+        TableCell::plain("Physical removal of underlying PDF glyph streams"),
+        TableCell::plain("Forensic Sanitize Report"),
+    ];
+    sla_table.rows[3] = vec![
+        TableCell::plain("AI Data Loss Prevention"),
+        TableCell::plain("Hard-locked to local Ollama / vLLM endpoints"),
+        TableCell::plain("SHA-256 Chained Audit Log"),
+    ];
+
+    Document {
+        title: "Enterprise MSA Redline".into(),
+        author: "Nour Yahyaoui".into(),
+        classification: SecurityClassification::Confidential,
+        track_changes: true,
+        page_setup: setup,
+        blocks: vec![
+            Block::Paragraph(Paragraph::new(
+                ParagraphStyle::Title,
+                "Master Services & Data Sovereignty Agreement",
+            )),
+            Block::Paragraph(Paragraph::new(
+                ParagraphStyle::Subtitle,
+                "Counterparty Review Draft · Track Changes Enabled (Accept / Reject in Review Bar)",
+            )),
+            Block::Paragraph(Paragraph::new(
+                ParagraphStyle::Heading1,
+                "1. Scope & Definitions",
+            )),
+            Block::Paragraph(Paragraph::new(
+                ParagraphStyle::Normal,
+                "This Agreement governs the offline deployment of RustPad Enterprise Suite across air-gapped engineering, legal, and regulated financial workstations.",
+            )),
+            Block::Paragraph(Paragraph::new(
+                ParagraphStyle::Heading1,
+                "2. Commercial Settlement (Redlined)",
+            )),
+            Block::Paragraph(clause_payment),
+            Block::Paragraph(Paragraph::new(
+                ParagraphStyle::Heading1,
+                "3. AI Data Loss Prevention & Auditability",
+            )),
+            Block::Paragraph(clause_dlp),
+            Block::Table(sla_table),
+        ],
+        comments: vec![
+            DocComment {
+                id: 1,
+                block_index: 5,
+                author: "General Counsel".into(),
+                date_iso: "2026-10-27T11:16:00Z".into(),
+                text: "Tightened net payment window from 45 calendar to 20 business days per Q4 treasury policy.".into(),
+                resolved: false,
+            },
+            DocComment {
+                id: 2,
+                block_index: 7,
+                author: "CISO Office".into(),
+                date_iso: "2026-10-27T11:44:00Z".into(),
+                text: "Confirmed `allow_cloud_ai: false` in enterprise policy.json blocks external egress.".into(),
+                resolved: false,
+            },
+        ],
+        passthrough_parts: BTreeMap::new(),
     }
 }
 
@@ -185,16 +334,18 @@ fn build_modern_resume() -> Document {
     ];
     skills.rows[1] = vec![
         TableCell::plain("Systems & Desktop"),
-        TableCell::plain("Rust, C++, Native GUI, High-Performance File Parsers"),
+        TableCell::plain("Rust, C++, Native Win32/X11 GUI, Zero-Dependency Parsers"),
     ];
     skills.rows[2] = vec![
-        TableCell::plain("Software Architecture"),
-        TableCell::plain("OpenXML (.docx), PDF 1.7 Engines, Modular Release Pipelines"),
+        TableCell::plain("Document & Security Engines"),
+        TableCell::plain("ECMA-376 OpenXML (.docx), ISO 32000 PDF 1.7, SHA-256 Seals, Local AI"),
     ];
 
     Document {
         title: "Modern Resume".into(),
         author: "Nour Yahyaoui".into(),
+        classification: SecurityClassification::Unclassified,
+        track_changes: false,
         page_setup: PageSetup {
             header_text: "CURRICULUM VITAE".into(),
             footer_text: "nourryahyaoui@gmail.com · github.com/Nour-yahyaoui".into(),
@@ -209,52 +360,60 @@ fn build_modern_resume() -> Document {
             Block::Paragraph(Paragraph::new(ParagraphStyle::Heading1, "Profile Summary")),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Normal,
-                "Systems-minded Software Engineer building fast, clean, user-friendly open-source desktop software with native performance and thoughtful UI craftsmanship.",
+                "Systems-minded Software Engineer building fast, auditable, offline-first open-source desktop software with native OS performance and disciplined UI craftsmanship.",
             )),
             Block::Paragraph(Paragraph::new(ParagraphStyle::Heading1, "Technical Skills")),
             Block::Table(skills),
             Block::Paragraph(Paragraph::new(ParagraphStyle::Heading1, "Featured Open-Source Work")),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Heading2,
-                "RustPad — Pure-Rust Word & PDF Desktop Studio",
+                "RustPad v2.0 — Enterprise Offline Word & PDF Desktop Suite",
             )),
-            bullet("Architected a zero-bloat multi-crate Rust workspace for Word (.docx) and PDF (.pdf) creation & editing."),
-            bullet("Designed the Paper & Daylight light theme for effortless 3-click document workflows."),
+            bullet("Architected a 9-crate zero-dependency Rust workspace for lossless OpenXML (.docx) redlining and forensic PDF (.pdf) sanitization."),
+            bullet("Engineered MDM DLP policy governance, SHA-256 document sealing, and local/cloud AI orchestration."),
         ],
         comments: Vec::new(),
+        passthrough_parts: BTreeMap::new(),
     }
 }
 
 fn build_academic_report() -> Document {
-    let mut results = TableBlock::new(3, 3);
+    let mut results = TableBlock::new(4, 3);
     results.rows[0] = vec![
         TableCell::header("Metric"),
-        TableCell::header("Legacy Office Suite"),
-        TableCell::header("RustPad Native"),
+        TableCell::header("Legacy Electron / Office Suite"),
+        TableCell::header("RustPad v2.0 Native"),
     ];
     results.rows[1] = vec![
         TableCell::plain("Cold Startup Latency"),
         TableCell::plain("2,400 ms"),
-        TableCell::plain("< 100 ms"),
+        TableCell::plain("< 50 ms"),
     ];
     results.rows[2] = vec![
         TableCell::plain("Idle Memory Footprint"),
         TableCell::plain("340 MB"),
-        TableCell::plain("~32 MB"),
+        TableCell::plain("~28 MB"),
+    ];
+    results.rows[3] = vec![
+        TableCell::plain("Third-Party Runtime Crates"),
+        TableCell::plain("400+ transitive packages"),
+        TableCell::plain("0 crates.io deps"),
     ];
 
     Document {
         title: "Technical Architecture Report".into(),
         author: "Nour Yahyaoui".into(),
+        classification: SecurityClassification::Internal,
+        track_changes: false,
         page_setup: PageSetup {
             header_text: "Technical Report — Document Systems".into(),
-            footer_text: "Confidentiality: Public Open-Source".into(),
+            footer_text: "Classification: Public Open-Source Architecture".into(),
             ..PageSetup::default()
         },
         blocks: vec![
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Title,
-                "High-Speed Native Document Processing",
+                "High-Assurance Offline Document Processing",
             )),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Subtitle,
@@ -263,17 +422,18 @@ fn build_academic_report() -> Document {
             Block::Paragraph(Paragraph::new(ParagraphStyle::Heading1, "1. Abstract")),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Quote,
-                "Modern document workflows demand instant startup, lossless structural editing, and zero cloud lock-in across both .docx and .pdf formats.",
+                "Regulated enterprise workflows require instant native startup, lossless OpenXML round-tripping, forensic PDF sanitization, and zero supply-chain exposure.",
             )),
             Block::Paragraph(Paragraph::new(ParagraphStyle::Heading1, "2. Benchmark Summary")),
             Block::Table(results),
             Block::Paragraph(Paragraph::new(ParagraphStyle::Heading1, "3. Conclusion")),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Normal,
-                "Unifying paginated OpenXML editing with vector PDF generation in pure Rust yields an order-of-magnitude reduction in memory and installer size.",
+                "Unifying paginated OpenXML redlining with forensic vector PDF generation in pure Rust yields an order-of-magnitude advantage in auditability, memory footprint, and cold-start speed.",
             )),
         ],
         comments: Vec::new(),
+        passthrough_parts: BTreeMap::new(),
     }
 }
 
@@ -286,13 +446,13 @@ fn build_invoice() -> Document {
         TableCell::header("Amount"),
     ];
     items.rows[1] = vec![
-        TableCell::plain("Desktop Architecture & UI Engineering"),
+        TableCell::plain("Enterprise Desktop Architecture & Security Engineering"),
         TableCell::plain("1"),
         TableCell::plain("$1,200.00"),
         TableCell::plain("$1,200.00"),
     ];
     items.rows[2] = vec![
-        TableCell::plain("Document Engine & PDF Automation"),
+        TableCell::plain("OpenXML Redline & Forensic PDF Engine"),
         TableCell::plain("1"),
         TableCell::plain("$850.00"),
         TableCell::plain("$850.00"),
@@ -306,13 +466,15 @@ fn build_invoice() -> Document {
 
     let mut right_date = Paragraph::new(
         ParagraphStyle::Normal,
-        "Invoice #INV-2026-001 · Date: October 26, 2026",
+        "Invoice #INV-2026-001 · Date: October 27, 2026",
     );
     right_date.alignment = Alignment::Right;
 
     Document {
         title: "Invoice INV-2026-001".into(),
         author: "Nour Yahyaoui".into(),
+        classification: SecurityClassification::Confidential,
+        track_changes: false,
         page_setup: PageSetup::default(),
         blocks: vec![
             Block::Paragraph(Paragraph::new(ParagraphStyle::Title, "INVOICE")),
@@ -332,6 +494,7 @@ fn build_invoice() -> Document {
             )),
         ],
         comments: Vec::new(),
+        passthrough_parts: BTreeMap::new(),
     }
 }
 
@@ -344,17 +507,20 @@ fn build_letter() -> Document {
     Document {
         title: "Executive Letter".into(),
         author: "Nour Yahyaoui".into(),
+        classification: SecurityClassification::Unclassified,
+        track_changes: false,
         page_setup: PageSetup::default(),
         blocks: vec![
-            Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "October 26, 2026")),
+            Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "October 27, 2026")),
             Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "Dear Colleague,")),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Normal,
-                "I am pleased to share this proposal created directly inside RustPad. Every paragraph, margin, and typographic detail exports cleanly to both Microsoft Word (.docx) and print-ready vector PDF.",
+                "I am pleased to share this proposal authored directly inside RustPad v2.0. Every paragraph, redline revision, table, and margin exports cleanly to both ECMA-376 Word (.docx) and archival vector PDF.",
             )),
             Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "Warm regards,")),
             Block::Paragraph(mono_sig),
         ],
         comments: Vec::new(),
+        passthrough_parts: BTreeMap::new(),
     }
 }

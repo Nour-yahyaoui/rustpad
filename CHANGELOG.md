@@ -1,6 +1,26 @@
 # Changelog — RustPad
 
-All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`) follow our continuous micro-release workflow (`Commit → Tag → GitHub Release`).
+All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`) follow our continuous release workflow (`Issue → PR → CI Matrix → GitHub Release`).
+
+## [v2.0.0] - 2026-10-27 — Enterprise Offline Document & PDF Suite
+### Added
+- **Lossless OpenXML (`.docx`) Passthrough, ECMA-376 Track Changes & Threaded Review Comments** (`crates/doc_model/`, `crates/docx_io/`, `app/src/word_view.rs`, `#23`):
+  - Byte-for-byte archive preservation (`passthrough_parts`) for corporate themes (`word/theme/*`), `customXml/*`, embedded media, and custom style parts.
+  - Full `<w:ins>` and `<w:del><w:r><w:delText>` revision tracking with `word/settings.xml` `<w:trackRevisions/>`, live Track Changes typing (`Ctrl+Shift+E`), emerald/crimson redline rendering + left-margin change bars, `Accept All` / `Reject All`, and offline word-level contract comparison (`Document::diff_redline` / `rustpad redline`).
+  - Standards-compliant `word/comments.xml` + `<w:commentRangeStart>` / `<w:commentRangeEnd>` / `<w:commentReference>` threaded review comments (`Ctrl+Shift+M`) and `EnterpriseContract` ("Enterprise MSA Redline") template.
+- **Forensic PDF Redaction Sanitizer, PDF 1.5+ `/ObjStm` Unpacking, PDF/A-2b & SHA-256 Seals** (`crates/pdf_engine/`, `crates/pdf_create/`, `app/src/pdf_view.rs`, `#24`):
+  - ISO 32000-1 §7.5.7 `/Type /ObjStm` compressed object stream unpacking + PNG row predictor (`Predictor >= 10`) unfiltering for modern Word/Acrobat/Chrome PDFs.
+  - `PdfDocument::sanitize_redactions` physically purges intersecting underlying glyph runs and overlapping annotations from PDF content streams and scrubs document metadata (`rustpad sanitize`).
+  - Archival **PDF/A-2b** (`pdfaid:part=2`, `conformance=B`) XMP metadata packets + `/Type /RustPadSeal` RFC 6234 SHA-256 tamper-evident sealing and CLI verification (`rustpad sign --pdfa`, `rustpad verify`).
+- **Untrusted Parser Hardening & Pure-Rust RFC 6234 SHA-256** (`crates/rustpad_zip/`, `crates/docx_io/src/xml_lite.rs`, `#25`):
+  - In-tree pure-Rust `sha256` / `sha256_hex` (`0` external crates).
+  - Bounded DEFLATE/Zlib decompression (`deflate_decompress_bounded`), `ArchiveSecurityLimits` (`200:1` zip-bomb ratio & byte ceilings), strict `..` path-traversal rejection, and `MAX_XML_DEPTH = 128` XML recursion guard.
+- **Enterprise MDM `policy.json` DLP Governance, Native WinHTTP TLS, Audit Chain & CycloneDX SBOM** (`crates/power_tools/src/{enterprise,ai_agent}.rs`, `#9`, `#26`):
+  - Native Windows `winhttp.dll` (`WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY`) Schannel TLS transport honoring corporate PAC/WPAD proxies and Enterprise Root CAs without external `curl.exe` (`#9`).
+  - System MDM `EnterprisePolicy` (`/etc/rustpad/policy.json`, `%ProgramData%\RustPad\policy.json`, `RUSTPAD_POLICY_PATH`) enforcing air-gapped cloud AI lockouts, security classification badges (`PUBLIC` / `INTERNAL` / `CONFIDENTIAL` / `RESTRICTED`), SHA-256 hash-chained `AuditTrail`, and `rustpad sbom` CycloneDX 1.5 JSON output.
+- **Crash-Safe WAL Journal, Advisory Lockfiles, UIA/AT-SPI Accessibility Tree & OS Printing** (`crates/power_tools/src/enterprise.rs`, `crates/rustpad_window/src/lib.rs`, `#27`):
+  - SHA-256-verified Write-Ahead Crash Recovery Journal (`WalJournal`), `.~<file>.rustpad.lock` SMB/NFS advisory lockfiles, RTL (`Arabic`/`Hebrew`) paragraph auto-alignment, `rustpad inspect --a11y` semantic tree export, and `Ctrl+P` native OS print spooler dispatch.
+- **Enterprise Open-Source Governance Suite** (`SECURITY.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `docs/ENTERPRISE_POLICY.md`, `#28`): Complete threat model, 9-crate systems architecture blueprint, zero-dependency contributor charter, and MDM policy administration guide.
 
 ## [v1.3.0] - 2026-10-26
 ### Added
