@@ -195,6 +195,7 @@ extern "system" {
 struct Win32Context<'a> {
     app: &'a mut dyn DesktopAppHandler,
     surface: Surface,
+    needs_render: bool,
 }
 
 fn to_wide(s: &str) -> Vec<u16> {
@@ -321,7 +322,8 @@ unsafe extern "system" fn wnd_proc(
     let mut dispatch = |ev: WindowEvent| match ctx.app.on_event(ev, &mut ctx.surface) {
         AppControl::Continue => {}
         AppControl::Redraw => {
-            ctx.app.render(&mut ctx.surface);
+            // Coalesce high-frequency mouse/scroll bursts into WM_PAINT for zero-lag 60-120Hz VSync
+            ctx.needs_render = true;
             InvalidateRect(hwnd, std::ptr::null(), 0);
         }
         AppControl::Exit => PostQuitMessage(0),
@@ -338,6 +340,10 @@ unsafe extern "system" fn wnd_proc(
             }
         }
         0x000F /* WM_PAINT */ => {
+            if ctx.needs_render {
+                ctx.app.render(&mut ctx.surface);
+                ctx.needs_render = false;
+            }
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
             let hdc = BeginPaint(hwnd, &mut ps);
             let bmi = BITMAPINFO {
@@ -381,7 +387,7 @@ unsafe extern "system" fn wnd_proc(
             let _ = ctx
                 .app
                 .on_event(WindowEvent::Resize { width: w, height: h }, &mut ctx.surface);
-            ctx.app.render(&mut ctx.surface);
+            ctx.needs_render = true;
             InvalidateRect(hwnd, std::ptr::null(), 0);
             0
         }
@@ -529,6 +535,7 @@ pub fn run_win32_window(
         let mut ctx = Win32Context {
             app,
             surface: Surface::new(scaled_w, scaled_h, DaylightTheme::DESK_BG),
+            needs_render: false,
         };
         ctx.app.render(&mut ctx.surface);
 
@@ -551,8 +558,8 @@ pub fn run_win32_window(
         }
 
         SetWindowLongPtrW(hwnd, -21, (&mut ctx as *mut Win32Context<'_>) as isize);
-        // 50ms tick drives smooth cursor blink AND non-blocking background AI worker polling
-        SetTimer(hwnd, 1, 50, std::ptr::null());
+        // 16ms (~60Hz) tick drives smooth kinetic spring scroll, cursor blink & background AI worker polling
+        SetTimer(hwnd, 1, 16, std::ptr::null());
         ShowWindow(hwnd, 5 /* SW_SHOW */);
 
         let mut msg: MSG = std::mem::zeroed();

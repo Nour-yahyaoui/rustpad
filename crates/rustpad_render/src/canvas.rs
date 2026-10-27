@@ -138,6 +138,9 @@ impl Surface {
     }
 
     pub fn fill_rounded_rect(&mut self, r: Rect, radius: f32, color: Color) {
+        if color.a == 0 || r.w <= 0.0 || r.h <= 0.0 {
+            return;
+        }
         if radius <= 0.5 {
             self.fill_rect(r, color);
             return;
@@ -148,26 +151,58 @@ impl Surface {
         let y0 = (r.y.floor() as i32).max(cy0);
         let x1 = ((r.x + r.w).ceil() as i32).min(cx1);
         let y1 = ((r.y + r.h).ceil() as i32).min(cy1);
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
 
         let center_x = r.x + r.w * 0.5;
         let center_y = r.y + r.h * 0.5;
         let half_w = r.w * 0.5 - rad;
         let half_h = r.h * 0.5 - rad;
+        let stride = self.width as usize;
+        let packed = color.pack_argb();
+        let inner_x0 = ((r.x + rad).ceil() as i32).clamp(x0, x1);
+        let inner_x1 = ((r.x + r.w - rad).floor() as i32).clamp(inner_x0, x1);
 
         for py in y0..y1 {
             let dy = ((py as f32 + 0.5) - center_y).abs() - half_h;
-            for px in x0..x1 {
-                let dx = ((px as f32 + 0.5) - center_x).abs() - half_w;
-                if dx <= 0.0 && dy <= 0.0 {
-                    self.blend_pixel(px, py, color);
-                } else {
-                    let ox = dx.max(0.0);
-                    let oy = dy.max(0.0);
-                    let dist = (ox * ox + oy * oy).sqrt() - rad;
-                    if dist < 0.5 {
-                        let cov = (0.5 - dist).clamp(0.0, 1.0);
-                        let a = ((color.a as f32) * cov).round() as u8;
-                        self.blend_pixel(px, py, color.with_alpha(a));
+            if dy <= 0.0 && color.a == 255 {
+                let row = py as usize * stride;
+                if inner_x1 > inner_x0 {
+                    self.pixels[row + inner_x0 as usize..row + inner_x1 as usize].fill(packed);
+                }
+                for px in x0..inner_x0 {
+                    let dx = ((px as f32 + 0.5) - center_x).abs() - half_w;
+                    if dx <= 0.0 {
+                        self.pixels[row + px as usize] = packed;
+                    } else if dx - rad < 0.5 {
+                        let cov = (0.5 - (dx - rad)).clamp(0.0, 1.0);
+                        self.blend_pixel(px, py, color.with_alpha((255.0 * cov).round() as u8));
+                    }
+                }
+                for px in inner_x1..x1 {
+                    let dx = ((px as f32 + 0.5) - center_x).abs() - half_w;
+                    if dx <= 0.0 {
+                        self.pixels[row + px as usize] = packed;
+                    } else if dx - rad < 0.5 {
+                        let cov = (0.5 - (dx - rad)).clamp(0.0, 1.0);
+                        self.blend_pixel(px, py, color.with_alpha((255.0 * cov).round() as u8));
+                    }
+                }
+            } else {
+                for px in x0..x1 {
+                    let dx = ((px as f32 + 0.5) - center_x).abs() - half_w;
+                    if dx <= 0.0 && dy <= 0.0 {
+                        self.blend_pixel(px, py, color);
+                    } else {
+                        let ox = dx.max(0.0);
+                        let oy = dy.max(0.0);
+                        let dist = (ox * ox + oy * oy).sqrt() - rad;
+                        if dist < 0.5 {
+                            let cov = (0.5 - dist).clamp(0.0, 1.0);
+                            let a = ((color.a as f32) * cov).round() as u8;
+                            self.blend_pixel(px, py, color.with_alpha(a));
+                        }
                     }
                 }
             }
@@ -292,6 +327,9 @@ impl Surface {
         text: &str,
     ) -> f32 {
         let mut pen_x = x;
+        let (cx0, cy0, cx1, cy1) = self.clip;
+        let stride = self.width as usize;
+
         for ch in text.chars() {
             if ch == '\n' {
                 continue;
@@ -307,19 +345,34 @@ impl Surface {
             let gh = g.height as i32;
             let adv = g.advance_px;
 
-            if gw > 0 && gh > 0 {
-                // Copy needed fields before borrowing self mutably
-                for row in 0..gh {
-                    let py = gy0 + row;
-                    if py < self.clip.1 || py >= self.clip.3 {
-                        continue;
-                    }
-                    let row_base = (row * gw) as usize;
-                    for col in 0..gw {
-                        let a_cov = g.alpha[row_base + col as usize];
+            if gw > 0 && gh > 0 && gx0 < cx1 && gx0 + gw > cx0 && gy0 < cy1 && gy0 + gh > cy0 {
+                let r_start = (cy0 - gy0).max(0);
+                let r_end = (cy1 - gy0).min(gh);
+                let c_start = (cx0 - gx0).max(0);
+                let c_end = (cx1 - gx0).min(gw);
+                for row in r_start..r_end {
+                    let py = (gy0 + row) as usize;
+                    let dst_row = py * stride;
+                    let src_row = (row * gw) as usize;
+                    for col in c_start..c_end {
+                        let a_cov = g.alpha[src_row + col as usize];
                         if a_cov > 0 {
                             let eff_a = ((a_cov as u32 * color.a as u32) / 255) as u8;
-                            self.blend_pixel(gx0 + col, py, color.with_alpha(eff_a));
+                            let idx = dst_row + (gx0 + col) as usize;
+                            if eff_a == 255 {
+                                self.pixels[idx] = color.pack_argb();
+                            } else {
+                                let dst = self.pixels[idx];
+                                let dr = ((dst >> 16) & 0xFF) as u32;
+                                let dg = ((dst >> 8) & 0xFF) as u32;
+                                let db = (dst & 0xFF) as u32;
+                                let a = eff_a as u32;
+                                let inv = 255 - a;
+                                let rr = (color.r as u32 * a + dr * inv + 127) / 255;
+                                let gg = (color.g as u32 * a + dg * inv + 127) / 255;
+                                let bb = (color.b as u32 * a + db * inv + 127) / 255;
+                                self.pixels[idx] = 0xFF00_0000 | (rr << 16) | (gg << 8) | bb;
+                            }
                         }
                     }
                 }
@@ -369,6 +422,75 @@ impl Surface {
                 let off = ((sy as u32 * src_w + sx as u32) * 4) as usize;
                 let c = Color::rgba(rgba[off], rgba[off + 1], rgba[off + 2], rgba[off + 3]);
                 self.blend_pixel(dst_x + sx, dst_y + sy, c);
+            }
+        }
+    }
+
+    /// Bilinearly scales and blits an RGBA image into `dst` (for crisp HiDPI/zoomed document figures).
+    pub fn blit_rgba_scaled(&mut self, dst: Rect, src_w: u32, src_h: u32, rgba: &[u8]) {
+        if src_w == 0 || src_h == 0 || dst.w <= 1.0 || dst.h <= 1.0 {
+            return;
+        }
+        if rgba.len() < (src_w as usize) * (src_h as usize) * 4 {
+            return;
+        }
+        let (cx0, cy0, cx1, cy1) = self.clip;
+        let x0 = (dst.x.round() as i32).max(cx0);
+        let y0 = (dst.y.round() as i32).max(cy0);
+        let x1 = ((dst.x + dst.w).round() as i32).min(cx1);
+        let y1 = ((dst.y + dst.h).round() as i32).min(cy1);
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+
+        let inv_w = (src_w as f32 - 1.0).max(0.0) / dst.w.max(1.0);
+        let inv_h = (src_h as f32 - 1.0).max(0.0) / dst.h.max(1.0);
+        let max_sx = src_w.saturating_sub(1);
+        let max_sy = src_h.saturating_sub(1);
+
+        for py in y0..y1 {
+            let fy = ((py as f32 + 0.5) - dst.y).max(0.0) * inv_h;
+            let sy0 = (fy.floor() as u32).min(max_sx.max(max_sy)).min(max_sy);
+            let sy1 = (sy0 + 1).min(max_sy);
+            let wy = fy - sy0 as f32;
+
+            for px in x0..x1 {
+                let fx = ((px as f32 + 0.5) - dst.x).max(0.0) * inv_w;
+                let sx0 = (fx.floor() as u32).min(max_sx);
+                let sx1 = (sx0 + 1).min(max_sx);
+                let wx = fx - sx0 as f32;
+
+                let p00 = ((sy0 * src_w + sx0) * 4) as usize;
+                let p10 = ((sy0 * src_w + sx1) * 4) as usize;
+                let p01 = ((sy1 * src_w + sx0) * 4) as usize;
+                let p11 = ((sy1 * src_w + sx1) * 4) as usize;
+
+                let w00 = (1.0 - wx) * (1.0 - wy);
+                let w10 = wx * (1.0 - wy);
+                let w01 = (1.0 - wx) * wy;
+                let w11 = wx * wy;
+
+                let r = (rgba[p00] as f32 * w00
+                    + rgba[p10] as f32 * w10
+                    + rgba[p01] as f32 * w01
+                    + rgba[p11] as f32 * w11)
+                    .round() as u8;
+                let g = (rgba[p00 + 1] as f32 * w00
+                    + rgba[p10 + 1] as f32 * w10
+                    + rgba[p01 + 1] as f32 * w01
+                    + rgba[p11 + 1] as f32 * w11)
+                    .round() as u8;
+                let b = (rgba[p00 + 2] as f32 * w00
+                    + rgba[p10 + 2] as f32 * w10
+                    + rgba[p01 + 2] as f32 * w01
+                    + rgba[p11 + 2] as f32 * w11)
+                    .round() as u8;
+                let a = (rgba[p00 + 3] as f32 * w00
+                    + rgba[p10 + 3] as f32 * w10
+                    + rgba[p01 + 3] as f32 * w01
+                    + rgba[p11 + 3] as f32 * w11)
+                    .round() as u8;
+                self.blend_pixel(px, py, Color::rgba(r, g, b, a));
             }
         }
     }

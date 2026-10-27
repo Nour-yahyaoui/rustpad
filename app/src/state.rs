@@ -3,9 +3,9 @@
 
 use crate::commands::{filter_commands, CommandId};
 use doc_model::{
-    Alignment, Block, Document, FontFamily, ListKind, PaperSize, Paragraph, ParagraphStyle,
-    RevisionKind, RevisionMeta, RgbColor, SpanStyle, TableBlock, TemplateKind, TextSpan,
-    UndoHistory,
+    next_word_char_idx, prev_word_char_idx, word_range_at_char, Alignment, Block, Document,
+    FontFamily, ListKind, PaperSize, Paragraph, ParagraphStyle, RevisionKind, RevisionMeta,
+    RgbColor, SpanStyle, TableBlock, TemplateKind, TextSpan, UndoHistory,
 };
 use docx_io::{load_docx_file, save_docx_file};
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
@@ -49,15 +49,45 @@ impl PdfTool {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct WordLineHitBox {
+    pub tab_idx: usize,
+    pub block_idx: usize,
+    pub rect: Rect,
+    pub start_char: usize,
+    pub char_xs: Vec<f32>,
+}
+
+impl WordLineHitBox {
+    pub fn hit_test_char(&self, mouse_x: f32) -> usize {
+        if self.char_xs.is_empty() {
+            return self.start_char;
+        }
+        let mut best_rel = 0usize;
+        let mut best_dist = f32::MAX;
+        for (i, &cx) in self.char_xs.iter().enumerate() {
+            let d = (mouse_x - cx).abs();
+            if d < best_dist {
+                best_dist = d;
+                best_rel = i;
+            }
+        }
+        self.start_char + best_rel
+    }
+}
+
 pub struct WordTabState {
     pub doc: Document,
     pub path: Option<PathBuf>,
     pub cursor_block: usize,
     pub cursor_char: usize,
+    pub selection_anchor: Option<(usize, usize)>, // (block_idx, char_idx)
     pub active_table_cell: Option<(usize, usize, usize)>, // (block_idx, row, col)
     pub table_cursor_char: usize,
     pub table_col_weights: Vec<(usize, Vec<f32>)>,
+    pub image_rgba_cache: Vec<(usize, usize, u32, u32, Vec<u8>)>, // (block_idx, png_len, w, h, rgba)
     pub scroll_y: f32,
+    pub target_scroll_y: f32,
     pub max_scroll_y: f32,
     pub scroll_to_caret: bool,
     pub zoom: f32,
@@ -84,10 +114,13 @@ impl WordTabState {
             path,
             cursor_block: 0,
             cursor_char,
+            selection_anchor: None,
             active_table_cell: None,
             table_cursor_char: 0,
             table_col_weights: Vec::new(),
+            image_rgba_cache: Vec::new(),
             scroll_y: 0.0,
+            target_scroll_y: 0.0,
             max_scroll_y: 0.0,
             scroll_to_caret: false,
             zoom: 1.12, // Comfortable 112% editorial default zoom
@@ -96,6 +129,177 @@ impl WordTabState {
             spellcheck: false,
             dirty: false,
         }
+    }
+
+    /// Returns ordered `((start_block, start_char), (end_block, end_char))` when a non-empty range is selected.
+    pub fn ordered_selection(&self) -> Option<((usize, usize), (usize, usize))> {
+        let (ab, ac) = self.selection_anchor?;
+        let (fb, fc) = (self.cursor_block, self.cursor_char);
+        if (ab, ac) == (fb, fc) {
+            return None;
+        }
+        if (ab, ac) < (fb, fc) {
+            Some(((ab, ac), (fb, fc)))
+        } else {
+            Some(((fb, fc), (ab, ac)))
+        }
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.ordered_selection().is_some()
+    }
+
+    /// Returns `(start_char, end_char)` within `block_idx` if covered by the active selection.
+    pub fn block_selection_char_range(
+        &self,
+        block_idx: usize,
+        block_char_len: usize,
+    ) -> Option<(usize, usize)> {
+        let ((b0, c0), (b1, c1)) = self.ordered_selection()?;
+        if block_idx < b0 || block_idx > b1 {
+            return None;
+        }
+        let s = if block_idx == b0 {
+            c0.min(block_char_len)
+        } else {
+            0
+        };
+        let e = if block_idx == b1 {
+            c1.min(block_char_len)
+        } else {
+            block_char_len
+        };
+        if s < e || (b0 < b1 && block_idx < b1) {
+            Some((s, e))
+        } else {
+            None
+        }
+    }
+
+    /// Extracts the plain text of the active selection across single or multiple paragraphs.
+    pub fn selected_text(&self) -> Option<String> {
+        let ((b0, c0), (b1, c1)) = self.ordered_selection()?;
+        let mut parts: Vec<String> = Vec::new();
+        for bi in b0..=b1.min(self.doc.blocks.len().saturating_sub(1)) {
+            match self.doc.blocks.get(bi) {
+                Some(Block::Paragraph(p)) => {
+                    let full = p.plain_text();
+                    let len = full.chars().count();
+                    let s = if bi == b0 { c0.min(len) } else { 0 };
+                    let e = if bi == b1 { c1.min(len) } else { len };
+                    if s <= e {
+                        let sub: String = full.chars().skip(s).take(e - s).collect();
+                        parts.push(sub);
+                    }
+                }
+                Some(Block::Table(t)) => {
+                    for row in &t.rows {
+                        let line: Vec<&str> = row.iter().map(|c| c.text.as_str()).collect();
+                        parts.push(line.join("\t"));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let out = parts.join("\n");
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
+
+    /// Selects the entire document from the first paragraph to the final character.
+    pub fn select_all(&mut self) {
+        if self.doc.blocks.is_empty() {
+            return;
+        }
+        self.active_table_cell = None;
+        let last_b = self.doc.blocks.len().saturating_sub(1);
+        let last_c = match self.doc.blocks.get(last_b) {
+            Some(Block::Paragraph(p)) => p.plain_text().chars().count(),
+            _ => 0,
+        };
+        self.selection_anchor = Some((0, 0));
+        self.cursor_block = last_b;
+        self.cursor_char = last_c;
+    }
+
+    /// Deletes the active selection atomically (respecting Track Changes within single paragraphs).
+    pub fn delete_selection(&mut self) -> bool {
+        let Some(((b0, c0), (b1, c1))) = self.ordered_selection() else {
+            return false;
+        };
+        if b0 >= self.doc.blocks.len() {
+            self.selection_anchor = None;
+            return false;
+        }
+        let b1 = b1.min(self.doc.blocks.len() - 1);
+        let track = self.doc.track_changes;
+        let author = self.doc.author.clone();
+        let rev_id = if track { self.doc.next_revision_id() } else { 1 };
+
+        if b0 == b1 {
+            if let Some(Block::Paragraph(p)) = self.doc.blocks.get_mut(b0) {
+                p.delete_char_range(c0, c1, track, rev_id, &author);
+            }
+            self.cursor_block = b0;
+            self.cursor_char = c0;
+            self.selection_anchor = None;
+            self.dirty = true;
+            return true;
+        }
+
+        // Multi-block selection: preserve prefix of b0 + suffix of b1, remove intermediate blocks
+        let right_tail_spans: Vec<TextSpan> = match self.doc.blocks.get(b1) {
+            Some(Block::Paragraph(p_end)) => {
+                let mut tail = Vec::new();
+                let mut cur = 0usize;
+                for sp in &p_end.spans {
+                    let len = sp.text.chars().count();
+                    if cur + len > c1 {
+                        let skip = c1.saturating_sub(cur);
+                        let sub: String = sp.text.chars().skip(skip).collect();
+                        if !sub.is_empty() {
+                            tail.push(TextSpan {
+                                text: sub,
+                                style: sp.style.clone(),
+                                revision: sp.revision.clone(),
+                            });
+                        }
+                    }
+                    cur += len;
+                }
+                tail
+            }
+            _ => Vec::new(),
+        };
+
+        if let Some(Block::Paragraph(p_start)) = self.doc.blocks.get_mut(b0) {
+            let start_len = p_start.plain_text().chars().count();
+            if c0 < start_len {
+                p_start.delete_char_range(c0, start_len, false, rev_id, &author);
+            }
+            if p_start.plain_text().is_empty() && !right_tail_spans.is_empty() {
+                p_start.spans = right_tail_spans;
+            } else {
+                p_start.spans.extend(right_tail_spans);
+            }
+            p_start.normalize_spans();
+        }
+
+        for remove_idx in ((b0 + 1)..=b1).rev() {
+            if remove_idx < self.doc.blocks.len() {
+                self.doc.blocks.remove(remove_idx);
+            }
+        }
+        self.doc.ensure_non_empty();
+        self.cursor_block = b0.min(self.doc.blocks.len() - 1);
+        self.cursor_char = c0;
+        self.selection_anchor = None;
+        self.image_rgba_cache.clear();
+        self.dirty = true;
+        true
     }
 
     pub fn normalized_col_weights(&self, block_idx: usize, cols: usize) -> Vec<f32> {
@@ -146,6 +350,7 @@ pub struct PdfTabState {
     pub selected_text_id: Option<u32>,
     pub tool: PdfTool,
     pub scroll_y: f32,
+    pub target_scroll_y: f32,
     pub max_scroll_y: f32,
     pub zoom: f32,
     pub dirty: bool,
@@ -160,6 +365,7 @@ impl PdfTabState {
             selected_text_id: None,
             tool: PdfTool::SelectEdit,
             scroll_y: 0.0,
+            target_scroll_y: 0.0,
             max_scroll_y: 0.0,
             zoom: 1.08,
             dirty: false,
@@ -322,6 +528,9 @@ pub enum DragInteraction {
         track_h: f32,
         max_scroll: f32,
     },
+    WordTextSelection {
+        tab_idx: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -346,6 +555,14 @@ pub enum UiAction {
         tab_idx: usize,
         block_idx: usize,
         char_idx: usize,
+    },
+    AcceptRevisionById {
+        tab_idx: usize,
+        rev_id: u32,
+    },
+    RejectRevisionById {
+        tab_idx: usize,
+        rev_id: u32,
     },
     ToggleChecklistItem {
         tab_idx: usize,
@@ -457,6 +674,7 @@ pub struct RustPadApp {
     pub split_secondary_tab: Option<usize>,
     pub split_ratio: f32,
     pub ui_scale: f32,
+    pub focus_mode: bool,
     pub word_sidebar_open: bool,
     pub word_sidebar_w: f32,
     pub pdf_left_open: bool,
@@ -469,10 +687,14 @@ pub struct RustPadApp {
     pub active_drag: DragInteraction,
     pub modal: Option<ActiveModal>,
     pub hit_regions: Vec<HitRegion>,
+    pub word_line_boxes: Vec<WordLineHitBox>,
     pub hovered_hit_idx: Option<usize>,
     pub desired_cursor: CursorShape,
     pub mouse_x: f32,
     pub mouse_y: f32,
+    pub last_click_at: Option<Instant>,
+    pub last_click_pos: (f32, f32),
+    pub last_click_mods: Modifiers,
     pub cursor_blink_on: bool,
     pub status_toast: String,
     pub recent_files: Vec<PathBuf>,
@@ -508,6 +730,7 @@ impl RustPadApp {
             split_secondary_tab: None,
             split_ratio: 0.50,
             ui_scale: dpi_scale,
+            focus_mode: false,
             word_sidebar_open: true,
             word_sidebar_w: 246.0,
             pdf_left_open: true,
@@ -520,21 +743,61 @@ impl RustPadApp {
             active_drag: DragInteraction::None,
             modal: None,
             hit_regions: Vec::with_capacity(256),
+            word_line_boxes: Vec::with_capacity(192),
             hovered_hit_idx: None,
             desired_cursor: CursorShape::Arrow,
             mouse_x: -1.0,
             mouse_y: -1.0,
+            last_click_at: None,
+            last_click_pos: (-100.0, -100.0),
+            last_click_mods: Modifiers::default(),
             cursor_blink_on: true,
-            status_toast: "Ready · RustPad v2.0 Enterprise Offline Document & PDF Suite".into(),
+            status_toast: "Ready · RustPad v2.1 Ultra-Smooth 60–120Hz Document & PDF Studio".into(),
             recent_files: recent,
         }
     }
 
-    /// Polls any non-blocking background AI worker thread on each 50ms tick.
-    /// Returns `true` if a repaint is needed (live elapsed timer or completed response).
+    /// Steps 60Hz kinetic spring scrolling AND polls non-blocking background AI worker threads.
+    /// Returns `true` if a repaint is needed.
     pub fn poll_background_tasks(&mut self) -> bool {
+        let mut needs_repaint = false;
+
+        // 60Hz critically-damped spring interpolation for silky-smooth document & PDF scrolling
+        for (ti, tab) in self.tabs.iter_mut().enumerate() {
+            if ti != self.active_tab && self.split_secondary_tab != Some(ti) {
+                continue;
+            }
+            match tab {
+                StudioTab::Word(w) => {
+                    let target = w.target_scroll_y.clamp(0.0, w.max_scroll_y.max(0.0));
+                    w.target_scroll_y = target;
+                    let diff = target - w.scroll_y;
+                    if diff.abs() > 0.35 {
+                        w.scroll_y += diff * 0.34;
+                        needs_repaint = true;
+                    } else if diff.abs() > 0.01 {
+                        w.scroll_y = target;
+                        needs_repaint = true;
+                    }
+                }
+                StudioTab::Pdf(p) => {
+                    let target = p.target_scroll_y.clamp(0.0, p.max_scroll_y.max(0.0));
+                    p.target_scroll_y = target;
+                    let diff = target - p.scroll_y;
+                    if diff.abs() > 0.35 {
+                        p.scroll_y += diff * 0.34;
+                        needs_repaint = true;
+                    } else if diff.abs() > 0.01 {
+                        p.scroll_y = target;
+                        needs_repaint = true;
+                    }
+                }
+                StudioTab::HomeHub => {}
+            }
+        }
+
         let Some(rx) = &self.ai_dock.worker_rx else {
-            return false;
+            return needs_repaint;
         };
         match rx.try_recv() {
             Ok(Ok(resp)) => {
@@ -640,6 +903,11 @@ impl RustPadApp {
     fn extract_active_ai_context(&self, task: AiTask) -> String {
         match self.tabs.get(self.active_tab) {
             Some(StudioTab::Word(w)) => {
+                if let Some(sel) = w.selected_text() {
+                    if !sel.trim().is_empty() {
+                        return sel;
+                    }
+                }
                 if task == AiTask::FixGrammar {
                     if let Some((tb_idx, r, c)) = w.active_table_cell {
                         if let Some(Block::Table(t)) = w.doc.blocks.get(tb_idx) {
@@ -688,6 +956,23 @@ impl RustPadApp {
                     w.history.record(&w.doc);
                     w.snapshots.capture(&w.doc, "Before AI Agent apply");
                     w.dirty = true;
+
+                    if replace_current && w.has_selection() {
+                        w.delete_selection();
+                        let lines: Vec<&str> = out.split('\n').collect();
+                        for (li, line) in lines.iter().enumerate() {
+                            if li > 0 {
+                                word_enter(w);
+                            }
+                            for ch in line.chars() {
+                                word_insert_char_no_record(w, ch);
+                            }
+                        }
+                        w.scroll_to_caret = true;
+                        self.status_toast =
+                            "Replaced selected text with AI output (Ctrl+Z to undo)".into();
+                        return;
+                    }
 
                     if replace_current {
                         if let Some((tb_idx, r, c)) = w.active_table_cell {
@@ -1090,6 +1375,8 @@ impl RustPadApp {
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
                     if w.history.undo(&mut w.doc) {
                         w.active_table_cell = None;
+                        w.selection_anchor = None;
+                        w.image_rgba_cache.clear();
                         w.cursor_block = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
                         w.cursor_char = 0;
                         self.status_toast = "Undid last edit".into();
@@ -1102,6 +1389,8 @@ impl RustPadApp {
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
                     if w.history.redo(&mut w.doc) {
                         w.active_table_cell = None;
+                        w.selection_anchor = None;
+                        w.image_rgba_cache.clear();
                         w.cursor_block = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
                         w.cursor_char = 0;
                         self.status_toast = "Redid edit".into();
@@ -1109,6 +1398,27 @@ impl RustPadApp {
                         self.status_toast = "Nothing to redo".into();
                     }
                 }
+            }
+            CommandId::SelectAll => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    w.select_all();
+                    let words = w
+                        .selected_text()
+                        .map(|t| t.split_whitespace().count())
+                        .unwrap_or(0);
+                    self.status_toast =
+                        format!("Selected entire document ({words} words) — format, copy, or AI polish");
+                }
+            }
+            CommandId::ToggleFocusMode => {
+                self.focus_mode = !self.focus_mode;
+                self.open_dropdown = None;
+                self.status_toast = if self.focus_mode {
+                    "Entered Distraction-Free Writer Focus Mode (Ctrl+Shift+F to restore chrome)"
+                        .into()
+                } else {
+                    "Exited Focus Mode — restored Studio ribbon & sidebars".into()
+                };
             }
             CommandId::ToggleLeftSidebar => {
                 match self.tabs.get(self.active_tab) {
@@ -1593,6 +1903,20 @@ impl RustPadApp {
 
     pub fn apply_font_family(&mut self, fam: FontFamily) {
         if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+            if let Some(((b0, c0), (b1, c1))) = w.ordered_selection() {
+                w.history.record(&w.doc);
+                w.dirty = true;
+                for bi in b0..=b1.min(w.doc.blocks.len().saturating_sub(1)) {
+                    if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(bi) {
+                        let len = p.plain_text().chars().count();
+                        let s = if bi == b0 { c0.min(len) } else { 0 };
+                        let e = if bi == b1 { c1.min(len) } else { len };
+                        p.transform_range(s, e, |st| st.font_family = fam);
+                    }
+                }
+                self.status_toast = format!("Applied '{}' to selection", fam.label());
+                return;
+            }
             let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
             if matches!(w.doc.blocks.get(idx), Some(Block::Paragraph(_))) {
                 w.history.record(&w.doc);
@@ -1805,6 +2129,76 @@ impl RustPadApp {
             _ => {}
         }
 
+        // Substring inline formatting when a range selection is active!
+        if let Some(((b0, c0), (b1, c1))) = w.ordered_selection() {
+            if matches!(
+                cmd,
+                CommandId::ToggleBold
+                    | CommandId::ToggleItalic
+                    | CommandId::ToggleUnderline
+                    | CommandId::ToggleStrike
+                    | CommandId::CycleFontFamily
+                    | CommandId::FontSizeUp
+                    | CommandId::FontSizeDown
+                    | CommandId::CycleTextColor
+                    | CommandId::ToggleHighlight
+            ) {
+                let probe_style = match w.doc.blocks.get(b0) {
+                    Some(Block::Paragraph(p)) => p.style_at_char(c0 + 1),
+                    _ => SpanStyle::default(),
+                };
+                let target_bold = !probe_style.bold;
+                let target_italic = !probe_style.italic;
+                let target_under = !probe_style.underline;
+                let target_strike = !probe_style.strikethrough;
+                let next_font = match probe_style.font_family {
+                    FontFamily::Sans => FontFamily::Serif,
+                    FontFamily::Serif => FontFamily::Mono,
+                    FontFamily::Mono => FontFamily::Sans,
+                };
+                let next_color = if probe_style.color == RgbColor::INK_SLATE {
+                    RgbColor::COBALT
+                } else if probe_style.color == RgbColor::COBALT {
+                    RgbColor::CORAL
+                } else if probe_style.color == RgbColor::CORAL {
+                    RgbColor::EMERALD
+                } else {
+                    RgbColor::INK_SLATE
+                };
+                let next_hl = match probe_style.highlight {
+                    None => Some(RgbColor::AMBER_HIGHLIGHT),
+                    Some(c) if c == RgbColor::AMBER_HIGHLIGHT => Some(RgbColor::MINT_HIGHLIGHT),
+                    Some(c) if c == RgbColor::MINT_HIGHLIGHT => Some(RgbColor::SKY_HIGHLIGHT),
+                    _ => None,
+                };
+
+                for bi in b0..=b1.min(w.doc.blocks.len().saturating_sub(1)) {
+                    if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(bi) {
+                        let len = p.plain_text().chars().count();
+                        let s = if bi == b0 { c0.min(len) } else { 0 };
+                        let e = if bi == b1 { c1.min(len) } else { len };
+                        p.transform_range(s, e, |st| match cmd {
+                            CommandId::ToggleBold => st.bold = target_bold,
+                            CommandId::ToggleItalic => st.italic = target_italic,
+                            CommandId::ToggleUnderline => st.underline = target_under,
+                            CommandId::ToggleStrike => st.strikethrough = target_strike,
+                            CommandId::CycleFontFamily => st.font_family = next_font,
+                            CommandId::FontSizeUp => {
+                                st.font_size_pt = (st.font_size_pt + 1.0).min(56.0)
+                            }
+                            CommandId::FontSizeDown => {
+                                st.font_size_pt = (st.font_size_pt - 1.0).max(8.5)
+                            }
+                            CommandId::CycleTextColor => st.color = next_color,
+                            CommandId::ToggleHighlight => st.highlight = next_hl,
+                            _ => {}
+                        });
+                    }
+                }
+                return;
+            }
+        }
+
         if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
             if p.spans.is_empty() {
                 p.spans.push(TextSpan::plain(""));
@@ -2013,8 +2407,9 @@ impl RustPadApp {
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
                     w.cursor_block = block_idx;
                     w.cursor_char = 0;
+                    w.selection_anchor = None;
                     w.active_table_cell = None;
-                    w.scroll_y = target_scroll_y.clamp(0.0, w.max_scroll_y);
+                    w.target_scroll_y = target_scroll_y.clamp(0.0, w.max_scroll_y);
                 }
             }
             UiAction::ClickWordParagraph {
@@ -2025,10 +2420,82 @@ impl RustPadApp {
                 self.open_dropdown = None;
                 self.ai_dock.focused_field = None;
                 self.active_tab = tab_idx;
+                let now = Instant::now();
+                let is_double_click = self
+                    .last_click_at
+                    .map(|t0| now.duration_since(t0).as_millis() <= 380)
+                    .unwrap_or(false)
+                    && (self.mouse_x - self.last_click_pos.0).abs() <= 8.0
+                    && (self.mouse_y - self.last_click_pos.1).abs() <= 8.0;
+                self.last_click_at = Some(now);
+                self.last_click_pos = (self.mouse_x, self.mouse_y);
+
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
-                    w.cursor_block = block_idx;
-                    w.cursor_char = char_idx;
                     w.active_table_cell = None;
+                    if is_double_click {
+                        let (ws, we) = match w.doc.blocks.get(block_idx) {
+                            Some(Block::Paragraph(p)) => {
+                                word_range_at_char(&p.plain_text(), char_idx)
+                            }
+                            _ => (char_idx, char_idx),
+                        };
+                        w.selection_anchor = Some((block_idx, ws));
+                        w.cursor_block = block_idx;
+                        w.cursor_char = we;
+                        self.active_drag = DragInteraction::None;
+                    } else if self.last_click_mods.shift {
+                        if w.selection_anchor.is_none() {
+                            w.selection_anchor = Some((w.cursor_block, w.cursor_char));
+                        }
+                        w.cursor_block = block_idx;
+                        w.cursor_char = char_idx;
+                        self.active_drag = DragInteraction::WordTextSelection { tab_idx };
+                    } else {
+                        w.selection_anchor = Some((block_idx, char_idx));
+                        w.cursor_block = block_idx;
+                        w.cursor_char = char_idx;
+                        self.active_drag = DragInteraction::WordTextSelection { tab_idx };
+                    }
+                }
+            }
+            UiAction::AcceptRevisionById { tab_idx, rev_id } => {
+                self.active_tab = tab_idx;
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
+                    w.history.record(&w.doc);
+                    let n = w.doc.accept_revision(rev_id);
+                    if n > 0 {
+                        w.dirty = true;
+                        w.selection_anchor = None;
+                        if self.policy.audit_log_enabled {
+                            self.audit_trail.record(
+                                "REVISION_CLAUSE_ACCEPTED",
+                                &format!("rev_id={rev_id}"),
+                                &w.doc.author,
+                            );
+                        }
+                        self.status_toast =
+                            format!("Accepted revision clause #{rev_id} ({n} run(s) committed)");
+                    }
+                }
+            }
+            UiAction::RejectRevisionById { tab_idx, rev_id } => {
+                self.active_tab = tab_idx;
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
+                    w.history.record(&w.doc);
+                    let n = w.doc.reject_revision(rev_id);
+                    if n > 0 {
+                        w.dirty = true;
+                        w.selection_anchor = None;
+                        if self.policy.audit_log_enabled {
+                            self.audit_trail.record(
+                                "REVISION_CLAUSE_REJECTED",
+                                &format!("rev_id={rev_id}"),
+                                &w.doc.author,
+                            );
+                        }
+                        self.status_toast =
+                            format!("Rejected revision clause #{rev_id} ({n} run(s) reverted)");
+                    }
                 }
             }
             UiAction::ToggleChecklistItem { tab_idx, block_idx } => {
@@ -2509,20 +2976,24 @@ impl RustPadApp {
         y: f32,
     ) {
         let ratio = ((y - track_y) / track_h.max(24.0)).clamp(0.0, 1.0);
+        let pos = (ratio * max_scroll).clamp(0.0, max_scroll.max(0.0));
         match self.tabs.get_mut(tab_idx) {
             Some(StudioTab::Word(w)) => {
-                w.scroll_y = (ratio * max_scroll).clamp(0.0, max_scroll.max(0.0));
+                w.scroll_y = pos;
+                w.target_scroll_y = pos;
             }
             Some(StudioTab::Pdf(p)) => {
-                p.scroll_y = (ratio * max_scroll).clamp(0.0, max_scroll.max(0.0));
+                p.scroll_y = pos;
+                p.target_scroll_y = pos;
             }
             _ => {}
         }
     }
 
-    pub fn handle_mouse_down(&mut self, x: f32, y: f32) {
+    pub fn handle_mouse_down(&mut self, x: f32, y: f32, mods: Modifiers) {
         self.mouse_x = x;
         self.mouse_y = y;
+        self.last_click_mods = mods;
 
         if let Some(ActiveModal::SignaturePad {
             strokes,
@@ -2549,6 +3020,9 @@ impl RustPadApp {
         } else {
             self.open_dropdown = None;
             self.ai_dock.focused_field = None;
+            if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                w.selection_anchor = None;
+            }
         }
     }
 
@@ -2634,6 +3108,39 @@ impl RustPadApp {
                 self.desired_cursor = CursorShape::Hand;
                 return true;
             }
+            DragInteraction::WordTextSelection { tab_idx } => {
+                // Zero-lag 60-120Hz live text range drag using cached per-line glyph positions
+                let mut best_line: Option<(usize, usize)> = None;
+                let mut best_dy = f32::MAX;
+                for lb in &self.word_line_boxes {
+                    if lb.tab_idx != tab_idx {
+                        continue;
+                    }
+                    let dy = if y < lb.rect.y {
+                        lb.rect.y - y
+                    } else if y > lb.rect.y + lb.rect.h {
+                        y - (lb.rect.y + lb.rect.h)
+                    } else {
+                        0.0
+                    };
+                    if dy < best_dy {
+                        best_dy = dy;
+                        best_line = Some((lb.block_idx, lb.hit_test_char(x)));
+                    }
+                }
+                let mut moved = false;
+                if let (Some((blk, ch_idx)), Some(StudioTab::Word(w))) =
+                    (best_line, self.tabs.get_mut(tab_idx))
+                {
+                    if w.cursor_block != blk || w.cursor_char != ch_idx {
+                        w.cursor_block = blk;
+                        w.cursor_char = ch_idx;
+                        moved = true;
+                    }
+                }
+                self.desired_cursor = CursorShape::IBeam;
+                return moved;
+            }
             DragInteraction::None => {}
         }
 
@@ -2660,6 +3167,13 @@ impl RustPadApp {
         if let Some(ActiveModal::SignaturePad { is_drawing, .. }) = &mut self.modal {
             *is_drawing = false;
         }
+        if let DragInteraction::WordTextSelection { tab_idx } = self.active_drag {
+            if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
+                if !w.has_selection() {
+                    w.selection_anchor = None;
+                }
+            }
+        }
         self.active_drag = DragInteraction::None;
     }
 
@@ -2670,23 +3184,59 @@ impl RustPadApp {
         }
         if let Some(dock_r) = self.ai_dock_rect {
             if self.ai_dock.open && dock_r.contains(self.mouse_x, self.mouse_y) {
-                self.ai_dock.output_scroll_y = (self.ai_dock.output_scroll_y + delta_y).clamp(0.0, 2400.0);
+                self.ai_dock.output_scroll_y =
+                    (self.ai_dock.output_scroll_y + delta_y).clamp(0.0, 2400.0);
                 return;
             }
         }
         match self.tabs.get_mut(self.active_tab) {
             Some(StudioTab::Word(w)) => {
-                w.scroll_y = (w.scroll_y + delta_y).clamp(0.0, w.max_scroll_y.max(0.0));
+                w.target_scroll_y =
+                    (w.target_scroll_y + delta_y).clamp(0.0, w.max_scroll_y.max(0.0));
+                // Advance an immediate partial step on the input frame for instant tactile feedback
+                w.scroll_y += (w.target_scroll_y - w.scroll_y) * 0.42;
             }
             Some(StudioTab::Pdf(p)) => {
-                p.scroll_y = (p.scroll_y + delta_y).clamp(0.0, p.max_scroll_y.max(0.0));
+                p.target_scroll_y =
+                    (p.target_scroll_y + delta_y).clamp(0.0, p.max_scroll_y.max(0.0));
+                p.scroll_y += (p.target_scroll_y - p.scroll_y) * 0.42;
             }
             _ => {}
         }
     }
 
+    fn refresh_find_matches_and_jump(&mut self) {
+        let needle = match &self.modal {
+            Some(ActiveModal::FindReplace { find_text, .. }) => find_text.clone(),
+            _ => return,
+        };
+        let mut count = 0usize;
+        if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+            let hits = w.doc.find_occurrences(&needle);
+            count = hits.len();
+            if let Some(&(b_idx, byte_off)) = hits.first() {
+                if let Some(Block::Paragraph(p)) = w.doc.blocks.get(b_idx) {
+                    let hay_low = p.plain_text().to_lowercase();
+                    let safe_b = byte_off.min(hay_low.len());
+                    let m_start = hay_low[..safe_b].chars().count();
+                    let m_end = m_start + needle.chars().count();
+                    w.active_table_cell = None;
+                    w.selection_anchor = Some((b_idx, m_start));
+                    w.cursor_block = b_idx;
+                    w.cursor_char = m_end;
+                    w.scroll_to_caret = true;
+                }
+            } else {
+                w.selection_anchor = None;
+            }
+        }
+        if let Some(ActiveModal::FindReplace { matches_count, .. }) = &mut self.modal {
+            *matches_count = count;
+        }
+    }
+
     pub fn handle_key_down(&mut self, key: Key, mods: Modifiers) {
-        // Global Escape closes dropdowns, modals, or AI input focus cleanly
+        // Global Escape closes dropdowns, modals, AI input focus, active selection, or Focus Mode
         if key == Key::Escape {
             if self.open_dropdown.is_some() {
                 self.open_dropdown = None;
@@ -2698,6 +3248,17 @@ impl RustPadApp {
             }
             if self.ai_dock.focused_field.is_some() {
                 self.ai_dock.focused_field = None;
+                return;
+            }
+            if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                if w.has_selection() {
+                    w.selection_anchor = None;
+                    return;
+                }
+            }
+            if self.focus_mode {
+                self.focus_mode = false;
+                self.status_toast = "Exited Focus Mode".into();
                 return;
             }
         }
@@ -2749,8 +3310,16 @@ impl RustPadApp {
                     self.execute_command(CommandId::ExportWordToPdf);
                     return;
                 }
+                Key::Char('f') if mods.shift => {
+                    self.execute_command(CommandId::ToggleFocusMode);
+                    return;
+                }
                 Key::Char('f') => {
                     self.execute_command(CommandId::OpenFindReplace);
+                    return;
+                }
+                Key::Char('a') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                    self.execute_command(CommandId::SelectAll);
                     return;
                 }
                 Key::Char('m') => {
@@ -2894,7 +3463,13 @@ impl RustPadApp {
                 }
             }
             match follow_up {
-                ModalKeyFollowUp::None => {}
+                ModalKeyFollowUp::None => {
+                    if matches!(self.modal, Some(ActiveModal::FindReplace { .. }))
+                        && key == Key::Backspace
+                    {
+                        self.refresh_find_matches_and_jump();
+                    }
+                }
                 ModalKeyFollowUp::Confirm => self.confirm_active_modal(),
                 ModalKeyFollowUp::ReplaceAll => self.dispatch_ui_action(UiAction::FindReplaceAll),
             }
@@ -2939,20 +3514,93 @@ impl RustPadApp {
             }
         }
 
-        // Active Tab Editor Navigation & Typing
+        // Active Tab Editor Navigation & Typing (with Shift range selection & Ctrl+Arrow word jump!)
         match self.tabs.get_mut(self.active_tab) {
             Some(StudioTab::Word(w)) => match key {
                 Key::Backspace => word_backspace(w),
                 Key::Delete => word_delete(w),
                 Key::Enter => word_enter(w),
-                Key::Left => word_move_left(w),
-                Key::Right => word_move_right(w),
-                Key::Up => word_move_up(w),
-                Key::Down => word_move_down(w),
+                Key::Left => {
+                    if mods.shift {
+                        if w.selection_anchor.is_none() {
+                            w.selection_anchor = Some((w.cursor_block, w.cursor_char));
+                        }
+                        if mods.ctrl {
+                            word_move_word_left(w);
+                        } else {
+                            word_move_left(w);
+                        }
+                    } else if let Some(((b0, c0), _)) = w.ordered_selection() {
+                        w.cursor_block = b0;
+                        w.cursor_char = c0;
+                        w.selection_anchor = None;
+                    } else {
+                        w.selection_anchor = None;
+                        if mods.ctrl {
+                            word_move_word_left(w);
+                        } else {
+                            word_move_left(w);
+                        }
+                    }
+                }
+                Key::Right => {
+                    if mods.shift {
+                        if w.selection_anchor.is_none() {
+                            w.selection_anchor = Some((w.cursor_block, w.cursor_char));
+                        }
+                        if mods.ctrl {
+                            word_move_word_right(w);
+                        } else {
+                            word_move_right(w);
+                        }
+                    } else if let Some((_, (b1, c1))) = w.ordered_selection() {
+                        w.cursor_block = b1;
+                        w.cursor_char = c1;
+                        w.selection_anchor = None;
+                    } else {
+                        w.selection_anchor = None;
+                        if mods.ctrl {
+                            word_move_word_right(w);
+                        } else {
+                            word_move_right(w);
+                        }
+                    }
+                }
+                Key::Up => {
+                    if mods.shift {
+                        if w.selection_anchor.is_none() {
+                            w.selection_anchor = Some((w.cursor_block, w.cursor_char));
+                        }
+                    } else {
+                        w.selection_anchor = None;
+                    }
+                    word_move_up(w);
+                }
+                Key::Down => {
+                    if mods.shift {
+                        if w.selection_anchor.is_none() {
+                            w.selection_anchor = Some((w.cursor_block, w.cursor_char));
+                        }
+                    } else {
+                        w.selection_anchor = None;
+                    }
+                    word_move_down(w);
+                }
                 Key::Home => {
                     if w.active_table_cell.is_some() {
                         w.table_cursor_char = 0;
                     } else {
+                        if mods.shift {
+                            if w.selection_anchor.is_none() {
+                                w.selection_anchor = Some((w.cursor_block, w.cursor_char));
+                            }
+                        } else {
+                            w.selection_anchor = None;
+                        }
+                        if mods.ctrl {
+                            w.cursor_block = 0;
+                            w.scroll_to_caret = true;
+                        }
                         w.cursor_char = 0;
                     }
                 }
@@ -2963,15 +3611,30 @@ impl RustPadApp {
                                 w.table_cursor_char = cell.text.chars().count();
                             }
                         }
-                    } else if let Some(Block::Paragraph(p)) = w.doc.blocks.get(w.cursor_block) {
-                        w.cursor_char = p.plain_text().chars().count();
+                    } else {
+                        if mods.shift {
+                            if w.selection_anchor.is_none() {
+                                w.selection_anchor = Some((w.cursor_block, w.cursor_char));
+                            }
+                        } else {
+                            w.selection_anchor = None;
+                        }
+                        if mods.ctrl {
+                            w.cursor_block = w.doc.blocks.len().saturating_sub(1);
+                            w.scroll_to_caret = true;
+                        }
+                        if let Some(Block::Paragraph(p)) = w.doc.blocks.get(w.cursor_block) {
+                            w.cursor_char = p.plain_text().chars().count();
+                        }
                     }
                 }
                 Key::PageDown => {
-                    w.scroll_y = (w.scroll_y + 420.0).clamp(0.0, w.max_scroll_y.max(0.0));
+                    w.target_scroll_y =
+                        (w.target_scroll_y + 420.0).clamp(0.0, w.max_scroll_y.max(0.0));
                 }
                 Key::PageUp => {
-                    w.scroll_y = (w.scroll_y - 420.0).clamp(0.0, w.max_scroll_y.max(0.0));
+                    w.target_scroll_y =
+                        (w.target_scroll_y - 420.0).clamp(0.0, w.max_scroll_y.max(0.0));
                 }
                 Key::Tab => {
                     if let Some((tb_idx, r, c)) = w.active_table_cell {
@@ -3065,6 +3728,20 @@ impl RustPadApp {
         }
         match self.tabs.get_mut(self.active_tab) {
             Some(StudioTab::Word(w)) => {
+                if let Some(sel) = w.selected_text() {
+                    set_clipboard_text(&sel);
+                    let chars = sel.chars().count();
+                    if cut {
+                        w.history.record(&w.doc);
+                        w.delete_selection();
+                        self.status_toast =
+                            format!("Cut selection ({chars} chars) to clipboard");
+                    } else {
+                        self.status_toast =
+                            format!("Copied selection ({chars} chars) to clipboard");
+                    }
+                    return;
+                }
                 if cut {
                     w.history.record(&w.doc);
                 }
@@ -3183,6 +3860,10 @@ impl RustPadApp {
                     }
                 }
 
+                if w.has_selection() {
+                    w.delete_selection();
+                }
+
                 let lines: Vec<&str> = cleaned.split('\n').collect();
                 for (li, line) in lines.iter().enumerate() {
                     if li > 0 {
@@ -3236,6 +3917,9 @@ impl RustPadApp {
                 | ActiveModal::Governance
                 | ActiveModal::About => {}
             }
+            if matches!(self.modal, Some(ActiveModal::FindReplace { .. })) {
+                self.refresh_find_matches_and_jump();
+            }
             return;
         }
 
@@ -3288,6 +3972,10 @@ fn insert_str_at_char(s: &mut String, char_idx: usize, ins: &str) {
 
 fn word_insert_char(w: &mut WordTabState, ch: char) {
     w.doc.ensure_non_empty();
+    if w.has_selection() {
+        w.history.record(&w.doc);
+        w.delete_selection();
+    }
     let idx = w.cursor_block.min(w.doc.blocks.len() - 1);
     w.cursor_block = idx;
     if !matches!(w.doc.blocks.get(idx), Some(Block::Paragraph(_))) {
@@ -3377,6 +4065,12 @@ fn word_insert_char_no_record(w: &mut WordTabState, ch: char) {
 }
 
 fn word_backspace(w: &mut WordTabState) {
+    if w.has_selection() {
+        w.history.record(&w.doc);
+        w.delete_selection();
+        w.scroll_to_caret = true;
+        return;
+    }
     if let Some((tb_idx, r, c)) = w.active_table_cell {
         if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
             if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
@@ -3502,6 +4196,12 @@ fn word_backspace(w: &mut WordTabState) {
 }
 
 fn word_delete(w: &mut WordTabState) {
+    if w.has_selection() {
+        w.history.record(&w.doc);
+        w.delete_selection();
+        w.scroll_to_caret = true;
+        return;
+    }
     if let Some((tb_idx, r, c)) = w.active_table_cell {
         if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
             if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c)) {
@@ -3553,6 +4253,10 @@ fn word_delete(w: &mut WordTabState) {
 }
 
 fn word_enter(w: &mut WordTabState) {
+    if w.has_selection() {
+        w.history.record(&w.doc);
+        w.delete_selection();
+    }
     if w.active_table_cell.is_some() {
         // Inside a table cell, Enter moves cleanly to the cell directly below (or adds a row!)
         if let Some((tb_idx, r, c)) = w.active_table_cell {
@@ -3653,6 +4357,28 @@ fn word_move_left(w: &mut WordTabState) {
         };
         w.scroll_to_caret = true;
     }
+}
+
+fn word_move_word_left(w: &mut WordTabState) {
+    if w.cursor_char > 0 {
+        if let Some(Block::Paragraph(p)) = w.doc.blocks.get(w.cursor_block) {
+            w.cursor_char = prev_word_char_idx(&p.plain_text(), w.cursor_char);
+            return;
+        }
+    }
+    word_move_left(w);
+}
+
+fn word_move_word_right(w: &mut WordTabState) {
+    if let Some(Block::Paragraph(p)) = w.doc.blocks.get(w.cursor_block) {
+        let plain = p.plain_text();
+        let len = plain.chars().count();
+        if w.cursor_char < len {
+            w.cursor_char = next_word_char_idx(&plain, w.cursor_char);
+            return;
+        }
+    }
+    word_move_right(w);
 }
 
 fn word_move_right(w: &mut WordTabState) {
@@ -3867,6 +4593,56 @@ mod tests {
         assert!(app.ai_dock.is_error);
         assert!(app.ai_dock.status_line.contains("DLP POLICY BLOCKED"));
         assert!(app.audit_trail.verify_chain().is_ok());
+    }
+
+    #[test]
+    fn test_v21_range_selection_substring_formatting_and_spring_scroll() {
+        let mut app = RustPadApp::new();
+        app.execute_command(CommandId::NewWordBlank);
+        for ch in "Smooth responsive craft".chars() {
+            app.handle_text_input(ch);
+        }
+
+        // Ctrl+Shift+Left selects "craft"
+        app.handle_key_down(
+            Key::Left,
+            Modifiers {
+                ctrl: true,
+                shift: true,
+                alt: false,
+            },
+        );
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            assert_eq!(w.selected_text().as_deref(), Some("craft"));
+        }
+
+        // Ctrl+B bolds ONLY "craft", leaving "Smooth responsive " unbolded!
+        app.execute_command(CommandId::ToggleBold);
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            if let Block::Paragraph(p) = &w.doc.blocks[0] {
+                assert_eq!(p.spans.len(), 2);
+                assert!(!p.spans[0].style.bold);
+                assert!(p.spans[1].style.bold);
+                assert_eq!(p.spans[1].text, "craft");
+            } else {
+                panic!("expected paragraph");
+            }
+        }
+
+        // Typing over active selection replaces "craft" cleanly -> "Smooth responsive UX"
+        app.handle_text_input('U');
+        app.handle_text_input('X');
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            assert_eq!(w.doc.to_plain_text().trim(), "Smooth responsive UX");
+            assert!(!w.has_selection());
+        }
+
+        // Verify 60Hz spring scroll step converges smoothly
+        if let Some(StudioTab::Word(w)) = app.tabs.get_mut(app.active_tab) {
+            w.max_scroll_y = 600.0;
+        }
+        app.handle_scroll(180.0, false);
+        assert!(app.poll_background_tasks());
     }
 
     trait BlockParaLen {

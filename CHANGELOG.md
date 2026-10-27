@@ -2,6 +2,23 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`) follow our continuous release workflow (`Issue → PR → CI Matrix → GitHub Release`).
 
+## [v2.1.0] - 2026-10-27 — Ultra-Smooth 60–120Hz Compositor & Flagship Human UX Release
+### Added
+- **60–120Hz Coalesced Native Compositor, Fast Scanline Fills & Pure-Rust PNG Figure Decoder** (`crates/rustpad_window/src/{win32,linux_x11}.rs`, `crates/rustpad_render/src/{canvas,png_codec}.rs`, `#31`):
+  - Coalesced high-frequency Win32 `WM_MOUSEMOVE` / `WM_MOUSEWHEEL` redraw bursts into VSync-paced `WM_PAINT` frames (`needs_render` flag) and coalesced consecutive X11 `MotionNotify` bursts into 1 coordinate update per frame (`16ms` ~60Hz tick).
+  - Accelerated `Surface::fill_rounded_rect` interior scanlines with contiguous `.fill(packed)` slice writes and added horizontal clip culling + inline row blitting in `Surface::draw_text`.
+  - Implemented pure-Rust RFC 2083 `decode_png_rgba` (`IHDR`/`IDAT`, Sub/Up/Average/Paeth unfiltering, `64 MiB` safety cap) + bilinear `Surface::blit_rgba_scaled` with per-tab decoded RGBA caching for zero-allocation 60Hz scrolling over embedded `.docx` figures.
+- **Live Text Range Selection, Substring `TextSpan` Styling & Floating Selection Mini-Toolbar** (`crates/doc_model/src/lib.rs`, `app/src/{state,word_view,commands}.rs`, `#32`):
+  - Full `anchor..focus` range selection via zero-lag mouse drag (`WordLineHitBox`), double-click word selection (`word_range_at_char`), `Shift+Click`, `Shift+Arrow`/`Home`/`End`, `Ctrl+Left/Right` word jumps (`prev_word_char_idx` / `next_word_char_idx`), and `Ctrl+A` Select All.
+  - Substring-accurate inline formatting (`Paragraph::transform_range`) + `paint_rich_spans_line` rendering mixed inline Bold/Serif/Mono/Size/Color/Highlight spans on a single line, plus selection-scoped Copy/Cut/Paste/Delete and AI Polish replacement.
+  - **Warm Ivory Floating Selection Mini-Toolbar** (`B`, `I`, `U`, `Highlight`, `Ink`, `+Note`, `AI Polish`) blooming automatically above selected text.
+- **60Hz Kinetic Spring Scroll, 1-Click Per-Clause Redline Review, Live Find Jump & Focus Mode** (`crates/doc_model/src/lib.rs`, `app/src/{state,word_view,ui_paint}.rs`, `#33`):
+  - Critically-damped 60Hz `target_scroll_y` spring scrolling across Word and PDF tabs (while keeping scrollbar thumb dragging 1:1 instant).
+  - 1-click per-clause `Accept #N` / `Reject #N` buttons (`Document::accept_revision` / `reject_revision`) in the Legal Redline Review Bar with SHA-256 `AuditTrail` logging.
+  - Live `Ctrl+F` Find match counter + automatic selection jump on-sheet, and `Ctrl+Shift+F` **Distraction-Free Writer Focus Mode**.
+- **UX-First Mobile Product Website & Interactive Smooth Sheet Sandbox** (`index.html`, `src/{main.ts,data/projectData.ts,styles/main.css}`, `#34`):
+  - Added the `320px+` mobile-first **Interactive Smooth UX Sandbox** (`#ux-playground`) showcasing the Floating Selection Toolbar, substring `TextSpan` formatting, 1-click redline clause review, and Focus Mode live in the browser.
+
 ## [v2.0.0] - 2026-10-27 — Enterprise Offline Document & PDF Suite
 ### Added
 - **Lossless OpenXML (`.docx`) Passthrough, ECMA-376 Track Changes & Threaded Review Comments** (`crates/doc_model/`, `crates/docx_io/`, `app/src/word_view.rs`, `#23`):

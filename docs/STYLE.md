@@ -47,8 +47,10 @@ RustPad's visual language derives from **an architect's daylight drafting table*
 1. **Direct Manipulation First**:
    - Every sidebar (Word Outline, Right AI Dock, PDF Pages, PDF Inspector) and Split Workspace divider has an interactive `6px` hit-zone with `<->` (`ResizeEW`) cursor feedback and a 1-click collapse toggle.
    - Tables wrap multi-line text automatically, render an in-cell caret, support `Tab` to advance/append rows, allow column border dragging, and expose direct `+ Add Row` / `+ Col` rails on the page plus contextual ribbon controls.
-2. **Smooth Physics & Cursor Honesty**:
-   - Pixel-stepped scroll (`56px` per notch) clamped strictly to `[0, max_scroll]` paired with a draggable canvas scrollbar thumb.
+2. **Smooth 60–120Hz Physics, Range Selection & Cursor Honesty (`v2.1+`)**:
+   - **Coalesced Frame Pacing**: Win32 `WM_PAINT` and X11 `MotionNotify` burst coalescing paired with a `16ms` (`~60Hz`) critically-damped `target_scroll_y` spring scroll step ensure zero input lag during rapid wheel scrolling, splitter dragging, or live text range selection.
+   - **Contextual Floating Selection Popover**: Selecting text via mouse drag, double-click, or `Shift+Arrow` paints a subtle Cobalt-Linen highlight pill (`rgba(35, 92, 184, 0.17)`) and blooms a Warm Ivory floating mini-bar (`B`, `I`, `U`, `Highlight`, `Ink`, `+Note`, `AI Polish`) directly above the phrase — never while the mouse button is still held mid-drag.
+   - **Distraction-Free Writer Focus Mode (`Ctrl+Shift+F`)**: Dissolves top headers, ribbons, and sidebars into pure Warm Linen & Cotton Paper with a single discrete exit pill.
    - Native OS cursors (`IBeam` over editable text/cells, `Hand` over buttons/links, `ResizeEW` over splitters and table column borders).
 3. **Non-Blocking AI Safety**:
    - AI requests execute on a background `std::thread` polled over `mpsc` so editing and scrolling never freeze.

@@ -360,10 +360,24 @@ pub fn run_x11_window(
 
         while running {
             let mut needs_redraw = false;
+            let mut pending_motion: Option<(f32, f32, Modifiers)> = None;
 
             while XPending(dpy) > 0 {
                 let mut xev: XEvent = std::mem::zeroed();
                 XNextEvent(dpy, &mut xev);
+                if xev.type_ != 6 {
+                    if let Some((mx, my, mmods)) = pending_motion.take() {
+                        let ctrl = app.on_event(
+                            WindowEvent::MouseMove {
+                                x: mx,
+                                y: my,
+                                mods: mmods,
+                            },
+                            &mut surface,
+                        );
+                        handle_ctrl(ctrl, &mut running, &mut needs_redraw);
+                    }
+                }
                 match xev.type_ {
                     12 /* Expose */ => {
                         needs_redraw = true;
@@ -392,16 +406,9 @@ pub fn run_x11_window(
                         }
                     }
                     6 /* MotionNotify */ => {
+                        // Coalesce high-DPI pointer motion bursts into a single per-frame coordinate
                         let m = xev.xmotion;
-                        let ctrl = app.on_event(
-                            WindowEvent::MouseMove {
-                                x: m.x as f32,
-                                y: m.y as f32,
-                                mods: decode_x11_mods(m.state),
-                            },
-                            &mut surface,
-                        );
-                        handle_ctrl(ctrl, &mut running, &mut needs_redraw);
+                        pending_motion = Some((m.x as f32, m.y as f32, decode_x11_mods(m.state)));
                     }
                     4 /* ButtonPress */ => {
                         let b = xev.xbutton;
@@ -526,6 +533,18 @@ pub fn run_x11_window(
                 }
             }
 
+            if let Some((mx, my, mmods)) = pending_motion.take() {
+                let ctrl = app.on_event(
+                    WindowEvent::MouseMove {
+                        x: mx,
+                        y: my,
+                        mods: mmods,
+                    },
+                    &mut surface,
+                );
+                handle_ctrl(ctrl, &mut running, &mut needs_redraw);
+            }
+
             let next_cur = app.desired_cursor();
             if next_cur != active_cursor {
                 active_cursor = next_cur;
@@ -543,7 +562,7 @@ pub fn run_x11_window(
                 }
             }
 
-            if last_tick.elapsed() >= Duration::from_millis(50) {
+            if last_tick.elapsed() >= Duration::from_millis(16) {
                 last_tick = Instant::now();
                 let ctrl = app.on_event(WindowEvent::Tick, &mut surface);
                 handle_ctrl(ctrl, &mut running, &mut needs_redraw);
@@ -563,7 +582,7 @@ pub fn run_x11_window(
                     XFlush,
                 );
             } else {
-                std::thread::sleep(Duration::from_millis(8)); // ~120 Hz polling cap
+                std::thread::sleep(Duration::from_millis(6)); // ~120-165 Hz low-latency idle poll
             }
         }
 

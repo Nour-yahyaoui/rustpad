@@ -66,6 +66,8 @@ pub enum CommandId {
     OpenWatermarkModal,
     ToggleLeftSidebar,
     ToggleAiDock,
+    ToggleFocusMode,
+    SelectAll,
     AiRunFixGrammar,
     AiRunSummarize,
     AiRunDescribe,
@@ -95,7 +97,7 @@ pub struct CommandSpec {
 pub const ALL_COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: CommandId::NewWordBlank, category: "File", title: "New Blank Word Document (.docx)", shortcut: "Ctrl+N" },
     CommandSpec { id: CommandId::NewWordEnterpriseMsa, category: "Enterprise", title: "New Enterprise MSA Legal Redline Contract (.docx)", shortcut: "" },
-    CommandSpec { id: CommandId::NewWordWelcome, category: "File", title: "New Document from Welcome Guide v2.0", shortcut: "" },
+    CommandSpec { id: CommandId::NewWordWelcome, category: "File", title: "New Document from Welcome Guide v2.1", shortcut: "" },
     CommandSpec { id: CommandId::NewPdfBlank, category: "PDF", title: "Create New Blank PDF Studio Tab (.pdf)", shortcut: "" },
     CommandSpec { id: CommandId::OpenFile, category: "File", title: "Open Word / PDF / Markdown File…", shortcut: "Ctrl+O" },
     CommandSpec { id: CommandId::SaveFile, category: "File", title: "Save Active Document", shortcut: "Ctrl+S" },
@@ -117,6 +119,7 @@ pub const ALL_COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: CommandId::AiRunAddSections, category: "AI", title: "AI Agent: Draft & Add New Document Sections", shortcut: "" },
     CommandSpec { id: CommandId::Undo, category: "Edit", title: "Undo Last Edit", shortcut: "Ctrl+Z" },
     CommandSpec { id: CommandId::Redo, category: "Edit", title: "Redo Edit", shortcut: "Ctrl+Y" },
+    CommandSpec { id: CommandId::SelectAll, category: "Edit", title: "Select All Text in Active Document", shortcut: "Ctrl+A" },
     CommandSpec { id: CommandId::ToggleBold, category: "Word", title: "Toggle Bold Formatting", shortcut: "Ctrl+B" },
     CommandSpec { id: CommandId::ToggleItalic, category: "Word", title: "Toggle Italic Formatting", shortcut: "Ctrl+I" },
     CommandSpec { id: CommandId::ToggleUnderline, category: "Word", title: "Toggle Underline Formatting", shortcut: "Ctrl+U" },
@@ -161,6 +164,7 @@ pub const ALL_COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: CommandId::OpenWatermarkModal, category: "Tools", title: "Set / Clear Diagonal Page Watermark…", shortcut: "" },
     CommandSpec { id: CommandId::ToggleLeftSidebar, category: "View", title: "Toggle Outline / Pages Left Sidebar", shortcut: "Ctrl+[" },
     CommandSpec { id: CommandId::ToggleSplitView, category: "View", title: "Toggle Side-by-Side Split Workspace", shortcut: "Ctrl+\\" },
+    CommandSpec { id: CommandId::ToggleFocusMode, category: "View", title: "Toggle Distraction-Free Writer Focus Mode", shortcut: "Ctrl+Shift+F" },
     CommandSpec { id: CommandId::OpenSnapshotsDrawer, category: "Tools", title: "Open Local Time-Machine Version History", shortcut: "" },
     CommandSpec { id: CommandId::CaptureSnapshot, category: "Tools", title: "Capture Local Version Snapshot Now", shortcut: "" },
     CommandSpec { id: CommandId::OpenFindReplace, category: "Tools", title: "Find & Replace in Document…", shortcut: "Ctrl+F" },
@@ -170,7 +174,7 @@ pub const ALL_COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: CommandId::UiScaleUp, category: "View", title: "Increase Interface Font & UI Scale (+10%)", shortcut: "" },
     CommandSpec { id: CommandId::UiScaleDown, category: "View", title: "Decrease Interface Font & UI Scale (-10%)", shortcut: "" },
     CommandSpec { id: CommandId::UiScaleReset, category: "View", title: "Reset Interface UI Scale to 100%", shortcut: "" },
-    CommandSpec { id: CommandId::OpenAbout, category: "Help", title: "About RustPad v2.0 Enterprise & Author Info", shortcut: "" },
+    CommandSpec { id: CommandId::OpenAbout, category: "Help", title: "About RustPad v2.1 Smooth UX Studio & Author Info", shortcut: "" },
 ];
 
 pub fn filter_commands(query: &str) -> Vec<&'static CommandSpec> {

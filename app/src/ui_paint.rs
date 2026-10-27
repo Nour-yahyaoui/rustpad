@@ -15,17 +15,24 @@ use rustpad_render::{Color, DaylightTheme, FontBook, FontSlot, Rect, Surface, Ui
 
 pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
     app.hit_regions.clear();
+    app.word_line_boxes.clear();
     surface.reset_clip();
     surface.clear(DaylightTheme::DESK_BG);
 
     let s = app.ui_scale.clamp(0.85, 1.6);
     let win_w = surface.width as f32;
     let win_h = surface.height as f32;
-    let header_h = (48.0 * s).round();
+    let header_h = if app.focus_mode {
+        0.0
+    } else {
+        (48.0 * s).round()
+    };
     let status_h = (30.0 * s).round();
 
-    // 1. Unified Studio Header Bar
-    paint_header_bar(app, surface, s, Rect::new(0.0, 0.0, win_w, header_h));
+    // 1. Unified Studio Header Bar (hidden in Focus Mode for calm full-bleed writing)
+    if header_h > 0.0 {
+        paint_header_bar(app, surface, s, Rect::new(0.0, 0.0, win_w, header_h));
+    }
 
     // 2. Main Workspace + Optional Right-Side Pluggable AI Agent Dock
     let full_work = Rect::new(
@@ -35,7 +42,7 @@ pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
         (win_h - header_h - status_h).max(40.0),
     );
 
-    let show_ai_dock = app.ai_dock.open && full_work.w >= 620.0;
+    let show_ai_dock = !app.focus_mode && app.ai_dock.open && full_work.w >= 620.0;
     let ai_w = if show_ai_dock {
         (app.ai_dock.width * s)
             .clamp(264.0, (full_work.w * 0.46).max(264.0))
@@ -130,6 +137,8 @@ fn paint_tab_pane(
     area: Rect,
 ) {
     let blink = app.cursor_blink_on;
+    let focus_mode = app.focus_mode;
+    let active_drag = app.active_drag;
     let mx = app.mouse_x;
     let my = app.mouse_y;
     let s = app.ui_scale;
@@ -141,10 +150,11 @@ fn paint_tab_pane(
     let p_r_w = app.pdf_right_w;
 
     let recent = app.recent_files.clone();
-    let (fonts, spell, hits, tabs) = (
+    let (fonts, spell, hits, line_boxes, tabs) = (
         &mut app.fonts,
         &app.spellchecker,
         &mut app.hit_regions,
+        &mut app.word_line_boxes,
         &mut app.tabs,
     );
     let Some(tab_mut) = tabs.get_mut(tab_idx) else {
@@ -160,8 +170,11 @@ fn paint_tab_pane(
                 fonts,
                 spell,
                 hits,
+                line_boxes,
                 tab_idx,
                 is_focused_pane,
+                focus_mode,
+                active_drag,
                 blink,
                 mx,
                 my,
@@ -2273,7 +2286,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 card.x + 98.0 * s,
                 card.y + 66.0 * s,
                 DaylightTheme::INK_SUB,
-                "Enterprise Offline Word (.docx), Forensic PDF & Local AI Suite",
+                "Ultra-Smooth 60–120Hz Native Word (.docx), PDF & Local AI Studio",
             );
 
             let lines = [

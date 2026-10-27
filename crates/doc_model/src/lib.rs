@@ -311,6 +311,75 @@ pub enum ListKind {
     Checklist(bool),
 }
 
+/// Finds the character index of the start of the previous word (for `Ctrl+Left` navigation).
+pub fn prev_word_char_idx(text: &str, cur_char: usize) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = cur_char.min(chars.len());
+    while i > 0 && chars[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    if i > 0 && !chars[i - 1].is_alphanumeric() && chars[i - 1] != '_' {
+        while i > 0
+            && !chars[i - 1].is_whitespace()
+            && !chars[i - 1].is_alphanumeric()
+            && chars[i - 1] != '_'
+        {
+            i -= 1;
+        }
+    } else {
+        while i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
+            i -= 1;
+        }
+    }
+    i
+}
+
+/// Finds the character index of the start of the next word (for `Ctrl+Right` navigation).
+pub fn next_word_char_idx(text: &str, cur_char: usize) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut i = cur_char.min(len);
+    if i < len && (chars[i].is_alphanumeric() || chars[i] == '_') {
+        while i < len && (chars[i].is_alphanumeric() || chars[i] == '_') {
+            i += 1;
+        }
+    } else if i < len && !chars[i].is_whitespace() {
+        while i < len
+            && !chars[i].is_whitespace()
+            && !chars[i].is_alphanumeric()
+            && chars[i] != '_'
+        {
+            i += 1;
+        }
+    }
+    while i < len && chars[i].is_whitespace() {
+        i += 1;
+    }
+    i
+}
+
+/// Returns `(start_char, end_char)` of the word at `cur_char` (for double-click word selection).
+pub fn word_range_at_char(text: &str, cur_char: usize) -> (usize, usize) {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return (0, 0);
+    }
+    let probe = cur_char.min(chars.len().saturating_sub(1));
+    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '-' || c == '\'';
+    if !is_word(chars[probe]) {
+        return (probe, (probe + 1).min(chars.len()));
+    }
+    let mut s = probe;
+    while s > 0 && is_word(chars[s - 1]) {
+        s -= 1;
+    }
+    let mut e = probe + 1;
+    while e < chars.len() && is_word(chars[e]) {
+        e += 1;
+    }
+    (s, e)
+}
+
 /// Detects whether `text` contains Right-to-Left (Arabic / Hebrew) script code points (`UAX #9`).
 pub fn contains_rtl_script(text: &str) -> bool {
     text.chars().any(|ch| {
@@ -383,6 +452,194 @@ impl Paragraph {
 
     pub fn is_rtl(&self) -> bool {
         contains_rtl_script(&self.plain_text())
+    }
+
+    /// Returns the `SpanStyle` active at `char_idx` (biasing to the preceding character when inside text).
+    pub fn style_at_char(&self, char_idx: usize) -> SpanStyle {
+        let probe = char_idx.saturating_sub(1);
+        let mut cur = 0usize;
+        for sp in &self.spans {
+            let len = sp.text.chars().count();
+            if len == 0 {
+                continue;
+            }
+            if probe < cur + len {
+                return sp.style.clone();
+            }
+            cur += len;
+        }
+        self.spans
+            .first()
+            .map(|s| s.style.clone())
+            .unwrap_or_else(|| SpanStyle {
+                font_size_pt: self.style.default_font_size(),
+                bold: self.style.is_bold_by_default(),
+                ..SpanStyle::default()
+            })
+    }
+
+    /// Returns the `RevisionMeta` at `char_idx` (or the first revision in the paragraph as fallback).
+    pub fn revision_at_char(&self, char_idx: usize) -> Option<RevisionMeta> {
+        let mut cur = 0usize;
+        for sp in &self.spans {
+            let len = sp.text.chars().count();
+            if char_idx >= cur && char_idx <= cur + len {
+                if let Some(rev) = &sp.revision {
+                    return Some(rev.clone());
+                }
+            }
+            cur += len;
+        }
+        self.spans.iter().find_map(|s| s.revision.clone())
+    }
+
+    /// Splits spans at `[start_char..end_char]` and applies `f` strictly to that character range.
+    pub fn transform_range(
+        &mut self,
+        start_char: usize,
+        end_char: usize,
+        mut f: impl FnMut(&mut SpanStyle),
+    ) {
+        if start_char >= end_char {
+            return;
+        }
+        let mut next_spans: Vec<TextSpan> = Vec::with_capacity(self.spans.len() + 2);
+        let mut cursor = 0usize;
+
+        for sp in self.spans.drain(..) {
+            let len = sp.text.chars().count();
+            let sp_start = cursor;
+            let sp_end = cursor + len;
+            cursor = sp_end;
+
+            if len == 0 || sp_end <= start_char || sp_start >= end_char {
+                next_spans.push(sp);
+                continue;
+            }
+
+            let rel_s = start_char.saturating_sub(sp_start).min(len);
+            let rel_e = end_char.saturating_sub(sp_start).min(len);
+
+            let prefix: String = sp.text.chars().take(rel_s).collect();
+            let mid: String = sp
+                .text
+                .chars()
+                .skip(rel_s)
+                .take(rel_e.saturating_sub(rel_s))
+                .collect();
+            let suffix: String = sp.text.chars().skip(rel_e).collect();
+
+            if !prefix.is_empty() {
+                next_spans.push(TextSpan {
+                    text: prefix,
+                    style: sp.style.clone(),
+                    revision: sp.revision.clone(),
+                });
+            }
+            if !mid.is_empty() {
+                let mut mid_style = sp.style.clone();
+                f(&mut mid_style);
+                next_spans.push(TextSpan {
+                    text: mid,
+                    style: mid_style,
+                    revision: sp.revision.clone(),
+                });
+            }
+            if !suffix.is_empty() {
+                next_spans.push(TextSpan {
+                    text: suffix,
+                    style: sp.style,
+                    revision: sp.revision,
+                });
+            }
+        }
+
+        self.spans = next_spans;
+        self.normalize_spans();
+    }
+
+    /// Deletes (or marks as `RevisionKind::Deletion` when `track_changes` is active) `[start_char..end_char]`.
+    pub fn delete_char_range(
+        &mut self,
+        start_char: usize,
+        end_char: usize,
+        track_changes: bool,
+        rev_id: u32,
+        author: &str,
+    ) {
+        if start_char >= end_char {
+            return;
+        }
+        let mut next_spans: Vec<TextSpan> = Vec::with_capacity(self.spans.len() + 2);
+        let mut cursor = 0usize;
+
+        for sp in self.spans.drain(..) {
+            let len = sp.text.chars().count();
+            let sp_start = cursor;
+            let sp_end = cursor + len;
+            cursor = sp_end;
+
+            if len == 0 || sp_end <= start_char || sp_start >= end_char {
+                next_spans.push(sp);
+                continue;
+            }
+
+            let rel_s = start_char.saturating_sub(sp_start).min(len);
+            let rel_e = end_char.saturating_sub(sp_start).min(len);
+
+            let prefix: String = sp.text.chars().take(rel_s).collect();
+            let mid: String = sp
+                .text
+                .chars()
+                .skip(rel_s)
+                .take(rel_e.saturating_sub(rel_s))
+                .collect();
+            let suffix: String = sp.text.chars().skip(rel_e).collect();
+
+            if !prefix.is_empty() {
+                next_spans.push(TextSpan {
+                    text: prefix,
+                    style: sp.style.clone(),
+                    revision: sp.revision.clone(),
+                });
+            }
+            if !mid.is_empty() && track_changes {
+                match sp.revision.as_ref().map(|r| r.kind) {
+                    Some(RevisionKind::Insertion) => {
+                        // Deleting an uncommitted insertion simply removes it cleanly
+                    }
+                    Some(RevisionKind::Deletion) => {
+                        next_spans.push(TextSpan {
+                            text: mid,
+                            style: sp.style.clone(),
+                            revision: sp.revision.clone(),
+                        });
+                    }
+                    None => {
+                        next_spans.push(TextSpan::tracked(
+                            mid,
+                            sp.style.clone(),
+                            RevisionMeta {
+                                id: rev_id,
+                                kind: RevisionKind::Deletion,
+                                author: author.to_string(),
+                                date_iso: "2026-10-27T12:00:00Z".into(),
+                            },
+                        ));
+                    }
+                }
+            }
+            if !suffix.is_empty() {
+                next_spans.push(TextSpan {
+                    text: suffix,
+                    style: sp.style,
+                    revision: sp.revision,
+                });
+            }
+        }
+
+        self.spans = next_spans;
+        self.normalize_spans();
     }
 
     pub fn normalize_spans(&mut self) {
@@ -787,6 +1044,58 @@ impl Document {
                             next_spans.push(s);
                         }
                         None => next_spans.push(s),
+                    }
+                }
+                p.spans = next_spans;
+                p.normalize_spans();
+            }
+        }
+        count
+    }
+
+    /// Accepts a single tracked revision clause (`revision.id == target_id`), leaving other changes untouched.
+    pub fn accept_revision(&mut self, target_id: u32) -> usize {
+        let mut count = 0usize;
+        for block in &mut self.blocks {
+            if let Block::Paragraph(p) = block {
+                let mut next_spans = Vec::with_capacity(p.spans.len());
+                for mut s in p.spans.drain(..) {
+                    match &s.revision {
+                        Some(r) if r.id == target_id && r.kind == RevisionKind::Insertion => {
+                            s.revision = None;
+                            count += 1;
+                            next_spans.push(s);
+                        }
+                        Some(r) if r.id == target_id && r.kind == RevisionKind::Deletion => {
+                            count += 1;
+                        }
+                        _ => next_spans.push(s),
+                    }
+                }
+                p.spans = next_spans;
+                p.normalize_spans();
+            }
+        }
+        count
+    }
+
+    /// Rejects a single tracked revision clause (`revision.id == target_id`), leaving other changes untouched.
+    pub fn reject_revision(&mut self, target_id: u32) -> usize {
+        let mut count = 0usize;
+        for block in &mut self.blocks {
+            if let Block::Paragraph(p) = block {
+                let mut next_spans = Vec::with_capacity(p.spans.len());
+                for mut s in p.spans.drain(..) {
+                    match &s.revision {
+                        Some(r) if r.id == target_id && r.kind == RevisionKind::Insertion => {
+                            count += 1;
+                        }
+                        Some(r) if r.id == target_id && r.kind == RevisionKind::Deletion => {
+                            s.revision = None;
+                            count += 1;
+                            next_spans.push(s);
+                        }
+                        _ => next_spans.push(s),
                     }
                 }
                 p.spans = next_spans;
@@ -1362,5 +1671,30 @@ mod tests {
             rejected.to_plain_text().trim(),
             "Payment due within 30 calendar days of invoice receipt."
         );
+    }
+
+    #[test]
+    fn test_substring_transform_per_clause_revision_and_word_jumps() {
+        let mut p = Paragraph::new(ParagraphStyle::Normal, "The quick brown fox jumps");
+        p.transform_range(4, 15, |st| {
+            st.bold = true;
+            st.highlight = Some(RgbColor::AMBER_HIGHLIGHT);
+        });
+        assert_eq!(p.spans.len(), 3);
+        assert!(!p.spans[0].style.bold);
+        assert!(p.spans[1].style.bold);
+        assert_eq!(p.spans[1].text, "quick brown");
+        assert!(!p.spans[2].style.bold);
+
+        assert_eq!(prev_word_char_idx("Hello brave world", 12), 6);
+        assert_eq!(next_word_char_idx("Hello brave world", 0), 6);
+        assert_eq!(word_range_at_char("Hello brave world", 8), (6, 11));
+
+        let mut contract = TemplateKind::EnterpriseContract.build();
+        let before = contract.revision_counts();
+        assert!(before.0 + before.1 >= 2);
+        assert!(contract.accept_revision(1) >= 1);
+        let after = contract.revision_counts();
+        assert!(after.0 + after.1 < before.0 + before.1);
     }
 }

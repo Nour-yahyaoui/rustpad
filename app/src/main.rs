@@ -47,8 +47,8 @@ impl DesktopAppHandler for NativeAppRunner {
                     AppControl::Continue
                 }
             }
-            WindowEvent::MouseDown { x, y, .. } => {
-                self.app.handle_mouse_down(x, y);
+            WindowEvent::MouseDown { x, y, mods, .. } => {
+                self.app.handle_mouse_down(x, y, mods);
                 AppControl::Redraw
             }
             WindowEvent::MouseUp { .. } => {
@@ -72,7 +72,7 @@ impl DesktopAppHandler for NativeAppRunner {
             WindowEvent::Tick => {
                 let mut needs_redraw = self.app.poll_background_tasks();
                 self.tick_counter = self.tick_counter.wrapping_add(1);
-                if self.tick_counter % 10 == 0 {
+                if self.tick_counter % 32 == 0 {
                     self.app.cursor_blink_on = !self.app.cursor_blink_on;
                     needs_redraw = true;
                 }
@@ -661,7 +661,7 @@ fn run_cli() -> Result<(), String> {
         tick_counter: 0,
     };
     run_native_window(
-        "RustPad v2.0 Enterprise — Pure-Rust Offline Word (.docx), Forensic PDF & AI Suite",
+        "RustPad v2.1 — Ultra-Smooth 60–120Hz Native Word (.docx), Forensic PDF & AI Studio",
         1380,
         880,
         &mut runner,
