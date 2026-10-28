@@ -52,7 +52,32 @@ Opening untrusted `.docx` and `.pdf` attachments is one of the highest-risk work
 
 ---
 
-## 5. Reporting a Vulnerability
+## 5. Windows Publisher Identity, PE Resources & SmartScreen / AV Guidance
+
+Starting in `v2.2.0`, `app/build.rs` embeds native Win32 PE `.rsrc` metadata directly into `rustpad.exe` with zero external crates:
+- **Embedded Multi-Frame App Icon (`RT_GROUP_ICON` ID `1`):** Crisp `16×16`, `32×32`, `48×48`, `64×64` 32-bpp DIB frames + `256×256` lossless PNG for File Explorer, Titlebar, Alt+Tab, and Windows 11 Taskbar.
+- **Publisher & Version Metadata (`VS_VERSION_INFO`):**
+  - `CompanyName`: `Nour Yahyaoui - RustPad Studio`
+  - `ProductName`: `RustPad Desktop Studio`
+  - `FileDescription`: `RustPad - Offline Enterprise Word (.docx) & PDF Desktop Studio`
+  - `OriginalFilename`: `rustpad.exe`
+- **Least-Privilege UAC & HiDPI Manifest (`RT_MANIFEST` ID `1`):** Explicitly declares `requestedExecutionLevel="asInvoker"` (`uiAccess="false"`), Windows 10/11 compatibility GUIDs, and `PerMonitorV2` DPI awareness.
+
+### Why Windows Defender SmartScreen May Still Show *"Unknown Publisher"* on Fresh Releases
+Windows distinguishes between **PE File Properties (`VS_VERSION_INFO`)** — visible under *Right-Click -> Properties -> Details* — and **Authenticode X.509 Code Signing** issued by a commercial Certificate Authority (DigiCert, Sectigo, GlobalSign, or Azure Trusted Signing, typically $200–$500/yr):
+1. **Verify Release Integrity:** Always verify downloaded binaries against `SHA256SUMS.txt` attached to each GitHub Release:
+   ```powershell
+   Get-FileHash .\rustpad.exe -Algorithm SHA256
+   ```
+2. **Local / Enterprise Fleet Authenticode Signing:** Run the included zero-dependency PowerShell helper to attach an X.509 Authenticode signature (`CN=Nour Yahyaoui - RustPad Studio`) for workstation or MDM Trusted Publisher policies:
+   ```powershell
+   pwsh -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 -ExePath .\rustpad.exe -TrustRoot
+   ```
+3. **Open-Source Public CA Signing & Defender Whitelisting:** Maintainers can connect GitHub Actions to [SignPath Foundation](https://about.signpath.io/product/open-source) (free OSS Authenticode signing) and submit new release hashes to [Microsoft Security Intelligence (WDSI)](https://www.microsoft.com/en-us/wdsi/filesubmission) to clear ML false-positive heuristics within 24 hours.
+
+---
+
+## 6. Reporting a Vulnerability
 
 Please **do not** open public GitHub issues for suspected parser memory-safety bugs, DLP bypasses, or redaction leaks.
 

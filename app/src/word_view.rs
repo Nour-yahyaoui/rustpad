@@ -1817,7 +1817,7 @@ fn paint_paragraph_block(
                 FontSlot::SansRegular,
                 hint_px,
                 draw_x + 8.0,
-                cur_y + ln.baseline_off,
+                baseline_y,
                 (content_w - 168.0).max(80.0),
                 DaylightTheme::INK_MUTED,
                 "Type prose, /table 4x3, /image, or | Col A | Col B |…",

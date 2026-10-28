@@ -8,8 +8,12 @@ mod linux_x11;
 mod win32;
 
 use rustpad_render::Surface;
+#[cfg(not(target_os = "windows"))]
 use std::io::Write;
 use std::path::PathBuf;
+#[cfg(target_os = "windows")]
+use std::process::Command;
+#[cfg(not(target_os = "windows"))]
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
