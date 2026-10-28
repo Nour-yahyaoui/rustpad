@@ -152,7 +152,9 @@ extern "system" {
     fn EndPaint(hWnd: HWND, lpPaint: *const PAINTSTRUCT) -> BOOL;
     fn SetTimer(hWnd: HWND, nIDEvent: usize, uElapse: UINT, lpTimerFunc: *const c_void) -> usize;
     fn GetKeyState(nVirtKey: i32) -> i16;
+    fn LoadIconW(hInstance: HINSTANCE, lpIconName: *const u16) -> HICON;
     fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: *const u16) -> HCURSOR;
+    fn SendMessageW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
     fn SetCursor(hCursor: HCURSOR) -> HCURSOR;
     fn SetCapture(hWnd: HWND) -> HWND;
     fn ReleaseCapture() -> BOOL;
@@ -575,13 +577,19 @@ pub fn run_win32_window(
         let cls_name = to_wide("RustPadNativeStudioWindow");
         let wnd_title = to_wide(title);
 
+        // Load embedded PE RT_GROUP_ICON ID `1` from `app/build.rs` (fallback to IDI_APPLICATION = 32512)
+        let mut app_icon = LoadIconW(hinst, 1usize as *const u16);
+        if app_icon.is_null() {
+            app_icon = LoadIconW(std::ptr::null_mut(), 32512usize as *const u16);
+        }
+
         let wc = WNDCLASSW {
             style: 0x0003,
             lpfnWndProc: wnd_proc,
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: hinst,
-            hIcon: std::ptr::null_mut(),
+            hIcon: app_icon,
             hCursor: std::ptr::null_mut(), // Managed dynamically via WM_SETCURSOR
             hbrBackground: std::ptr::null_mut(),
             lpszMenuName: std::ptr::null(),
@@ -612,6 +620,12 @@ pub fn run_win32_window(
         );
         if hwnd.is_null() {
             return Err("CreateWindowExW failed".into());
+        }
+
+        if !app_icon.is_null() {
+            // WM_SETICON (0x0080): ICON_SMALL (0) for titlebar + ICON_BIG (1) for Taskbar / Alt-Tab
+            SendMessageW(hwnd, 0x0080, 0, app_icon as isize);
+            SendMessageW(hwnd, 0x0080, 1, app_icon as isize);
         }
 
         SetWindowLongPtrW(hwnd, -21, (&mut ctx as *mut Win32Context<'_>) as isize);

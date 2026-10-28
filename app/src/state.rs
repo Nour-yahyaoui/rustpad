@@ -4241,20 +4241,20 @@ impl RustPadApp {
                     }
                 } else if key == Key::Enter && w.active_table_cell.is_none() {
                     let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
-                    if let Some(Block::Paragraph(p)) = w.doc.blocks.get(idx) {
-                        if let Some(opt_path) =
-                            ImageBlock::parse_slash_image_command(&p.plain_text())
-                        {
-                            w.history.record(&w.doc);
-                            w.doc.blocks[idx] =
-                                Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, ""));
-                            w.cursor_char = 0;
-                            w.dirty = true;
-                            pre = match opt_path {
-                                Some(pth) => PreWordAction::SlashImagePath(pth),
-                                None => PreWordAction::SlashImageDialog,
-                            };
-                        }
+                    let slash_img = w.doc.blocks.get(idx).and_then(|b| match b {
+                        Block::Paragraph(p) => ImageBlock::parse_slash_image_command(&p.plain_text()),
+                        _ => None,
+                    });
+                    if let Some(opt_path) = slash_img {
+                        w.history.record(&w.doc);
+                        w.doc.blocks[idx] =
+                            Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, ""));
+                        w.cursor_char = 0;
+                        w.dirty = true;
+                        pre = match opt_path {
+                            Some(pth) => PreWordAction::SlashImagePath(pth),
+                            None => PreWordAction::SlashImageDialog,
+                        };
                     }
                 }
             }
@@ -5105,8 +5105,11 @@ fn word_enter(w: &mut WordTabState) -> Option<String> {
     // Zero-mouse table auto-creation on Enter:
     // 1. `/table`, `/table 4x5`, `/4x3`, `/invoice`, `/roadmap`, `/compare`, `/pros`, `/schedule`
     // 2. `| Header A | Header B | Header C |` Markdown pipe header line
-    if let Some(Block::Paragraph(p)) = w.doc.blocks.get(idx) {
-        let line_text = p.plain_text();
+    let line_text_opt = w.doc.blocks.get(idx).and_then(|b| match b {
+        Block::Paragraph(p) => Some(p.plain_text()),
+        _ => None,
+    });
+    if let Some(line_text) = line_text_opt {
         if let Some((tbl, weights, msg)) = TableBlock::from_slash_command(&line_text) {
             let focus_r = if weights.is_some() && tbl.rows.len() > 1 {
                 1
