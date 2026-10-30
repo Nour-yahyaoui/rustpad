@@ -69,10 +69,24 @@ Windows distinguishes between **PE File Properties (`VS_VERSION_INFO`)** — vis
    ```powershell
    Get-FileHash .\rustpad.exe -Algorithm SHA256
    ```
-2. **Local / Enterprise Fleet Authenticode Signing:** Run the included zero-dependency PowerShell helper to attach an X.509 Authenticode signature (`CN=Nour Yahyaoui - RustPad Studio`) for workstation or MDM Trusted Publisher policies:
-   ```powershell
-   pwsh -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 -ExePath .\rustpad.exe -TrustRoot
-   ```
+2. **Authenticode Signing with a `.pem`, `.pfx`, or Cloud HSM Certificate (`scripts/sign-windows.ps1`):**
+   - **Never commit `.pem`, `.key`, or `.pfx` files to Git** (they are protected in `.gitignore`).
+   - **Combined `.pem` (contains both `CERTIFICATE` and `PRIVATE KEY`):**
+     ```powershell
+     powershell -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 -ExePath .\rustpad.exe -PemPath .\your-cert.pem
+     ```
+   - **Public `.pem` certificate + separate private key file:**
+     ```powershell
+     powershell -ExecutionPolicy Bypass -File scripts/sign-windows.ps1 -ExePath .\rustpad.exe -PemPath .\your-cert.pem -KeyPath .\private.key
+     ```
+   - **Public `.pem` from a Cloud HSM / USB Token CA (e.g., Certum SimplySign, SSL.com, DigiCert):** Log in to SimplySign Desktop (or plug in your USB token) and run with `-PemPath .\your-cert.pem` — the script binds the public `.pem` to your hardware/cloud key in `Cert:\CurrentUser\My` and timestamps via RFC 3161 (`http://timestamp.digicert.com`).
+   - **Linux / macOS / WSL cross-signing with `osslsigncode`:**
+     ```bash
+     osslsigncode sign -certs your-cert.pem -key private.key \
+       -n "RustPad Desktop Studio" -i "https://rustpad-studio.vercel.app" \
+       -h sha256 -ts http://timestamp.digicert.com \
+       -in rustpad.exe -out rustpad-signed.exe
+     ```
 3. **Open-Source Public CA Signing & Defender Whitelisting:** Maintainers can connect GitHub Actions to [SignPath Foundation](https://about.signpath.io/product/open-source) (free OSS Authenticode signing) and submit new release hashes to [Microsoft Security Intelligence (WDSI)](https://www.microsoft.com/en-us/wdsi/filesubmission) to clear ML false-positive heuristics within 24 hours.
 
 ---
