@@ -143,6 +143,16 @@ rustpad inspect --a11y MSA_Redline.docx
 
 ---
 
+## Windows Code Signing & Privacy Policy
+
+Windows Authenticode code signing for **`rustpad-studio` / `rustpad`** is managed via [SignPath.io](https://signpath.io/) (certificate by [SignPath Foundation](https://signpath.org/)).
+
+- **Committers, Reviewers & Approvers**: [Nour Yahyaoui (`@Nour-yahyaoui`)](https://github.com/Nour-yahyaoui)
+- **Reproducible CI Pipeline**: Release artifacts are built exclusively from public source commits via GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)) with `0` third-party `crates.io` runtime dependencies.
+- **Privacy Policy**: *This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.* RustPad operates 100% offline with zero telemetry, analytics, or background network calls (optional AI features connect only when explicitly invoked by the user and governed by local `policy.json`).
+
+---
+
 ## Author & Maintainer
 
 Built and architected from scratch in pure Rust by **Nour Yahyaoui** (Tunis, Tunisia):
