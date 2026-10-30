@@ -19,3 +19,14 @@ Thumbs.db
 *.swo
 *~
 .rustpad_snapshots_test/
+
+# Code-signing certificates & private keys (NEVER commit to Git)
+*.pem
+*.key
+*.pfx
+*.p12
+*.csr
+*.crt
+*.cer
+*.der
+
