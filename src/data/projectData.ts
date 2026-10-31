@@ -61,7 +61,7 @@ export interface TourStep {
   body: string;
 }
 
-export const RELEASE_VERSION = 'v2.3.0';
+export const RELEASE_VERSION = 'v2.4.0';
 export const REPO_URL = 'https://github.com/Nour-yahyaoui/rustpad';
 export const RELEASE_TAG_URL = `${REPO_URL}/releases/tag/${RELEASE_VERSION}`;
 
@@ -97,8 +97,8 @@ export const HERO_METRICS = [
   },
   {
     value: '100+ MB',
-    label: 'Large .docx Virtualized',
-    detail: '64 MiB LRU · Progressive HiDPI figures',
+    label: 'Async .docx Streaming',
+    detail: 'LazyZip64 · Pull XML · 32 MiB Worker',
   },
   {
     value: '~4.1 MB',
@@ -117,7 +117,7 @@ export const ENTERPRISE_BENCHMARKS: EnterpriseBenchmarkRow[] = [
   },
   {
     capability: '30–100+ MB Multi-Screenshot .docx',
-    rustpad: 'Viewport Streaming · 64 MiB LRU · SharedBytes CoW',
+    rustpad: 'Async 32 MiB Worker · LazyZip64 · Pull XML · MCU Strip Codec',
     cloudSaas: 'Upload Ceilings & Browser Tab Hang',
     electronApps: 'Multi-GB RGBA Renderer OOM Crash',
     legacySuites: 'Multi-Second Freeze & Swap Thrash',
@@ -173,9 +173,9 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
     label: 'Smooth Word + Redline',
     shortLabel: 'Smooth Word',
     badge: '60–120HZ + REDLINE',
-    windowTitle: 'RustPad v2.3.0 — Enterprise_MSA_Redline.docx · Large-Doc & Table Studio',
+    windowTitle: 'RustPad v2.4.0 — Enterprise_MSA_Redline.docx · Async Large-Doc & Table Studio',
     image: '/screenshots/word-studio.png',
-    alt: 'RustPad v2.3.0 Word Studio showing 60–120Hz smooth sheet rendering, virtualized large-doc figures, effortless interactive tables, ECMA-376 Track Changes legal redlines, and DLP-governed local AI dock.',
+    alt: 'RustPad v2.4.0 Word Studio showing 60–120Hz smooth sheet rendering, async streaming 100+ MB large-doc engine, effortless interactive tables, ECMA-376 Track Changes legal redlines, and DLP-governed local AI dock.',
     summary:
       'Highlight any phrase with mouse-drag, double-click, or Shift+Arrow for a Warm Ivory floating selection bar (B/I/U/Highlight/AI Polish), glide with 60Hz spring scrolling, and review legal redlines clause-by-clause.',
     highlights: [
@@ -199,9 +199,9 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
     label: 'Forensic PDF & Seal',
     shortLabel: 'Forensic PDF',
     badge: 'PDF/A-2B + SHA-256',
-    windowTitle: 'RustPad v2.3.0 — Technical_Report.pdf · SHA-256 Sealed',
+    windowTitle: 'RustPad v2.4.0 — Technical_Report.pdf · SHA-256 Sealed',
     image: '/screenshots/pdf-studio.png',
-    alt: 'RustPad v2.3.0 Forensic PDF Studio with Sanitize Redactions, SHA-256 Tamper Seal, Bezier ink signature, stamp, and PDF 1.5+ ObjStm parser.',
+    alt: 'RustPad v2.4.0 Forensic PDF Studio with Sanitize Redactions, SHA-256 Tamper Seal, Bezier ink signature, stamp, and PDF 1.5+ ObjStm parser.',
     summary:
       'Glide through multi-page PDFs with 60Hz kinetic spring scrolling, physically purge redacted underlying glyph runs, export archival PDF/A-2b XMP packets, and embed verifiable SHA-256 tamper seals.',
     highlights: [
@@ -225,9 +225,9 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
     label: 'DLP & Audit Chain',
     shortLabel: 'Governance',
     badge: 'DLP + AUDIT',
-    windowTitle: 'RustPad v2.3.0 — Dual Split Workspace + SHA-256 Governance Ledger',
+    windowTitle: 'RustPad v2.4.0 — Dual Split Workspace + SHA-256 Governance Ledger',
     image: '/screenshots/split-command-palette.png',
-    alt: 'RustPad v2.3.0 Split Workspace with Enterprise DLP Policy and Tamper-Evident SHA-256 Hash-Chained Audit Trail Inspector.',
+    alt: 'RustPad v2.4.0 Split Workspace with Enterprise DLP Policy and Tamper-Evident SHA-256 Hash-Chained Audit Trail Inspector.',
     summary:
       'Drag-resize side-by-side Word & PDF panes at 60–120Hz with WM_PAINT/X11 motion coalescing while inspecting MDM DLP policy state and the tamper-evident SHA-256 audit chain.',
     highlights: [
@@ -251,9 +251,9 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
     label: 'Editorial Hub',
     shortLabel: 'Launchpad',
     badge: '7 TEMPLATES',
-    windowTitle: 'RustPad v2.3.0 — Warm Architectural Paper Launchpad & Starter Sheets',
+    windowTitle: 'RustPad v2.4.0 — Warm Architectural Paper Launchpad & Starter Sheets',
     image: '/screenshots/home-hub.png',
-    alt: 'RustPad v2.3.0 Editorial Home Launchpad with 7 starter templates including Enterprise MSA Legal Redline.',
+    alt: 'RustPad v2.4.0 Editorial Home Launchpad with 7 starter templates including Enterprise MSA Legal Redline.',
     summary:
       'Cold-boots in under 90 ms into a calm Warm Architectural Paper & Linen launchpad with 7 offline templates, pure-Rust PNG figure decoding, WAL crash recovery, and SMB lockfile protection.',
     highlights: [
@@ -483,7 +483,7 @@ export const CLI_RECIPES: CliRecipe[] = [
     label: 'CycloneDX 1.5 SBOM & Strict Air-Gapped MDM Policy',
     badge: 'CISO / DLP',
     command:
-      'rustpad sbom -o rustpad-v2.3.0.cdx.json && rustpad policy --init-airgapped .rustpad-policy.json',
+      'rustpad sbom -o rustpad-v2.4.0.cdx.json && rustpad policy --init-airgapped .rustpad-policy.json',
     detail:
       'Generates a machine-readable CycloneDX 1.5 bill of materials proving 0 crates.io deps and locks AI sockets strictly to 127.0.0.1.',
   },
@@ -507,7 +507,7 @@ export const SCOPE_MATRIX = {
   nonGoals: [
     'Legacy VBA macro execution (`vbaProject.bin` is preserved passively on passthrough, never executed — eliminating macro malware)',
     'Proprietary cloud collaboration accounts, telemetry beacons, or 300 MB Electron/Chromium installers',
-    'Hardware smartcard PKCS#11 X.509 certificate chains (v2.3 uses deterministic zero-dependency SHA-256 `/RustPadSeal` manifests)',
+    'Hardware smartcard PKCS#11 X.509 certificate chains (v2.4 uses deterministic zero-dependency SHA-256 `/RustPadSeal` manifests)',
   ],
 };
 
@@ -522,14 +522,14 @@ export const TOUR_STEPS: TourStep[] = [
     step: '02 / 05',
     targetSelector: '#enterprise-matrix',
     title: '60–120Hz Native Rust vs. Cloud & Electron Suites',
-    body: 'Compare RustPad v2.3 across 100+ MB large-doc virtualization, UI latency, table authoring, offline DLP sovereignty, legal redlining, and PDF sanitization.',
+    body: 'Compare RustPad v2.4 across async 100+ MB .docx streaming, UI latency, table authoring, offline DLP sovereignty, legal redlining, and PDF sanitization.',
   },
   {
     step: '03 / 05',
     targetSelector: '#studio',
     specimenId: 'word-ai',
     title: 'Live Redline, Forensic PDF & DLP Switchboard',
-    body: 'Inspect all 4 v2.3 desktop views: Smooth Word + Large-Doc Studio, Forensic PDF + SHA-256 Seal, Split Governance Audit, and Editorial Hub.',
+    body: 'Inspect all 4 v2.4 desktop views: Async Streaming Word Studio, Forensic PDF + SHA-256 Seal, Split Governance Audit, and Editorial Hub.',
   },
   {
     step: '04 / 05',

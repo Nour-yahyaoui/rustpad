@@ -1498,75 +1498,7 @@ impl TablePreset {
     }
 }
 
-/// Reference-counted immutable byte buffer (`O(1)` clone & pointer-equality fast path)
-/// so `Document` clones in `UndoHistory` and `SnapshotVault` never duplicate multi-MB media.
-#[derive(Clone)]
-pub struct SharedBytes(std::sync::Arc<[u8]>);
-
-impl Default for SharedBytes {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SharedBytes {
-    pub fn new() -> Self {
-        let empty: &[u8] = &[];
-        Self(std::sync::Arc::from(empty))
-    }
-
-    pub fn from_vec(v: Vec<u8>) -> Self {
-        Self(std::sync::Arc::from(v))
-    }
-
-    pub fn from_slice(s: &[u8]) -> Self {
-        Self(std::sync::Arc::from(s))
-    }
-
-    pub fn as_slice(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl std::ops::Deref for SharedBytes {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl AsRef<[u8]> for SharedBytes {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl From<Vec<u8>> for SharedBytes {
-    fn from(v: Vec<u8>) -> Self {
-        Self::from_vec(v)
-    }
-}
-
-impl From<&[u8]> for SharedBytes {
-    fn from(s: &[u8]) -> Self {
-        Self::from_slice(s)
-    }
-}
-
-impl PartialEq for SharedBytes {
-    fn eq(&self, other: &Self) -> bool {
-        std::sync::Arc::ptr_eq(&self.0, &other.0) || self.0.as_ref() == other.0.as_ref()
-    }
-}
-
-impl Eq for SharedBytes {}
-
-impl std::fmt::Debug for SharedBytes {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SharedBytes({} B)", self.0.len())
-    }
-}
+pub use rustpad_zip::SharedBytes;
 
 /// Zero-allocation header dimension probe for PNG, JPEG (`SOF0`..`SOF2`), BMP, DIB, and GIF.
 /// Allows 100+ screenshot `.docx` layouts to compute exact aspect ratios in microseconds
@@ -2262,15 +2194,27 @@ impl Document {
             match block {
                 Block::Paragraph(p) => {
                     stats.paragraphs += 1;
-                    let text = p.accepted_plain_text();
-                    stats.words += text.split_whitespace().count();
-                    stats.chars += text.chars().count();
-                    stats.chars_no_spaces += text.chars().filter(|c| !c.is_whitespace()).count();
+                    let mut in_word = false;
                     for s in &p.spans {
                         if let Some(r) = &s.revision {
                             match r.kind {
                                 RevisionKind::Insertion => stats.insertions += 1,
-                                RevisionKind::Deletion => stats.deletions += 1,
+                                RevisionKind::Deletion => {
+                                    stats.deletions += 1;
+                                    continue;
+                                }
+                            }
+                        }
+                        for ch in s.text.chars() {
+                            stats.chars += 1;
+                            if ch.is_whitespace() {
+                                in_word = false;
+                            } else {
+                                stats.chars_no_spaces += 1;
+                                if !in_word {
+                                    in_word = true;
+                                    stats.words += 1;
+                                }
                             }
                         }
                     }

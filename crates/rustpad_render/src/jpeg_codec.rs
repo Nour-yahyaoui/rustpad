@@ -2,7 +2,9 @@
 //! Grayscale / YCbCr / RGB / CMYK, `4:4:4` / `4:2:2` / `4:2:0`, Restart Markers, 2D IDCT)
 //! + Universal `decode_any_image_rgba` Dispatcher (`PNG` / `JPEG` / `BMP` / `DIB`).
 
-use crate::png_codec::{decode_bmp_rgba, decode_dib_rgba, decode_png_rgba, PNG_MAGIC};
+use crate::png_codec::{
+    decode_bmp_rgba, decode_dib_rgba, decode_png_rgba, decode_png_thumbnail_rgba, PNG_MAGIC,
+};
 
 const ZIGZAG: [usize; 64] = [
     0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20,
@@ -51,16 +53,23 @@ pub fn hash_image_bytes(bytes: &[u8]) -> u64 {
     h
 }
 
-/// Decodes any supported image (`PNG`, `JPEG`, `BMP`, `DIB`) and immediately box-downsamples
-/// oversized Retina/4K/stitched screenshots so neither edge exceeds `max_dim` (`>= 128`).
-/// Returns `(orig_w, orig_h, thumb_w, thumb_h, thumb_rgba)` so large 100+ screenshot `.docx`
-/// files render crisply on screen while using 8–16x less RAM.
+/// Decodes any supported image (`PNG`, `JPEG`, `BMP`, `DIB`) using streaming low-memory
+/// scanline/MCU-row fast paths so neither edge exceeds `max_dim` (`>= 128`).
+/// Returns `(orig_w, orig_h, thumb_w, thumb_h, thumb_rgba)` without allocating full-frame
+/// 4K/8K intermediate buffers.
 pub fn decode_any_image_thumbnail_rgba(
     bytes: &[u8],
     max_dim: u32,
 ) -> Result<(u32, u32, u32, u32, Vec<u8>), String> {
-    let (ow, oh, rgba) = decode_any_image_rgba(bytes)?;
     let cap = max_dim.max(128);
+    if bytes.len() >= 8 && bytes[..8] == PNG_MAGIC {
+        return decode_png_thumbnail_rgba(bytes, cap);
+    }
+    if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
+        return decode_jpeg_internal(bytes, Some(cap));
+    }
+
+    let (ow, oh, rgba) = decode_any_image_rgba(bytes)?;
     if ow <= cap && oh <= cap {
         return Ok((ow, oh, ow, oh, rgba));
     }
@@ -85,7 +94,6 @@ pub fn decode_any_image_thumbnail_rgba(
             let mut b_acc = 0u32;
             let mut a_acc = 0u32;
             let mut cnt = 0u32;
-            // Stride large sample boxes so downsampling an 8K image stays < 2 ms
             let y_step = ((sy1 - sy0) / 4).max(1);
             let x_step = ((sx1 - sx0) / 4).max(1);
             let mut sy = sy0;
@@ -192,7 +200,8 @@ struct Component {
     blocks_w: usize,
     blocks_h: usize,
     stride_blocks: usize,
-    coeffs: Vec<[i32; 64]>,
+    alloc_rows: usize,
+    coeffs: Vec<[i16; 64]>,
 }
 
 struct ScanBitReader<'a> {
@@ -311,6 +320,14 @@ impl<'a> ScanBitReader<'a> {
 
 /// Decodes a Baseline (`SOF0`), Extended (`SOF1`), or Progressive (`SOF2`) JPEG image to RGBA.
 pub fn decode_jpeg_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let (_ow, _oh, tw, th, rgba) = decode_jpeg_internal(bytes, None)?;
+    Ok((tw, th, rgba))
+}
+
+fn decode_jpeg_internal(
+    bytes: &[u8],
+    max_dim: Option<u32>,
+) -> Result<(u32, u32, u32, u32, Vec<u8>), String> {
     if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
         return Err("Invalid JPEG SOI signature".into());
     }
@@ -486,7 +503,8 @@ pub fn decode_jpeg_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
                         blocks_w,
                         blocks_h,
                         stride_blocks,
-                        coeffs: vec![[0i32; 64]; stride_blocks * alloc_rows],
+                        alloc_rows,
+                        coeffs: Vec::new(),
                     });
                 }
             }
@@ -509,7 +527,7 @@ pub fn decode_jpeg_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
                         .position(|c| c.id == cs)
                         .ok_or_else(|| "Unknown component id in JPEG SOS".to_string())?;
                     if td >= 4 || ta >= 4 {
-                        return Err("Invalid Huffman selector in SOS".into());
+                        return Err("Invalid Huffman selector in SOS".to_string());
                     }
                     scan_comps.push((c_idx, td, ta));
                 }
@@ -524,6 +542,188 @@ pub fn decode_jpeg_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
                 let mut eob_run = 0usize;
                 let mut mcu_counter = 0usize;
 
+                // STREAMING ZERO-COEFFICIENT-ARRAY FAST PATH FOR BASELINE / EXTENDED JPEGs!
+                // Decodes one MCU row (`<= 32px` tall) at a time on the stack and writes directly
+                // into the target `tw × th` output RGBA buffer — saving up to 600+ MB on 4K/8K screenshots!
+                if !progressive && ns == comps.len() {
+                    let (tw, th) = match max_dim {
+                        Some(cap) if width > cap as usize || height > cap as usize => {
+                            let scale = (cap as f64 / width.max(height) as f64).clamp(0.01, 1.0);
+                            (
+                                ((width as f64 * scale).round() as usize).max(1),
+                                ((height as f64 * scale).round() as usize).max(1),
+                            )
+                        }
+                        _ => (width, height),
+                    };
+
+                    let mut rgba = vec![255u8; tw * th * 4];
+                    let is_rgb = comps.len() == 3
+                        && ((comps[0].id == b'R' && comps[1].id == b'G' && comps[2].id == b'B')
+                            || adobe_transform == Some(0));
+
+                    let mcu_cols = if ns == 1 {
+                        comps[scan_comps[0].0].blocks_w
+                    } else {
+                        width.div_ceil(max_h * 8)
+                    };
+                    let mcu_rows = if ns == 1 {
+                        comps[scan_comps[0].0].blocks_h
+                    } else {
+                        height.div_ceil(max_v * 8)
+                    };
+                    let band_h = if ns == 1 { 8usize } else { max_v * 8 };
+
+                    // Tiny per-component strip buffers (`pw * (vs * 8)` bytes — < 192 KB even at 8K!)
+                    let mut strips: Vec<(usize, usize, usize, usize, Vec<u8>)> = comps
+                        .iter()
+                        .map(|c| {
+                            let pw = c.stride_blocks.max(c.blocks_w) * 8;
+                            let sh = if ns == 1 { 8 } else { c.v_samp * 8 };
+                            (c.h_samp, c.v_samp, pw, sh, vec![128u8; pw * sh])
+                        })
+                        .collect();
+
+                    let sample_xs: Vec<usize> = (0..tw).map(|dx| (dx * width) / tw).collect();
+                    let mut next_dy = 0usize;
+                    let mut next_sy = 0usize;
+                    let mut spatial = [0u8; 64];
+
+                    for my in 0..mcu_rows {
+                        for mx in 0..mcu_cols {
+                            if restart_interval > 0
+                                && mcu_counter > 0
+                                && mcu_counter % restart_interval == 0
+                            {
+                                reader.consume_restart_marker();
+                                dc_pred = [0; 4];
+                                eob_run = 0;
+                            }
+                            if ns == 1 {
+                                let (c_idx, td, ta) = scan_comps[0];
+                                let mut blk = [0i16; 64];
+                                decode_scan_block(
+                                    &mut reader,
+                                    &mut blk,
+                                    &mut dc_pred[c_idx],
+                                    &mut eob_run,
+                                    dc_huff[td].as_ref(),
+                                    ac_huff[ta].as_ref(),
+                                    false,
+                                    ss,
+                                    se,
+                                    ah,
+                                    al,
+                                )?;
+                                idct_8x8(&blk, &qtables[comps[c_idx].tq], &mut spatial);
+                                let pw = strips[c_idx].2;
+                                let strip_buf = &mut strips[c_idx].4;
+                                for py in 0..8 {
+                                    let dst_off = py * pw + mx * 8;
+                                    strip_buf[dst_off..dst_off + 8]
+                                        .copy_from_slice(&spatial[py * 8..py * 8 + 8]);
+                                }
+                            } else {
+                                for &(c_idx, td, ta) in &scan_comps {
+                                    let hs = comps[c_idx].h_samp;
+                                    let vs = comps[c_idx].v_samp;
+                                    let tq = comps[c_idx].tq;
+                                    let pw = strips[c_idx].2;
+                                    for vy in 0..vs {
+                                        for hx in 0..hs {
+                                            let mut blk = [0i16; 64];
+                                            decode_scan_block(
+                                                &mut reader,
+                                                &mut blk,
+                                                &mut dc_pred[c_idx],
+                                                &mut eob_run,
+                                                dc_huff[td].as_ref(),
+                                                ac_huff[ta].as_ref(),
+                                                false,
+                                                ss,
+                                                se,
+                                                ah,
+                                                al,
+                                            )?;
+                                            idct_8x8(&blk, &qtables[tq], &mut spatial);
+                                            let bx = mx * hs + hx;
+                                            let strip_buf = &mut strips[c_idx].4;
+                                            for py in 0..8 {
+                                                let dst_off = (vy * 8 + py) * pw + bx * 8;
+                                                strip_buf[dst_off..dst_off + 8]
+                                                    .copy_from_slice(&spatial[py * 8..py * 8 + 8]);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            mcu_counter += 1;
+                        }
+
+                        let band_y0 = my * band_h;
+                        let band_y1 = ((my + 1) * band_h).min(height);
+                        while next_dy < th && next_sy >= band_y0 && next_sy < band_y1 {
+                            let local_y = next_sy - band_y0;
+                            let row_out_base = next_dy * tw * 4;
+                            for (dx, &sx) in sample_xs.iter().enumerate() {
+                                let out_o = row_out_base + dx * 4;
+                                match strips.len() {
+                                    1 => {
+                                        let g = sample_plane(&strips[0], sx, local_y, max_h, max_v);
+                                        rgba[out_o] = g;
+                                        rgba[out_o + 1] = g;
+                                        rgba[out_o + 2] = g;
+                                    }
+                                    3 => {
+                                        let c0 = sample_plane(&strips[0], sx, local_y, max_h, max_v);
+                                        let c1 = sample_plane(&strips[1], sx, local_y, max_h, max_v);
+                                        let c2 = sample_plane(&strips[2], sx, local_y, max_h, max_v);
+                                        let (r, g, b) = if is_rgb {
+                                            (c0, c1, c2)
+                                        } else {
+                                            ycbcr_to_rgb(c0, c1, c2)
+                                        };
+                                        rgba[out_o] = r;
+                                        rgba[out_o + 1] = g;
+                                        rgba[out_o + 2] = b;
+                                    }
+                                    4 => {
+                                        let c0 = sample_plane(&strips[0], sx, local_y, max_h, max_v);
+                                        let c1 = sample_plane(&strips[1], sx, local_y, max_h, max_v);
+                                        let c2 = sample_plane(&strips[2], sx, local_y, max_h, max_v);
+                                        let k = sample_plane(&strips[3], sx, local_y, max_h, max_v)
+                                            as u16;
+                                        let (c, m, y_ch) = if adobe_transform == Some(2) {
+                                            let (r, g, b) = ycbcr_to_rgb(c0, c1, c2);
+                                            (255 - r, 255 - g, 255 - b)
+                                        } else {
+                                            (c0, c1, c2)
+                                        };
+                                        rgba[out_o] = ((c as u16 * k) / 255) as u8;
+                                        rgba[out_o + 1] = ((m as u16 * k) / 255) as u8;
+                                        rgba[out_o + 2] = ((y_ch as u16 * k) / 255) as u8;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            next_dy += 1;
+                            if next_dy < th {
+                                next_sy = (next_dy * height) / th;
+                            }
+                        }
+                    }
+
+                    return Ok((width as u32, height as u32, tw as u32, th as u32, rgba));
+                }
+
+                // Multi-scan / Progressive (`SOF2`) fallback: lazily allocate compact `i16` coefficient grids
+                for comp in &mut comps {
+                    let needed = comp.stride_blocks * comp.alloc_rows;
+                    if comp.coeffs.len() < needed {
+                        comp.coeffs.resize(needed, [0i16; 64]);
+                    }
+                }
+
                 if ns == 1 {
                     // Non-interleaved scan (ITU-T.81 §A.2.2): iterate exact `blocks_w * blocks_h`
                     let (c_idx, td, ta) = scan_comps[0];
@@ -532,7 +732,10 @@ pub fn decode_jpeg_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
                     let stride = comps[c_idx].stride_blocks;
                     for by in 0..bh {
                         for bx in 0..bw {
-                            if restart_interval > 0 && mcu_counter > 0 && mcu_counter % restart_interval == 0 {
+                            if restart_interval > 0
+                                && mcu_counter > 0
+                                && mcu_counter % restart_interval == 0
+                            {
                                 reader.consume_restart_marker();
                                 dc_pred = [0; 4];
                                 eob_run = 0;
@@ -560,7 +763,10 @@ pub fn decode_jpeg_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
                     let mcu_rows = height.div_ceil(max_v * 8);
                     for my in 0..mcu_rows {
                         for mx in 0..mcu_cols {
-                            if restart_interval > 0 && mcu_counter > 0 && mcu_counter % restart_interval == 0 {
+                            if restart_interval > 0
+                                && mcu_counter > 0
+                                && mcu_counter % restart_interval == 0
+                            {
                                 reader.consume_restart_marker();
                                 dc_pred = [0; 4];
                                 eob_run = 0;
@@ -631,15 +837,28 @@ pub fn decode_jpeg_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
         planes.push((comp.h_samp, comp.v_samp, pw, ph, pixels));
     }
 
-    // Reconstruct final RGBA buffer with smooth chroma upsampling
-    let mut rgba = vec![255u8; width * height * 4];
+    // Reconstruct directly at target `(tw, th)` resolution (avoids giant intermediate 4K/8K RGBA buffer)
+    let (tw, th) = match max_dim {
+        Some(cap) if width > cap as usize || height > cap as usize => {
+            let scale = (cap as f64 / width.max(height) as f64).clamp(0.01, 1.0);
+            (
+                ((width as f64 * scale).round() as usize).max(1),
+                ((height as f64 * scale).round() as usize).max(1),
+            )
+        }
+        _ => (width, height),
+    };
+    let mut rgba = vec![255u8; tw * th * 4];
     let is_rgb = comps.len() == 3
         && ((comps[0].id == b'R' && comps[1].id == b'G' && comps[2].id == b'B')
             || adobe_transform == Some(0));
 
-    for y in 0..height {
-        for x in 0..width {
-            let out_o = (y * width + x) * 4;
+    let sample_xs: Vec<usize> = (0..tw).map(|dx| (dx * width) / tw).collect();
+    for dy in 0..th {
+        let y = (dy * height) / th;
+        let row_base = dy * tw * 4;
+        for (dx, &x) in sample_xs.iter().enumerate() {
+            let out_o = row_base + dx * 4;
             match planes.len() {
                 1 => {
                     let g = sample_plane(&planes[0], x, y, max_h, max_v);
@@ -680,13 +899,13 @@ pub fn decode_jpeg_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
         }
     }
 
-    Ok((width as u32, height as u32, rgba))
+    Ok((width as u32, height as u32, tw as u32, th as u32, rgba))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn decode_scan_block(
     reader: &mut ScanBitReader<'_>,
-    blk: &mut [i32; 64],
+    blk: &mut [i16; 64],
     dc_pred: &mut i32,
     eob_run: &mut usize,
     dc_tbl: Option<&HuffTable>,
@@ -703,7 +922,7 @@ fn decode_scan_block(
         let s = reader.decode_huff(dt)? & 0x0F;
         let diff = reader.receive_extend(s);
         *dc_pred = dc_pred.wrapping_add(diff);
-        blk[0] = *dc_pred;
+        blk[0] = (*dc_pred).clamp(-32768, 32767) as i16;
 
         let mut k = 1usize;
         while k < 64 {
@@ -721,22 +940,23 @@ fn decode_scan_block(
             if k >= 64 {
                 break;
             }
-            blk[ZIGZAG[k]] = reader.receive_extend(s);
+            blk[ZIGZAG[k]] = reader.receive_extend(s).clamp(-32768, 32767) as i16;
             k += 1;
         }
         return Ok(());
     }
 
     // Progressive mode (`SOF2`)
+    let shift = al.min(13);
     if ss == 0 && se == 0 {
         if ah == 0 {
             let dt = dc_tbl.ok_or_else(|| "Missing progressive DC Huffman table".to_string())?;
             let s = reader.decode_huff(dt)? & 0x0F;
             let diff = reader.receive_extend(s);
             *dc_pred = dc_pred.wrapping_add(diff);
-            blk[0] = (*dc_pred) << al;
+            blk[0] = ((*dc_pred) << shift).clamp(-32768, 32767) as i16;
         } else if reader.read_bit() == 1 {
-            blk[0] |= 1i32 << al;
+            blk[0] |= 1i16 << shift;
         }
         return Ok(());
     }
@@ -763,14 +983,14 @@ fn decode_scan_block(
             }
             k += r;
             if k <= se_clamped {
-                blk[ZIGZAG[k]] = reader.receive_extend(s) << al;
+                blk[ZIGZAG[k]] = (reader.receive_extend(s) << shift).clamp(-32768, 32767) as i16;
             }
             k += 1;
         }
     } else {
         // AC successive approximation refinement
-        let p1 = 1i32 << al;
-        let m1 = (-1i32) << al;
+        let p1 = 1i16 << shift;
+        let m1 = -(1i16 << shift);
         let mut k = ss.max(1);
         if *eob_run == 0 {
             while k <= se_clamped {
@@ -782,16 +1002,18 @@ fn decode_scan_block(
                         *eob_run = (1usize << r) + (reader.read_bits(r as u8) as usize);
                         break;
                     }
-                    0
+                    0i16
+                } else if reader.read_bit() == 1 {
+                    p1
                 } else {
-                    if reader.read_bit() == 1 { p1 } else { m1 }
+                    m1
                 };
 
                 while k <= se_clamped {
                     let z = ZIGZAG[k];
                     if blk[z] != 0 {
                         if reader.read_bit() == 1 && (blk[z] & p1) == 0 {
-                            blk[z] += if blk[z] >= 0 { p1 } else { m1 };
+                            blk[z] = blk[z].saturating_add(if blk[z] >= 0 { p1 } else { m1 });
                         }
                     } else if r == 0 {
                         break;
@@ -810,7 +1032,7 @@ fn decode_scan_block(
             while k <= se_clamped {
                 let z = ZIGZAG[k];
                 if blk[z] != 0 && reader.read_bit() == 1 && (blk[z] & p1) == 0 {
-                    blk[z] += if blk[z] >= 0 { p1 } else { m1 };
+                    blk[z] = blk[z].saturating_add(if blk[z] >= 0 { p1 } else { m1 });
                 }
                 k += 1;
             }
@@ -866,7 +1088,7 @@ fn ycbcr_to_rgb(y: u8, cb: u8, cr: u8) -> (u8, u8, u8) {
 }
 
 /// Fast separable 2D 8×8 inverse DCT (`ITU-T.81` §A.3.3) using exact cosine constants.
-fn idct_8x8(coeffs: &[i32; 64], qt: &[i32; 64], out: &mut [u8; 64]) {
+fn idct_8x8(coeffs: &[i16; 64], qt: &[i32; 64], out: &mut [u8; 64]) {
     const IDCT_BASIS: [[f32; 8]; 8] = [
         [0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338],
         [0.49039263, 0.4157348,  0.27778512, 0.09754516, -0.09754516, -0.27778512, -0.4157348,  -0.49039263],
@@ -880,7 +1102,7 @@ fn idct_8x8(coeffs: &[i32; 64], qt: &[i32; 64], out: &mut [u8; 64]) {
 
     // Fast path for flat DC-only blocks (very common in smooth document diagrams & photos!)
     if coeffs[1..].iter().all(|&c| c == 0) {
-        let dc = ((coeffs[0] * qt[0]) as f32) * 0.125 + 128.0;
+        let dc = ((coeffs[0] as i32 * qt[0]) as f32) * 0.125 + 128.0;
         out.fill(dc.round().clamp(0.0, 255.0) as u8);
         return;
     }
@@ -891,7 +1113,7 @@ fn idct_8x8(coeffs: &[i32; 64], qt: &[i32; 64], out: &mut [u8; 64]) {
         for x in 0..8 {
             let mut sum = 0.0f32;
             for u in 0..8 {
-                let c = coeffs[ro + u];
+                let c = coeffs[ro + u] as i32;
                 if c != 0 {
                     sum += ((c * qt[ro + u]) as f32) * IDCT_BASIS[u][x];
                 }

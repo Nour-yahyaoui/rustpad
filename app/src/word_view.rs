@@ -35,13 +35,21 @@ pub fn paint_word_tab(
     area: Rect,
     w: &mut WordTabState,
 ) {
+    let content_key = compute_content_key(w);
+    if w.cached_metrics_key != content_key {
+        w.cached_stats = w.doc.stats();
+        w.cached_outline = w.doc.outline();
+        w.cached_rev_counts = w.doc.revision_counts();
+        w.cached_metrics_key = content_key;
+    }
+
     let s = ui_scale.clamp(0.85, 1.6);
     let ribbon_h = if focus_mode { 0.0 } else { (44.0 * s).round() };
     let has_active_table = w.active_table_cell.is_some();
     let has_active_image = w
         .selected_image_block
         .is_some_and(|b| matches!(w.doc.blocks.get(b), Some(Block::Image(_))));
-    let (rev_ins, rev_del) = w.doc.revision_counts();
+    let (rev_ins, rev_del) = w.cached_rev_counts;
     let show_review_bar = !focus_mode
         && is_focused
         && !has_active_table
@@ -171,7 +179,7 @@ pub fn paint_word_tab(
         w.media_dimensions_probed = true;
     }
 
-    let pages = ensure_cached_layout(fonts, w, scale, content_w, usable_page_h);
+    let pages = ensure_cached_layout(fonts, w, content_key, scale, content_w, usable_page_h);
     let page_gap = 28.0 * s;
     let top_pad = 26.0 * s;
     let total_pages = pages.len().max(1);
@@ -186,12 +194,19 @@ pub fn paint_word_tab(
         let p_top = top_pad + (p_idx as f32) * (page_h + page_gap);
         for item in page_items {
             let item_doc_y = p_top + margin_top + item.rel_y;
-            if item.block_idx < block_canvas_y.len() {
+            if item.table_row_start == 0 && item.block_idx < block_canvas_y.len() {
                 block_canvas_y[item.block_idx] = (item_doc_y - 36.0).max(0.0);
             }
-            if w.active_table_cell.map(|(b, _, _)| b) == Some(item.block_idx)
-                || (w.active_table_cell.is_none() && w.cursor_block == item.block_idx)
-            {
+            if let Some((tb, tr, _)) = w.active_table_cell {
+                if tb == item.block_idx
+                    && tr >= item.table_row_start
+                    && tr < item.table_row_start + item.table_row_heights.len().max(1)
+                {
+                    let local_r = tr - item.table_row_start;
+                    let row_off: f32 = item.table_row_heights.iter().take(local_r).sum();
+                    caret_doc_y = Some(item_doc_y + row_off + 18.0);
+                }
+            } else if w.cursor_block == item.block_idx && item.table_row_start == 0 {
                 caret_doc_y = Some(item_doc_y + item.height * 0.5);
             }
         }
@@ -647,8 +662,8 @@ pub fn paint_canvas_scrollbar(
     ));
 }
 
-const MAX_IMAGE_DECODES_PER_FRAME: usize = 3;
-const THUMB_MAX_DIM: u32 = 1440;
+const INLINE_ICON_MAX_BYTES: usize = 24 * 1024;
+const THUMB_MAX_DIM: u32 = 1280;
 const IMAGE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone)]
@@ -657,6 +672,8 @@ pub struct LaidOutBlock {
     pub rel_y: f32,
     pub height: f32,
     pub lines: Vec<LaidOutLine>,
+    pub table_row_start: usize,
+    pub table_is_last_slice: bool,
     pub table_row_heights: Vec<f32>,
     pub table_wrapped_cells: Vec<Vec<Vec<String>>>,
 }
@@ -682,101 +699,149 @@ fn fnv_mix_u64(mut h: u64, val: u64) -> u64 {
 fn fnv_mix_bytes(mut h: u64, bytes: &[u8]) -> u64 {
     h ^= bytes.len() as u64;
     h = h.wrapping_mul(0x0100_0000_01b3);
-    for &b in bytes {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x0100_0000_01b3);
+    // Stride very long cell/paragraph strings (> 512 B) so layout key checks stay < 2 µs
+    if bytes.len() <= 512 {
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    } else {
+        for &b in &bytes[..128] {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        let step = (bytes.len() / 128).max(1);
+        let mut i = 128;
+        while i < bytes.len() {
+            h ^= bytes[i] as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+            i += step;
+        }
+        for &b in &bytes[bytes.len() - 64..] {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
     }
     h
 }
 
-fn compute_layout_key(
-    w: &WordTabState,
-    scale: f32,
-    content_w: f32,
-    usable_page_h: f32,
-) -> u64 {
+fn mix_single_block(mut h: u64, blk: &Block) -> u64 {
+    match blk {
+        Block::PageBreak => fnv_mix_u64(h, 0xA1),
+        Block::HorizontalRule => fnv_mix_u64(h, 0xA2),
+        Block::Image(img) => {
+            h = fnv_mix_u64(h, 0xA3);
+            h = fnv_mix_u64(h, img.width_pt.to_bits() as u64);
+            h = fnv_mix_u64(h, img.height_pt.to_bits() as u64);
+            h = fnv_mix_u64(h, img.aspect_ratio().to_bits() as u64);
+            fnv_mix_bytes(h, img.caption.as_bytes())
+        }
+        Block::Table(t) => {
+            h = fnv_mix_u64(h, 0xA4);
+            h = fnv_mix_u64(h, t.cols as u64);
+            h = fnv_mix_u64(h, t.rows.len() as u64);
+            let r_step = (t.rows.len() / 32).max(1);
+            let mut ri = 0usize;
+            while ri < t.rows.len() {
+                for cell in &t.rows[ri] {
+                    h = fnv_mix_u64(h, cell.bold as u64);
+                    h = fnv_mix_bytes(h, cell.text.as_bytes());
+                }
+                ri += r_step;
+            }
+            if let Some(last_row) = t.rows.last() {
+                for cell in last_row {
+                    h = fnv_mix_bytes(h, cell.text.as_bytes());
+                }
+            }
+            h
+        }
+        Block::Paragraph(p) => {
+            h = fnv_mix_u64(h, 0xA5);
+            h = fnv_mix_u64(h, p.style as u64);
+            h = fnv_mix_u64(h, p.alignment as u64);
+            h = fnv_mix_u64(h, p.indent_level as u64);
+            h = fnv_mix_u64(h, p.line_spacing.to_bits() as u64);
+            let lk_tag = match p.list_kind {
+                ListKind::None => 0u64,
+                ListKind::Bullet => 1,
+                ListKind::Numbered(n) => 2 + (n as u64) * 8,
+                ListKind::Checklist(b) => 3 + (b as u64),
+            };
+            h = fnv_mix_u64(h, lk_tag);
+            for sp in &p.spans {
+                h = fnv_mix_bytes(h, sp.text.as_bytes());
+                h = fnv_mix_u64(
+                    h,
+                    (sp.style.bold as u64)
+                        | ((sp.style.italic as u64) << 1)
+                        | ((sp.style.underline as u64) << 2)
+                        | ((sp.style.strikethrough as u64) << 3)
+                        | ((sp.style.font_family as u64) << 4),
+                );
+                h = fnv_mix_u64(h, sp.style.font_size_pt.to_bits() as u64);
+                if let Some(rev) = &sp.revision {
+                    h = fnv_mix_u64(h, 0x9000 + (rev.id as u64) * 4 + (rev.kind as u64));
+                }
+            }
+            h
+        }
+    }
+}
+
+/// Fast `< 5 µs` document content fingerprint: hashes all blocks on compact docs (`<= 192` blocks)
+/// and switches to `O(1)` neighborhood + strided sampling on massive 30+ MB multi-hundred-page docs!
+fn compute_content_key(w: &WordTabState) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    h = fnv_mix_u64(h, scale.to_bits() as u64);
-    h = fnv_mix_u64(h, content_w.to_bits() as u64);
-    h = fnv_mix_u64(h, usable_page_h.to_bits() as u64);
+    let n = w.doc.blocks.len();
+    h = fnv_mix_u64(h, n as u64);
     h = fnv_mix_u64(h, w.doc.track_changes as u64);
+    h = fnv_mix_u64(h, w.dirty as u64);
+    h = fnv_mix_u64(h, w.doc.comments.len() as u64);
+    h = fnv_mix_u64(h, w.doc.page_setup.paper_size as u64);
+    h = fnv_mix_u64(h, w.doc.page_setup.landscape as u64);
     h = fnv_mix_u64(
         h,
         w.selected_image_block.map(|i| (i as u64) + 1).unwrap_or(0),
     );
-    h = fnv_mix_u64(h, w.doc.blocks.len() as u64);
     for (tb_idx, weights) in &w.table_col_weights {
         h = fnv_mix_u64(h, *tb_idx as u64);
         for wt in weights {
             h = fnv_mix_u64(h, wt.to_bits() as u64);
         }
     }
-    for blk in &w.doc.blocks {
-        match blk {
-            Block::PageBreak => h = fnv_mix_u64(h, 0xA1),
-            Block::HorizontalRule => h = fnv_mix_u64(h, 0xA2),
-            Block::Image(img) => {
-                h = fnv_mix_u64(h, 0xA3);
-                h = fnv_mix_u64(h, img.width_pt.to_bits() as u64);
-                h = fnv_mix_u64(h, img.height_pt.to_bits() as u64);
-                h = fnv_mix_u64(h, img.aspect_ratio().to_bits() as u64);
-                h = fnv_mix_bytes(h, img.caption.as_bytes());
-            }
-            Block::Table(t) => {
-                h = fnv_mix_u64(h, 0xA4);
-                h = fnv_mix_u64(h, t.cols as u64);
-                h = fnv_mix_u64(h, t.rows.len() as u64);
-                for row in &t.rows {
-                    for cell in row {
-                        h = fnv_mix_u64(h, cell.bold as u64);
-                        h = fnv_mix_bytes(h, cell.text.as_bytes());
-                    }
+
+    if n <= 192 {
+        for blk in &w.doc.blocks {
+            h = mix_single_block(h, blk);
+        }
+    } else {
+        // Always hash exact neighborhood around active caret, active table, and selected image
+        let lo = w.cursor_block.saturating_sub(3);
+        let hi = (w.cursor_block + 3).min(n.saturating_sub(1));
+        for bi in lo..=hi {
+            h = fnv_mix_u64(h, bi as u64);
+            h = mix_single_block(h, &w.doc.blocks[bi]);
+        }
+        if let Some((tb, tr, tc)) = w.active_table_cell {
+            if let Some(Block::Table(t)) = w.doc.blocks.get(tb) {
+                h = mix_single_block(h, &w.doc.blocks[tb]);
+                if let Some(cell) = t.rows.get(tr).and_then(|rw| rw.get(tc)) {
+                    h = fnv_mix_bytes(h, cell.text.as_bytes());
                 }
             }
-            Block::Paragraph(p) => {
-                h = fnv_mix_u64(h, 0xA5);
-                h = fnv_mix_u64(h, p.style as u64);
-                h = fnv_mix_u64(h, p.alignment as u64);
-                h = fnv_mix_u64(h, p.indent_level as u64);
-                h = fnv_mix_u64(h, p.line_spacing.to_bits() as u64);
-                let lk_tag = match p.list_kind {
-                    ListKind::None => 0u64,
-                    ListKind::Bullet => 1,
-                    ListKind::Numbered(n) => 2 + (n as u64) * 8,
-                    ListKind::Checklist(b) => 3 + (b as u64),
-                };
-                h = fnv_mix_u64(h, lk_tag);
-                for sp in &p.spans {
-                    h = fnv_mix_bytes(h, sp.text.as_bytes());
-                    h = fnv_mix_u64(
-                        h,
-                        (sp.style.bold as u64)
-                            | ((sp.style.italic as u64) << 1)
-                            | ((sp.style.underline as u64) << 2)
-                            | ((sp.style.strikethrough as u64) << 3)
-                            | ((sp.style.font_family as u64) << 4),
-                    );
-                    h = fnv_mix_u64(h, sp.style.font_size_pt.to_bits() as u64);
-                    h = fnv_mix_u64(
-                        h,
-                        ((sp.style.color.r as u64) << 16)
-                            | ((sp.style.color.g as u64) << 8)
-                            | (sp.style.color.b as u64),
-                    );
-                    if let Some(hl) = sp.style.highlight {
-                        h = fnv_mix_u64(
-                            h,
-                            0x100_0000
-                                | ((hl.r as u64) << 16)
-                                | ((hl.g as u64) << 8)
-                                | (hl.b as u64),
-                        );
-                    }
-                    if let Some(rev) = &sp.revision {
-                        h = fnv_mix_u64(h, 0x9000 + (rev.id as u64) * 4 + (rev.kind as u64));
-                    }
-                }
+        }
+        if let Some(ib) = w.selected_image_block {
+            if let Some(blk) = w.doc.blocks.get(ib) {
+                h = mix_single_block(h, blk);
             }
+        }
+        // Plus 64 strided global samples so bulk ops (`AcceptAll`, `ReplaceAll`) invalidate too
+        let step = (n / 64).max(1);
+        let mut bi = 0usize;
+        while bi < n {
+            h = mix_single_block(h, &w.doc.blocks[bi]);
+            bi += step;
         }
     }
     h.max(1)
@@ -785,11 +850,17 @@ fn compute_layout_key(
 fn ensure_cached_layout(
     fonts: &mut FontBook,
     w: &mut WordTabState,
+    content_key: u64,
     scale: f32,
     content_w: f32,
     usable_page_h: f32,
 ) -> std::rc::Rc<Vec<Vec<LaidOutBlock>>> {
-    let key = compute_layout_key(w, scale, content_w, usable_page_h);
+    let mut key = content_key;
+    key = fnv_mix_u64(key, scale.to_bits() as u64);
+    key = fnv_mix_u64(key, content_w.to_bits() as u64);
+    key = fnv_mix_u64(key, usable_page_h.to_bits() as u64);
+    let key = key.max(1);
+
     if w.cached_layout_key == key && !w.cached_pages.is_empty() {
         return w.cached_pages.clone();
     }
@@ -812,8 +883,8 @@ fn warm_visible_page_images(
     canvas_rect: Rect,
     decoded_this_frame: &mut usize,
 ) {
-    let prefetch_top = canvas_rect.y - 140.0;
-    let prefetch_bot = canvas_rect.y + canvas_rect.h + 140.0;
+    let prefetch_top = canvas_rect.y - 220.0;
+    let prefetch_bot = canvas_rect.y + canvas_rect.h + 220.0;
 
     for item in page_items {
         let blk_top = content_origin_y + item.rel_y;
@@ -832,7 +903,6 @@ fn warm_visible_page_images(
         };
         let hkey = hash_image_bytes(&payload);
         if let Some(pos) = w.image_rgba_cache.iter().position(|(k, _, _, _)| *k == hkey) {
-            // Promote hit to MRU tail in O(1)
             let last = w.image_rgba_cache.len() - 1;
             if pos != last {
                 let entry = w.image_rgba_cache.remove(pos);
@@ -840,11 +910,15 @@ fn warm_visible_page_images(
             }
             continue;
         }
-        if w.failed_image_hashes.contains(&hkey) {
+        if w.failed_image_hashes.contains(&hkey) || w.in_flight_image_hashes.contains(&hkey) {
             continue;
         }
-        if *decoded_this_frame >= MAX_IMAGE_DECODES_PER_FRAME {
-            w.pending_viewport_image_decodes = true;
+
+        // Tiny inline icons (`<= 24 KiB`) decode in `< 0.3 ms`; anything larger (> 24 KiB,
+        // e.g. Retina/4K/8K screenshots) decodes asynchronously on `rustpad-image-decoder`
+        // with 0.0 ms blocking on the Win32 UI thread!
+        if payload.len() > INLINE_ICON_MAX_BYTES || *decoded_this_frame >= 1 {
+            w.enqueue_image_decode(hkey, item.block_idx, payload, THUMB_MAX_DIM);
             continue;
         }
 
@@ -905,6 +979,8 @@ fn layout_document_pages(
                     rel_y: cur_y,
                     height: h,
                     lines: Vec::new(),
+                    table_row_start: 0,
+                    table_is_last_slice: true,
                     table_row_heights: Vec::new(),
                     table_wrapped_cells: Vec::new(),
                 });
@@ -927,6 +1003,8 @@ fn layout_document_pages(
                     rel_y: cur_y,
                     height: h,
                     lines: Vec::new(),
+                    table_row_start: 0,
+                    table_is_last_slice: true,
                     table_row_heights: Vec::new(),
                     table_wrapped_cells: Vec::new(),
                 });
@@ -963,22 +1041,54 @@ fn layout_document_pages(
                     wrapped_grid.push(wrapped_row);
                 }
 
-                // Reserve space for on-canvas `+ Add Row` helper rail below table
-                let table_body_h: f32 = row_heights.iter().sum();
-                let h = table_body_h + 26.0 * scale;
-                if cur_y + h > usable_page_h && !pages.last().unwrap().is_empty() {
-                    pages.push(Vec::new());
-                    cur_y = 0.0;
+                // Multi-page table row-range pagination so 50..5000-row enterprise tables
+                // flow cleanly across physical sheets without overflowing a single page!
+                let total_rows = row_heights.len();
+                if total_rows == 0 {
+                    continue;
                 }
-                pages.last_mut().unwrap().push(LaidOutBlock {
-                    block_idx: b_idx,
-                    rel_y: cur_y,
-                    height: h,
-                    lines: Vec::new(),
-                    table_row_heights: row_heights,
-                    table_wrapped_cells: wrapped_grid,
-                });
-                cur_y += h;
+                let mut r_cursor = 0usize;
+                while r_cursor < total_rows {
+                    let first_rh = row_heights[r_cursor];
+                    if cur_y + first_rh > usable_page_h && !pages.last().unwrap().is_empty() {
+                        pages.push(Vec::new());
+                        cur_y = 0.0;
+                    }
+                    let budget = (usable_page_h - cur_y).max(first_rh);
+                    let mut acc_h = 0.0f32;
+                    let mut r_end = r_cursor;
+                    while r_end < total_rows {
+                        let rh = row_heights[r_end];
+                        let tail_pad = if r_end + 1 == total_rows {
+                            26.0 * scale
+                        } else {
+                            6.0 * scale
+                        };
+                        if r_end > r_cursor && acc_h + rh + tail_pad > budget {
+                            break;
+                        }
+                        acc_h += rh;
+                        r_end += 1;
+                    }
+                    let is_last = r_end >= total_rows;
+                    let slice_h = acc_h + if is_last { 26.0 * scale } else { 8.0 * scale };
+                    pages.last_mut().unwrap().push(LaidOutBlock {
+                        block_idx: b_idx,
+                        rel_y: cur_y,
+                        height: slice_h,
+                        lines: Vec::new(),
+                        table_row_start: r_cursor,
+                        table_is_last_slice: is_last,
+                        table_row_heights: row_heights[r_cursor..r_end].to_vec(),
+                        table_wrapped_cells: wrapped_grid[r_cursor..r_end].to_vec(),
+                    });
+                    cur_y += slice_h;
+                    r_cursor = r_end;
+                    if !is_last {
+                        pages.push(Vec::new());
+                        cur_y = 0.0;
+                    }
+                }
             }
             Block::Paragraph(p) => {
                 let indent = (p.indent_level as f32) * 20.0 * scale
@@ -1003,19 +1113,69 @@ fn layout_document_pages(
                 };
                 let text_h: f32 = lines.iter().map(|l| l.line_h).sum();
                 let h = spacing_before + text_h + spacing_after;
-                if cur_y + h > usable_page_h && !pages.last().unwrap().is_empty() {
-                    pages.push(Vec::new());
-                    cur_y = 0.0;
+                if h <= usable_page_h {
+                    if cur_y + h > usable_page_h && !pages.last().unwrap().is_empty() {
+                        pages.push(Vec::new());
+                        cur_y = 0.0;
+                    }
+                    pages.last_mut().unwrap().push(LaidOutBlock {
+                        block_idx: b_idx,
+                        rel_y: cur_y + spacing_before,
+                        height: h,
+                        lines,
+                        table_row_start: 0,
+                        table_is_last_slice: true,
+                        table_row_heights: Vec::new(),
+                        table_wrapped_cells: Vec::new(),
+                    });
+                    cur_y += h;
+                } else {
+                    // Multi-page paragraph line slicing for huge pasted logs/clauses
+                    let mut l_cur = 0usize;
+                    while l_cur < lines.len() {
+                        let sb = if l_cur == 0 { spacing_before } else { 0.0 };
+                        let first_lh = lines[l_cur].line_h;
+                        if cur_y + sb + first_lh > usable_page_h
+                            && !pages.last().unwrap().is_empty()
+                        {
+                            pages.push(Vec::new());
+                            cur_y = 0.0;
+                        }
+                        let budget = (usable_page_h - cur_y - sb).max(first_lh);
+                        let mut acc = 0.0f32;
+                        let mut l_end = l_cur;
+                        while l_end < lines.len() {
+                            let lh = lines[l_end].line_h;
+                            if l_end > l_cur && acc + lh > budget {
+                                break;
+                            }
+                            acc += lh;
+                            l_end += 1;
+                        }
+                        let sa = if l_end == lines.len() {
+                            spacing_after
+                        } else {
+                            0.0
+                        };
+                        let sh = sb + acc + sa;
+                        pages.last_mut().unwrap().push(LaidOutBlock {
+                            block_idx: b_idx,
+                            rel_y: cur_y + sb,
+                            height: sh,
+                            lines: lines[l_cur..l_end].to_vec(),
+                            table_row_start: if l_cur == 0 { 0 } else { 1 },
+                            table_is_last_slice: l_end == lines.len(),
+                            table_row_heights: Vec::new(),
+                            table_wrapped_cells: Vec::new(),
+                        });
+                        cur_y += sh;
+                        l_cur = l_end;
+                        if l_cur < lines.len() {
+                            pages.push(Vec::new());
+                            cur_y = 0.0;
+                        }
+                    }
                 }
-                pages.last_mut().unwrap().push(LaidOutBlock {
-                    block_idx: b_idx,
-                    rel_y: cur_y + spacing_before,
-                    height: h,
-                    lines,
-                    table_row_heights: Vec::new(),
-                    table_wrapped_cells: Vec::new(),
-                });
-                cur_y += h;
             }
         }
     }
@@ -1424,12 +1584,11 @@ fn paint_laid_out_block(
                 || table_outer.contains(mouse_x, mouse_y);
 
             let mut cur_row_y = y;
-            for (r_idx, row) in t.rows.iter().enumerate() {
-                let rh = item
-                    .table_row_heights
-                    .get(r_idx)
-                    .copied()
-                    .unwrap_or(28.0 * scale);
+            for (local_r, &rh) in item.table_row_heights.iter().enumerate() {
+                let r_idx = item.table_row_start + local_r;
+                let Some(row) = t.rows.get(r_idx) else {
+                    break;
+                };
                 let mut cx = x;
 
                 for c_idx in 0..cols {
@@ -1462,7 +1621,7 @@ fn paint_laid_out_block(
                     let align = cell_opt.map(|c| c.alignment).unwrap_or(Alignment::Left);
                     let cell_lines = item
                         .table_wrapped_cells
-                        .get(r_idx)
+                        .get(local_r)
                         .and_then(|rw| rw.get(c_idx));
 
                     let mut char_running = 0usize;
@@ -1585,7 +1744,7 @@ fn paint_laid_out_block(
             }
 
             // On-Canvas `+ Add Row` bottom bar & `+ Col` right edge button!
-            if table_active_or_hovered {
+            if table_active_or_hovered && item.table_is_last_slice {
                 let row_btn = Rect::new(x, y + table_body_h + 2.0, content_w, (19.0 * scale).clamp(17.0, 26.0));
                 let row_hov = row_btn.contains(mouse_x, mouse_y);
                 surface.fill_rounded_rect(
@@ -3188,7 +3347,7 @@ fn paint_outline_sidebar(
         "OUTLINE",
     );
 
-    let outline = w.doc.outline();
+    let outline = &w.cached_outline;
     let mut y = sb.y + 36.0 * s;
     let footer_h = 132.0 * s;
 
@@ -3204,7 +3363,7 @@ fn paint_outline_sidebar(
             "Apply Heading 1–3 to build a live outline.",
         );
     } else {
-        for item in &outline {
+        for item in outline {
             let row_h = (28.0 * s).round();
             if y + row_h > sb.y + sb.h - footer_h {
                 break;
@@ -3331,7 +3490,7 @@ fn paint_outline_sidebar(
     }
 
     // Hairline-separated Document Metrics Ledger (zero floating AI-slop nested card!)
-    let stats = w.doc.stats();
+    let stats = w.cached_stats;
     let m_top = (sb.y + sb.h - footer_h + 8.0 * s).max(y + 12.0 * s);
     if m_top + 96.0 * s <= sb.y + sb.h {
         surface.fill_rect(

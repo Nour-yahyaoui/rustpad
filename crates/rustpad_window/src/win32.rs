@@ -5,8 +5,33 @@
 
 use crate::{AppControl, CursorShape, DesktopAppHandler, Key, Modifiers, MouseButton, WindowEvent};
 use rustpad_render::{DaylightTheme, Surface};
+use std::cell::Cell;
 use std::ffi::c_void;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicIsize, Ordering};
+
+static ACTIVE_HWND: AtomicIsize = AtomicIsize::new(0);
+
+thread_local! {
+    static IN_WND_PROC: Cell<bool> = const { Cell::new(false) };
+    static REENTRANT_REPAINT_NEEDED: Cell<bool> = const { Cell::new(false) };
+}
+
+struct WndProcReentrancyGuard {
+    hwnd: HWND,
+}
+
+impl Drop for WndProcReentrancyGuard {
+    fn drop(&mut self) {
+        IN_WND_PROC.with(|c| c.set(false));
+        let repaint = REENTRANT_REPAINT_NEEDED.with(|r| r.replace(false));
+        if repaint && !self.hwnd.is_null() {
+            unsafe {
+                InvalidateRect(self.hwnd, std::ptr::null(), 0);
+            }
+        }
+    }
+}
 
 type HWND = *mut c_void;
 type HINSTANCE = *mut c_void;
@@ -151,6 +176,7 @@ extern "system" {
     fn BeginPaint(hWnd: HWND, lpPaint: *mut PAINTSTRUCT) -> HDC;
     fn EndPaint(hWnd: HWND, lpPaint: *const PAINTSTRUCT) -> BOOL;
     fn SetTimer(hWnd: HWND, nIDEvent: usize, uElapse: UINT, lpTimerFunc: *const c_void) -> usize;
+    fn KillTimer(hWnd: HWND, uIDEvent: usize) -> BOOL;
     fn GetKeyState(nVirtKey: i32) -> i16;
     fn LoadIconW(hInstance: HINSTANCE, lpIconName: *const u16) -> HICON;
     fn LoadCursorW(hInstance: HINSTANCE, lpCursorName: *const u16) -> HCURSOR;
@@ -373,6 +399,32 @@ unsafe fn wnd_proc_inner(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    // Prevent Undefined Behavior (`&mut Win32Context` aliasing) when Win32 modal dialogs
+    // (`GetOpenFileNameW`, `GetSaveFileNameW`) pump nested messages back into `wnd_proc`!
+    let already_inside = IN_WND_PROC.with(|c| {
+        if c.get() {
+            true
+        } else {
+            c.set(true);
+            false
+        }
+    });
+    if already_inside {
+        return match msg {
+            0x0014 /* WM_ERASEBKGND */ => 1,
+            0x000F /* WM_PAINT */ => {
+                let mut ps: PAINTSTRUCT = std::mem::zeroed();
+                BeginPaint(hwnd, &mut ps);
+                EndPaint(hwnd, &ps);
+                REENTRANT_REPAINT_NEEDED.with(|r| r.set(true));
+                0
+            }
+            0x0113 /* WM_TIMER */ => 0,
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        };
+    }
+    let _reentrancy_guard = WndProcReentrancyGuard { hwnd };
+
     let ptr = GetWindowLongPtrW(hwnd, -21 /* GWLP_USERDATA */) as *mut Win32Context<'static>;
     if ptr.is_null() {
         return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -557,7 +609,7 @@ unsafe fn wnd_proc_inner(
         0x0233 /* WM_DROPFILES */ => {
             let hdrop = wparam as *mut c_void;
             if !hdrop.is_null() {
-                let mut file_buf = vec![0u16; 1024];
+                let mut file_buf = vec![0u16; 4096];
                 let copied =
                     DragQueryFileW(hdrop, 0, file_buf.as_mut_ptr(), file_buf.len() as UINT) as usize;
                 DragFinish(hdrop);
@@ -568,8 +620,16 @@ unsafe fn wnd_proc_inner(
             }
             0
         }
-        0x0010 /* WM_CLOSE */ | 0x0002 /* WM_DESTROY */ => {
+        0x0010 /* WM_CLOSE */ => {
             let _ = ctx.app.on_event(WindowEvent::CloseRequested, &mut ctx.surface);
+            ACTIVE_HWND.store(0, Ordering::Relaxed);
+            SetWindowLongPtrW(hwnd, -21, 0);
+            PostQuitMessage(0);
+            0
+        }
+        0x0002 /* WM_DESTROY */ => {
+            ACTIVE_HWND.store(0, Ordering::Relaxed);
+            SetWindowLongPtrW(hwnd, -21, 0);
             PostQuitMessage(0);
             0
         }
@@ -643,9 +703,10 @@ pub fn run_win32_window(
             SendMessageW(hwnd, 0x0080, 1, app_icon as isize);
         }
 
+        ACTIVE_HWND.store(hwnd as isize, Ordering::Relaxed);
         SetWindowLongPtrW(hwnd, -21, (&mut ctx as *mut Win32Context<'_>) as isize);
         DragAcceptFiles(hwnd, 1);
-        // 16ms (~60Hz) tick drives smooth kinetic spring scroll, cursor blink & background AI worker polling
+        // 16ms (~60Hz) tick drives smooth kinetic spring scroll, cursor blink & background worker polling
         SetTimer(hwnd, 1, 16, std::ptr::null());
         ShowWindow(hwnd, 5 /* SW_SHOW */);
 
@@ -654,13 +715,18 @@ pub fn run_win32_window(
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        ACTIVE_HWND.store(0, Ordering::Relaxed);
     }
     Ok(())
 }
 
 pub fn open_image_file_dialog(title: &str) -> Option<PathBuf> {
     unsafe {
-        let mut file_buf = vec![0u16; 1024];
+        let owner = ACTIVE_HWND.load(Ordering::Relaxed) as HWND;
+        if !owner.is_null() {
+            KillTimer(owner, 1);
+        }
+        let mut file_buf = vec![0u16; 4096];
         let filter: Vec<u16> =
             "Images (*.png;*.jpg;*.jpeg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0All Files (*.*)\0*.*\0\0"
                 .encode_utf16()
@@ -668,12 +734,18 @@ pub fn open_image_file_dialog(title: &str) -> Option<PathBuf> {
         let wtitle = to_wide(title);
         let mut ofn: OPENFILENAMEW = std::mem::zeroed();
         ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as DWORD;
+        ofn.hwndOwner = owner;
         ofn.lpstrFilter = filter.as_ptr();
         ofn.lpstrFile = file_buf.as_mut_ptr();
         ofn.nMaxFile = file_buf.len() as DWORD;
         ofn.lpstrTitle = wtitle.as_ptr();
-        ofn.Flags = 0x0008_0000 | 0x0000_1000; /* OFN_EXPLORER | OFN_FILEMUSTEXIST */
-        if GetOpenFileNameW(&mut ofn) != 0 {
+        ofn.Flags = 0x0008_0000 | 0x0000_1000 | 0x0000_0008; /* OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR */
+        let ok = GetOpenFileNameW(&mut ofn) != 0;
+        if !owner.is_null() {
+            SetTimer(owner, 1, 16, std::ptr::null());
+            InvalidateRect(owner, std::ptr::null(), 0);
+        }
+        if ok {
             let end = file_buf.iter().position(|&c| c == 0).unwrap_or(0);
             Some(PathBuf::from(String::from_utf16_lossy(&file_buf[..end])))
         } else {
@@ -684,7 +756,11 @@ pub fn open_image_file_dialog(title: &str) -> Option<PathBuf> {
 
 pub fn open_file_dialog(title: &str) -> Option<PathBuf> {
     unsafe {
-        let mut file_buf = vec![0u16; 1024];
+        let owner = ACTIVE_HWND.load(Ordering::Relaxed) as HWND;
+        if !owner.is_null() {
+            KillTimer(owner, 1);
+        }
+        let mut file_buf = vec![0u16; 4096];
         let filter: Vec<u16> =
             "Documents (*.docx;*.pdf;*.md)\0*.docx;*.pdf;*.md;*.txt\0All Files (*.*)\0*.*\0\0"
                 .encode_utf16()
@@ -692,12 +768,18 @@ pub fn open_file_dialog(title: &str) -> Option<PathBuf> {
         let wtitle = to_wide(title);
         let mut ofn: OPENFILENAMEW = std::mem::zeroed();
         ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as DWORD;
+        ofn.hwndOwner = owner;
         ofn.lpstrFilter = filter.as_ptr();
         ofn.lpstrFile = file_buf.as_mut_ptr();
         ofn.nMaxFile = file_buf.len() as DWORD;
         ofn.lpstrTitle = wtitle.as_ptr();
-        ofn.Flags = 0x0008_0000 | 0x0000_1000; /* OFN_EXPLORER | OFN_FILEMUSTEXIST */
-        if GetOpenFileNameW(&mut ofn) != 0 {
+        ofn.Flags = 0x0008_0000 | 0x0000_1000 | 0x0000_0008; /* OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR */
+        let ok = GetOpenFileNameW(&mut ofn) != 0;
+        if !owner.is_null() {
+            SetTimer(owner, 1, 16, std::ptr::null());
+            InvalidateRect(owner, std::ptr::null(), 0);
+        }
+        if ok {
             let end = file_buf.iter().position(|&c| c == 0).unwrap_or(0);
             Some(PathBuf::from(String::from_utf16_lossy(&file_buf[..end])))
         } else {
@@ -708,8 +790,12 @@ pub fn open_file_dialog(title: &str) -> Option<PathBuf> {
 
 pub fn save_file_dialog(title: &str, default_name: &str) -> Option<PathBuf> {
     unsafe {
-        let mut file_buf = vec![0u16; 1024];
-        for (i, u) in default_name.encode_utf16().take(512).enumerate() {
+        let owner = ACTIVE_HWND.load(Ordering::Relaxed) as HWND;
+        if !owner.is_null() {
+            KillTimer(owner, 1);
+        }
+        let mut file_buf = vec![0u16; 4096];
+        for (i, u) in default_name.encode_utf16().take(1024).enumerate() {
             file_buf[i] = u;
         }
         let filter: Vec<u16> =
@@ -719,12 +805,18 @@ pub fn save_file_dialog(title: &str, default_name: &str) -> Option<PathBuf> {
         let wtitle = to_wide(title);
         let mut ofn: OPENFILENAMEW = std::mem::zeroed();
         ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as DWORD;
+        ofn.hwndOwner = owner;
         ofn.lpstrFilter = filter.as_ptr();
         ofn.lpstrFile = file_buf.as_mut_ptr();
         ofn.nMaxFile = file_buf.len() as DWORD;
         ofn.lpstrTitle = wtitle.as_ptr();
-        ofn.Flags = 0x0008_0000 | 0x0000_0002; /* OFN_EXPLORER | OFN_OVERWRITEPROMPT */
-        if GetSaveFileNameW(&mut ofn) != 0 {
+        ofn.Flags = 0x0008_0000 | 0x0000_0002 | 0x0000_0008; /* OFN_EXPLORER | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR */
+        let ok = GetSaveFileNameW(&mut ofn) != 0;
+        if !owner.is_null() {
+            SetTimer(owner, 1, 16, std::ptr::null());
+            InvalidateRect(owner, std::ptr::null(), 0);
+        }
+        if ok {
             let end = file_buf.iter().position(|&c| c == 0).unwrap_or(0);
             Some(PathBuf::from(String::from_utf16_lossy(&file_buf[..end])))
         } else {

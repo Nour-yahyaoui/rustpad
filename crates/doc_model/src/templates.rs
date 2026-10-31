@@ -33,7 +33,7 @@ impl TemplateKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Blank => "Blank Document",
-            Self::WelcomeGuide => "Welcome to RustPad v2.3",
+            Self::WelcomeGuide => "Welcome to RustPad v2.4",
             Self::EnterpriseContract => "Enterprise MSA Redline",
             Self::ModernResume => "Modern Resume / CV",
             Self::AcademicReport => "Technical Architecture Spec",
@@ -81,14 +81,14 @@ fn checklist(text: &str, done: bool) -> Block {
 
 fn build_welcome_guide() -> Document {
     let mut setup = PageSetup::default();
-    setup.header_text = "RustPad v2.3 — Virtualized Large-Doc Engine, Effortless Table Studio & 60–120Hz Suite".into();
+    setup.header_text = "RustPad v2.4 — Async Streaming 100+ MB .docx Engine, Table Studio & 60–120Hz Suite".into();
     setup.footer_text = "Open-Source MIT · github.com/Nour-yahyaoui/rustpad".into();
 
     let mut intro = Paragraph::new(ParagraphStyle::Normal, "");
     intro.spans = vec![
         TextSpan::plain("Welcome to "),
         TextSpan::styled(
-            "RustPad v2.3",
+            "RustPad v2.4",
             SpanStyle {
                 bold: true,
                 color: RgbColor::COBALT,
@@ -120,7 +120,7 @@ fn build_welcome_guide() -> Document {
     let mut table = TableBlock::new(5, 3);
     table.rows[0] = vec![
         TableCell::header("Core Pillar"),
-        TableCell::header("v2.3 Large-Doc Engine & Effortless Table Studio"),
+        TableCell::header("v2.4 Async Streaming Engine & Effortless Table Studio"),
         TableCell::header("Shortcut / CLI"),
     ];
     table.rows[1] = vec![
@@ -157,7 +157,7 @@ fn build_welcome_guide() -> Document {
             )),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Subtitle,
-                "v2.3 Virtualized 100+ MB .docx Engine · Effortless Table Studio · Zero Dependencies",
+                "v2.4 Async Streaming 100+ MB .docx Engine · Zero-Freeze 60–120Hz UX · Zero Dependencies",
             )),
             Block::Paragraph(intro),
             Block::Paragraph(Paragraph::new(

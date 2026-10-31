@@ -127,6 +127,117 @@ pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
     if app.modal.is_some() {
         paint_active_modal(app, surface, s, Rect::new(0.0, 0.0, win_w, win_h));
     }
+
+    // 6. Non-Blocking Streaming `.docx` Progress Banner (keeps UI silky at 60–120Hz on 30+ MB files!)
+    if app.pending_doc_load.is_some() {
+        paint_pending_doc_load_banner(app, surface, s, win_w);
+    }
+}
+
+fn paint_pending_doc_load_banner(app: &mut RustPadApp, surface: &mut Surface, s: f32, win_w: f32) {
+    let Some(load) = &app.pending_doc_load else {
+        return;
+    };
+    let permille = load
+        .progress_permille
+        .load(std::sync::atomic::Ordering::Relaxed)
+        .clamp(15, 1000);
+    let pct = (permille as f32 * 0.1).round() as u32;
+    let mb = load.file_size_bytes as f64 / (1024.0 * 1024.0);
+    let secs = load.started_at.elapsed().as_secs_f32();
+    let fname = load
+        .path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("document.docx")
+        .to_string();
+
+    let card_w = (460.0 * s).min(win_w - 32.0).max(260.0);
+    let card_h = (74.0 * s).round();
+    let card_x = ((win_w - card_w) * 0.5).round();
+    let card_y = (52.0 * s).round();
+    let card = Rect::new(card_x, card_y, card_w, card_h);
+
+    surface.draw_paper_shadow(card, 8.0, 14.0, 26);
+    surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
+    surface.stroke_rounded_rect(card, 8.0, 1.4, DaylightTheme::RUST_ORANGE);
+
+    let title = format!("Streaming '{fname}' ({mb:.1} MB) · {pct}% · {secs:.1}s");
+    surface.draw_text_clipped(
+        &mut app.fonts,
+        FontSlot::SansBold,
+        12.0 * s,
+        card.x + 14.0 * s,
+        card.y + 22.0 * s,
+        (card.w - 98.0 * s).max(80.0),
+        DaylightTheme::INK,
+        &title,
+    );
+
+    let sub = "Zero-copy LazyZipArchive + Streaming OOXML Pull Engine · UI live at 60–120Hz";
+    surface.draw_text_clipped(
+        &mut app.fonts,
+        FontSlot::SansRegular,
+        10.2 * s,
+        card.x + 14.0 * s,
+        card.y + 39.0 * s,
+        (card.w - 28.0 * s).max(80.0),
+        DaylightTheme::INK_MUTED,
+        sub,
+    );
+
+    // Smooth terracotta progress track
+    let track = Rect::new(
+        card.x + 14.0 * s,
+        card.y + card.h - 17.0 * s,
+        (card.w - 28.0 * s).max(40.0),
+        (7.0 * s).max(5.0),
+    );
+    surface.fill_rounded_rect(track, 3.5, DaylightTheme::SIDEBAR);
+    let fill_w = (track.w * (permille as f32 / 1000.0)).clamp(6.0, track.w);
+    surface.fill_rounded_rect(
+        Rect::new(track.x, track.y, fill_w, track.h),
+        3.5,
+        DaylightTheme::RUST_ORANGE,
+    );
+
+    // Cancel (Esc) button
+    let btn_w = (72.0 * s).round();
+    let btn_h = (22.0 * s).round();
+    let btn = Rect::new(
+        card.x + card.w - btn_w - 12.0 * s,
+        card.y + 8.0 * s,
+        btn_w,
+        btn_h,
+    );
+    let hov = btn.contains(app.mouse_x, app.mouse_y);
+    surface.fill_rounded_rect(
+        btn,
+        4.0,
+        if hov {
+            DaylightTheme::PDF_SOFT
+        } else {
+            DaylightTheme::SIDEBAR
+        },
+    );
+    surface.stroke_rounded_rect(btn, 4.0, 1.0, DaylightTheme::BORDER_STRONG);
+    let lbl = "Cancel";
+    let lw = app.fonts.measure_text(FontSlot::SansBold, lbl, 10.4 * s);
+    surface.draw_text(
+        &mut app.fonts,
+        FontSlot::SansBold,
+        10.4 * s,
+        btn.x + (btn.w - lw) * 0.5,
+        btn.y + btn.h * 0.68,
+        if hov {
+            DaylightTheme::PDF_ACCENT
+        } else {
+            DaylightTheme::INK_SUB
+        },
+        lbl,
+    );
+    app.hit_regions
+        .push(HitRegion::button(btn, UiAction::CancelDocLoad));
 }
 
 fn paint_tab_pane(
@@ -1723,7 +1834,7 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
     surface.fill_rounded_rect(
         Rect::new(12.0, bar.y + bar.h * 0.5 - 3.5, 7.0, 7.0),
         3.5,
-        if app.ai_dock.is_busy() {
+        if app.ai_dock.is_busy() || app.pending_doc_load.is_some() {
             DaylightTheme::RUST_ORANGE
         } else {
             DaylightTheme::SUCCESS

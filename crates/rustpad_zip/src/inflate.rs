@@ -184,7 +184,7 @@ fn read_dynamic_trees(br: &mut BitReader<'_>) -> Result<(HuffmanTree, HuffmanTre
     Ok((lit_tree, dist_tree))
 }
 
-pub const DEFAULT_MAX_INFLATE_BYTES: usize = 128 * 1024 * 1024;
+pub const DEFAULT_MAX_INFLATE_BYTES: usize = 256 * 1024 * 1024;
 
 pub fn deflate_decompress(input: &[u8]) -> Result<Vec<u8>, ZipError> {
     deflate_decompress_bounded(input, DEFAULT_MAX_INFLATE_BYTES)

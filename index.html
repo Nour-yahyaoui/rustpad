@@ -3,25 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>RustPad v2.3 — Virtualized 100+ MB .docx Engine, Table Studio &amp; Ultra-Smooth 60–120Hz Offline Word, PDF &amp; Local AI</title>
+    <title>RustPad v2.4 — Async Streaming 100+ MB .docx Engine, Table Studio &amp; Ultra-Smooth 60–120Hz Offline Word, PDF &amp; Local AI</title>
     <meta
       name="description"
-      content="Open 30–100+ MB multi-screenshot .docx files smoothly via progressive viewport streaming &amp; 64 MiB LRU caching, create tables with an 8×8 visual grid, and review legal redlines &amp; forensic PDFs inside RustPad v2.3 — 100% offline in Pure Rust with 0 crates.io dependencies."
+      content="Open 30–100+ MB multi-screenshot .docx files crash-free via a 32 MiB-stack async streaming worker, zero-copy LazyZipArchive (ZIP64), streaming OOXML pull parsing, and MCU-strip JPEG/PNG thumbnailing inside RustPad v2.4 — 100% offline in Pure Rust with 0 crates.io dependencies."
     />
     <meta name="author" content="Nour Yahyaoui" />
     <meta name="theme-color" content="#090a0d" />
 
     <!-- Open Graph / LinkedIn / X -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="RustPad v2.3 — Virtualized 100+ MB .docx Engine, Table &amp; Figure Studio · 60–120Hz Offline Word &amp; PDF" />
+    <meta property="og:title" content="RustPad v2.4 — Async Streaming 100+ MB .docx Engine, Table &amp; Figure Studio · 60–120Hz Offline Word &amp; PDF" />
     <meta
       property="og:description"
-      content="Progressive viewport HiDPI figure streaming for 30–100+ MB .docx reports, SharedBytes zero-copy CoW, visual 8×8 table studio, SignPath code signing, and 0 crates.io deps."
+      content="Non-blocking 32 MiB-stack .docx streaming, LazyZipArchive ZIP64, pull XML, MCU-strip codecs, visual 8×8 table studio, SignPath code signing, and 0 crates.io deps."
     />
     <meta property="og:url" content="https://rustpad-studio.vercel.app" />
     <meta property="og:image" content="https://rustpad-studio.vercel.app/og.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="RustPad v2.3 — Virtualized 100+ MB .docx Engine, Table &amp; Figure Studio · 60–120Hz Offline Suite" />
+    <meta name="twitter:title" content="RustPad v2.4 — Async Streaming 100+ MB .docx Engine, Table &amp; Figure Studio · 60–120Hz Offline Suite" />
     <meta name="twitter:image" content="https://rustpad-studio.vercel.app/og.png" />
 
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -53,7 +53,7 @@
     <!-- Sticky Mobile-First Top Bar -->
     <header class="site-header" id="site-header">
       <div class="container header-inner">
-        <a href="#hero" class="brand" aria-label="RustPad v2.3.0 Studio Home">
+        <a href="#hero" class="brand" aria-label="RustPad v2.4.0 Studio Home">
           <span class="brand-mark" aria-hidden="true">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
               <rect x="3" y="2.5" width="15" height="19" rx="2.5" stroke="currentColor" stroke-width="1.9" />
@@ -64,7 +64,7 @@
             </svg>
           </span>
           <span class="brand-name">RustPad</span>
-          <span class="brand-badge">v2.3</span>
+          <span class="brand-badge">v2.4</span>
         </a>
 
         <!-- Desktop Navigation (>= 1024px) -->
@@ -106,11 +106,11 @@
             GitHub ↗
           </a>
           <a
-            href="https://github.com/Nour-yahyaoui/rustpad/releases/tag/v2.3.0"
+            href="https://github.com/Nour-yahyaoui/rustpad/releases/tag/v2.4.0"
             class="desktop-dl-btn"
             id="header-download-cta"
           >
-            Download v2.3.0
+            Download v2.4.0
           </a>
 
           <!-- Mobile Top Menu Trigger (< 1024px) -->
@@ -136,7 +136,7 @@
         <div class="container mobile-menu-inner">
           <div class="mobile-menu-telemetry">
             <span class="telemetry-dot" aria-hidden="true"></span>
-            <span>v2.3 · 100+ MB .DOCX ENGINE &amp; 60–120HZ UX</span>
+            <span>v2.4 · ASYNC 100+ MB .DOCX ENGINE &amp; 60–120HZ UX</span>
             <button type="button" class="mobile-tour-pill" data-start-tour>5-Step Tour</button>
           </div>
 
@@ -153,7 +153,7 @@
             </a>
             <a href="#studio" class="mobile-nav-item" data-close-menu>
               <span class="m-idx">03</span>
-              <span class="m-title">Live v2.3 Studio Switchboard</span>
+              <span class="m-title">Live v2.4 Studio Switchboard</span>
               <span class="m-arrow" aria-hidden="true">→</span>
             </a>
             <a href="#craft" class="mobile-nav-item" data-close-menu>
@@ -180,15 +180,15 @@
 
           <div class="mobile-menu-actions">
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.3.0/rustpad-v2.3.0-windows-x86_64.exe"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.4.0/rustpad-v2.4.0-windows-x86_64.exe"
               class="btn btn-primary btn-block"
               id="mobile-primary-dl"
             >
-              Download Windows x64 (.exe) — v2.3.0
+              Download Windows x64 (.exe) — v2.4.0
             </a>
             <div class="mobile-menu-subgrid">
               <a
-                href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.3.0/rustpad-v2.3.0-linux-x86_64"
+                href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.4.0/rustpad-v2.4.0-linux-x86_64"
                 class="btn btn-secondary"
               >
                 Linux x86_64
@@ -217,7 +217,7 @@
           <div class="hero-eyebrow-row">
             <span class="eyebrow-pill">
               <span class="pulse-dot" aria-hidden="true"></span>
-              <span>RUSTPAD v2.3 · VIRTUALIZED 100+ MB .DOCX ENGINE · TABLE &amp; FIGURE STUDIO · 0 DEPS</span>
+              <span>RUSTPAD v2.4 · ASYNC STREAMING 100+ MB .DOCX ENGINE · LAZYZIP64 · 0 DEPS</span>
             </span>
           </div>
 
@@ -227,15 +227,15 @@
           </h1>
 
           <p class="hero-lead">
-            <strong>Human UX and instant responsiveness are the #1 feature of RustPad — even on 30–100+ MB multi-screenshot <code>.docx</code> files.</strong>
-            Stream 100+ Retina/4K figures effortlessly via progressive viewport decoding &amp; a 64 MiB LRU cache,
-            create tables via an 8×8 visual grid or <code>/table 4x5</code>, review legal redlines in 1 click,
+            <strong>Human UX and zero-freeze responsiveness are the #1 feature of RustPad — even on 30–100+ MB multi-screenshot <code>.docx</code> files.</strong>
+            Stream giant archives off the UI thread via a 32 MiB-stack worker, zero-copy <code>LazyZipArchive</code> (ZIP64),
+            pull-streamed OOXML &amp; MCU-row JPEG/PNG thumbnailing, create tables via an 8×8 visual grid,
             and run air-gapped local AI in one <strong>~4.1 MB</strong> binary with <strong>0 crates.io dependencies</strong>.
           </p>
 
           <div class="hero-cta-group">
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.3.0/rustpad-v2.3.0-windows-x86_64.exe"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.4.0/rustpad-v2.4.0-windows-x86_64.exe"
               class="btn btn-primary btn-lg"
               id="hero-primary-dl"
             >
@@ -243,11 +243,11 @@
                 <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 19h16" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
               <span id="hero-primary-dl-label">Download Windows x64 (.exe)</span>
-              <span class="btn-tag">v2.3.0</span>
+              <span class="btn-tag">v2.4.0</span>
             </a>
 
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.3.0/rustpad-v2.3.0-linux-x86_64"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.4.0/rustpad-v2.4.0-linux-x86_64"
               class="btn btn-secondary btn-lg"
               id="hero-secondary-dl"
             >
@@ -280,7 +280,7 @@
           </div>
 
           <div class="hero-meta-links">
-            <a href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.3.0/SHA256SUMS.txt">SHA256SUMS.txt</a>
+            <a href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v2.4.0/SHA256SUMS.txt">SHA256SUMS.txt</a>
             <span aria-hidden="true">·</span>
             <a href="https://github.com/Nour-yahyaoui/rustpad/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer">SECURITY.md</a>
             <span aria-hidden="true">·</span>
@@ -311,7 +311,7 @@
             <div class="ux-sandbox-chrome" id="ux-sandbox-chrome">
               <div class="ux-chrome-left">
                 <span class="ux-dot"></span>
-                <span class="ux-doc-name">Master_Services_Agreement_v2.3.docx</span>
+                <span class="ux-doc-name">Master_Services_Agreement_v2.4.docx</span>
                 <span class="ux-fps-pill">60–120Hz VSync · 0.4ms Paint</span>
               </div>
               <div class="ux-chrome-actions">
@@ -519,7 +519,7 @@
             <div class="section-kicker">02 · HEAD-TO-HEAD UX &amp; ENTERPRISE BENCHMARK</div>
             <h2 class="section-title">Why Teams Choose Smooth Offline Native Rust</h2>
             <p class="section-desc">
-              RustPad v2.3 combines virtualized 100+ MB large-document streaming, effortless table creation, and
+              RustPad v2.4 combines async 100+ MB large-document streaming, zero-copy LazyZipArchive, effortless table creation, and
               60–120Hz native responsiveness with legal redlining, forensic PDF sanitization, and MDM DLP governance.
             </p>
           </div>
@@ -533,7 +533,7 @@
               <thead>
                 <tr>
                   <th>UX &amp; Enterprise Dimension</th>
-                  <th>RustPad v2.3 (Open Source)</th>
+                  <th>RustPad v2.4 (Open Source)</th>
                   <th>Cloud SaaS Docs</th>
                   <th>Electron Wrappers</th>
                   <th>Legacy 2 GB Suites</th>
@@ -550,7 +550,7 @@
         <div class="container">
           <div class="section-header">
             <div class="section-kicker">03 · NATIVE WIN32 &amp; X11 60–120HZ COMPOSITOR</div>
-            <h2 class="section-title">Inspect the v2.3 Smooth Desktop Studio</h2>
+            <h2 class="section-title">Inspect the v2.4 Smooth Desktop Studio</h2>
             <p class="section-desc">
               Warm Architectural Paper &amp; Linen surfaces uniting floating selection formatting,
               1-click clause redlines, multi-line OpenXML tables, forensic PDF sealing, and DLP inspection.
@@ -567,7 +567,7 @@
                 <span></span><span></span><span></span>
               </div>
               <div class="window-title" id="specimen-window-title">
-                RustPad v2.3.0 — Enterprise_MSA_Redline.docx · Large-Doc &amp; Table Studio
+                RustPad v2.4.0 — Enterprise_MSA_Redline.docx · Async Large-Doc &amp; Table Studio
               </div>
               <span class="window-badge" id="specimen-badge">60–120HZ + REDLINE</span>
             </div>
@@ -576,7 +576,7 @@
               <img
                 id="specimen-image"
                 src="/screenshots/word-studio.png"
-                alt="RustPad v2.3.0 Smooth Word Studio, Virtualized Large-Doc Engine, Effortless Tables, Legal Redlines and Local AI Dock"
+                alt="RustPad v2.4.0 Smooth Word Studio, Async Streaming Large-Doc Engine, Effortless Tables, Legal Redlines and Local AI Dock"
                 width="1440"
                 height="900"
                 loading="eager"
@@ -598,7 +598,7 @@
             <div class="section-kicker">04 · SMOOTH UX, LEGAL REDLINES &amp; FORENSICS</div>
             <h2 class="section-title">Engineered for Effortless Flow &amp; CISO Audits</h2>
             <p class="section-desc">
-              v2.3 pairs virtualized 100+ MB multi-screenshot streaming, an interactive 8×8 visual table creator,
+              v2.4 pairs non-blocking 32 MiB-stack .docx streaming, MCU-strip JPEG/PNG thumbnailing, an interactive 8×8 visual table creator,
               and a 60–120Hz coalesced native compositor with lossless OpenXML passthrough, physical PDF redaction purging, and SHA-256 journaling.
             </p>
           </div>
@@ -716,8 +716,8 @@
 
           <div class="scope-grid">
             <article class="scope-card scope-positive">
-              <div class="scope-tag">SMOOTH UX &amp; ENTERPRISE SCOPE · v2.3</div>
-              <h3>Where RustPad v2.3 Leads</h3>
+              <div class="scope-tag">SMOOTH UX &amp; ENTERPRISE SCOPE · v2.4</div>
+              <h3>Where RustPad v2.4 Leads</h3>
               <ul class="scope-list" id="scope-built-for"></ul>
             </article>
             <article class="scope-card scope-neutral">
@@ -779,7 +779,7 @@
         </div>
 
         <div class="footer-bottom">
-          <span>MIT License · RustPad v2.3.0 · Windows code signing via <a href="https://signpath.io/" target="_blank" rel="noopener noreferrer">SignPath.io</a> (<a href="https://signpath.org/" target="_blank" rel="noopener noreferrer">SignPath Foundation</a>) · Zero Telemetry</span>
+          <span>MIT License · RustPad v2.4.0 · Windows code signing via <a href="https://signpath.io/" target="_blank" rel="noopener noreferrer">SignPath.io</a> (<a href="https://signpath.org/" target="_blank" rel="noopener noreferrer">SignPath Foundation</a>) · Zero Telemetry</span>
           <a href="#hero">Back to top ↑</a>
         </div>
       </div>

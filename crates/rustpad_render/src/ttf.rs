@@ -50,6 +50,7 @@ struct TtfFace {
     hmtx_off: usize,
     loca_off: usize,
     glyf_off: usize,
+    ascii_advances: [u16; 128],
 }
 
 impl TtfFace {
@@ -99,7 +100,7 @@ impl TtfFace {
             256
         };
 
-        Some(Self {
+        let mut face = Self {
             data,
             units_per_em,
             ascent,
@@ -111,7 +112,13 @@ impl TtfFace {
             hmtx_off,
             loca_off,
             glyf_off,
-        })
+            ascii_advances: [0u16; 128],
+        };
+        for b in 0..128u8 {
+            let gid = face.glyph_index(b as char);
+            face.ascii_advances[b as usize] = face.advance_units(gid);
+        }
+        Some(face)
     }
 
     fn glyph_index(&self, ch: char) -> u16 {
@@ -548,6 +555,7 @@ pub struct FontBook {
     serif_reg: TtfFace,
     mono_reg: TtfFace,
     cache: HashMap<(FontSlot, char, u16), RasterGlyph>,
+    unicode_adv_cache: HashMap<(FontSlot, char), u16>,
 }
 
 impl Default for FontBook {
@@ -564,6 +572,7 @@ impl FontBook {
             serif_reg: TtfFace::parse(SERIF_REGULAR_TTF).expect("valid embedded Serif-Regular.ttf"),
             mono_reg: TtfFace::parse(MONO_REGULAR_TTF).expect("valid embedded Mono-Regular.ttf"),
             cache: HashMap::with_capacity(1024),
+            unicode_adv_cache: HashMap::with_capacity(256),
         }
     }
 
@@ -581,19 +590,43 @@ impl FontBook {
         let quantized_px = (size_key as f32) / 4.0;
         let key = (slot, ch, size_key);
         if !self.cache.contains_key(&key) {
+            if self.cache.len() >= 4096 {
+                self.cache.clear();
+            }
             let raster = self.face(slot).rasterize(ch, quantized_px);
             self.cache.insert(key, raster);
         }
         &self.cache[&key]
     }
 
+    /// Ultra-fast glyph-advance measurement (`O(1)` array lookup for ASCII, zero bitmap rasterization!).
     pub fn measure_text(&mut self, slot: FontSlot, text: &str, px_size: f32) -> f32 {
+        let size_key = (px_size.clamp(6.0, 140.0) * 4.0).round() as u16;
+        let quantized_px = (size_key as f32) / 4.0;
+        let units_per_em = self.face(slot).units_per_em;
+        let scale = quantized_px / units_per_em;
+        let space_adv = (self.face(slot).ascii_advances[b' ' as usize] as f32) * scale;
+
         let mut w = 0.0f32;
         for ch in text.chars() {
             if ch == '\t' {
-                w += self.glyph(slot, ' ', px_size).advance_px * 4.0;
+                w += space_adv * 4.0;
             } else if ch != '\n' {
-                w += self.glyph(slot, ch, px_size).advance_px;
+                let cp = ch as u32;
+                let adv_u16 = if cp < 128 {
+                    self.face(slot).ascii_advances[cp as usize]
+                } else if let Some(&u) = self.unicode_adv_cache.get(&(slot, ch)) {
+                    u
+                } else {
+                    let f = self.face(slot);
+                    let u = f.advance_units(f.glyph_index(ch));
+                    if self.unicode_adv_cache.len() >= 4096 {
+                        self.unicode_adv_cache.clear();
+                    }
+                    self.unicode_adv_cache.insert((slot, ch), u);
+                    u
+                };
+                w += (adv_u16 as f32) * scale;
             }
         }
         w

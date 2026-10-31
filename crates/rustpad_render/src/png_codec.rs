@@ -2,7 +2,7 @@
 //! `PLTE`+`tRNS`, GrayAlpha, RGBA, Non-Interlaced & Adam7 Interlaced) + Pure-Rust BMP/DIB Decoder.
 
 use crate::canvas::Surface;
-use rustpad_zip::{crc32, zlib_compress, zlib_decompress};
+use rustpad_zip::{crc32, zlib_compress, zlib_decompress_bounded};
 use std::path::Path;
 
 pub const PNG_MAGIC: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
@@ -156,7 +156,8 @@ pub fn decode_png_rgba(png_bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> 
         return Err("PNG pixel count exceeds 64MP safety ceiling".into());
     }
 
-    let raw = zlib_decompress(&idat_stream).map_err(|e| format!("PNG zlib error: {}", e.0))?;
+    let raw = zlib_decompress_bounded(&idat_stream, 256 * 1024 * 1024)
+        .map_err(|e| format!("PNG zlib error: {}", e.0))?;
     let channels: usize = match color_type {
         0 | 3 => 1,
         4 => 2,
@@ -227,6 +228,224 @@ pub fn decode_png_rgba(png_bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> 
     }
 
     Ok((width, height, rgba))
+}
+
+/// Streaming low-memory PNG thumbnail decoder: unfilters two scanlines (`prev_row`, `cur_row`)
+/// at a time and samples directly into `tw × th` (`<= max_dim`) without allocating `width * height * 4`!
+pub fn decode_png_thumbnail_rgba(
+    png_bytes: &[u8],
+    max_dim: u32,
+) -> Result<(u32, u32, u32, u32, Vec<u8>), String> {
+    if png_bytes.len() < 33 || png_bytes[..8] != PNG_MAGIC {
+        return Err("Invalid PNG signature".into());
+    }
+    let cap = max_dim.max(128);
+    let mut cursor = 8usize;
+    let mut width = 0u32;
+    let mut height = 0u32;
+    let mut bit_depth = 0u8;
+    let mut color_type = 0u8;
+    let mut interlace = 0u8;
+    let mut seen_ihdr = false;
+    let mut palette: Vec<[u8; 3]> = Vec::new();
+    let mut trns: Vec<u8> = Vec::new();
+    let mut idat_stream: Vec<u8> = Vec::new();
+
+    while cursor + 12 <= png_bytes.len() {
+        let len = u32::from_be_bytes([
+            png_bytes[cursor],
+            png_bytes[cursor + 1],
+            png_bytes[cursor + 2],
+            png_bytes[cursor + 3],
+        ]) as usize;
+        let ctype = &png_bytes[cursor + 4..cursor + 8];
+        let data_start = cursor + 8;
+        let data_end = data_start.saturating_add(len);
+        if data_end + 4 > png_bytes.len() {
+            break;
+        }
+        let chunk_data = &png_bytes[data_start..data_end];
+        cursor = data_end + 4;
+
+        match ctype {
+            b"IHDR" => {
+                if chunk_data.len() < 13 {
+                    return Err("Malformed PNG IHDR".into());
+                }
+                width = u32::from_be_bytes([
+                    chunk_data[0],
+                    chunk_data[1],
+                    chunk_data[2],
+                    chunk_data[3],
+                ]);
+                height = u32::from_be_bytes([
+                    chunk_data[4],
+                    chunk_data[5],
+                    chunk_data[6],
+                    chunk_data[7],
+                ]);
+                bit_depth = chunk_data[8];
+                color_type = chunk_data[9];
+                interlace = chunk_data[12];
+                if width == 0 || height == 0 || width > 32_768 || height > 32_768 {
+                    return Err("PNG dimensions out of supported bounds (1..=32768)".into());
+                }
+                if !matches!(bit_depth, 1 | 2 | 4 | 8 | 16)
+                    || !matches!(color_type, 0 | 2 | 3 | 4 | 6)
+                    || interlace > 1
+                {
+                    return Err("Unsupported PNG header parameters".into());
+                }
+                seen_ihdr = true;
+            }
+            b"PLTE" => {
+                palette.clear();
+                for rgb in chunk_data.chunks_exact(3) {
+                    palette.push([rgb[0], rgb[1], rgb[2]]);
+                }
+            }
+            b"tRNS" => trns = chunk_data.to_vec(),
+            b"IDAT" => idat_stream.extend_from_slice(chunk_data),
+            b"IEND" => break,
+            _ => {}
+        }
+    }
+
+    if !seen_ihdr || idat_stream.is_empty() {
+        return Err("Missing IHDR or IDAT in PNG".into());
+    }
+    if color_type == 3 && palette.is_empty() {
+        return Err("Indexed PNG missing PLTE palette".into());
+    }
+    if (width as usize).saturating_mul(height as usize) > 64 * 1024 * 1024 {
+        return Err("PNG pixel count exceeds 64MP safety ceiling".into());
+    }
+
+    if interlace != 0 || (width <= cap && height <= cap) {
+        let (ow, oh, rgba) = decode_png_rgba(png_bytes)?;
+        if ow <= cap && oh <= cap {
+            return Ok((ow, oh, ow, oh, rgba));
+        }
+        let scale = (cap as f64 / ow.max(oh) as f64).clamp(0.01, 1.0);
+        let tw = ((ow as f64 * scale).round() as u32).max(1);
+        let th = ((oh as f64 * scale).round() as u32).max(1);
+        let mut out = vec![0u8; (tw as usize) * (th as usize) * 4];
+        for dy in 0..th as usize {
+            let sy = (dy * oh as usize) / th as usize;
+            for dx in 0..tw as usize {
+                let sx = (dx * ow as usize) / tw as usize;
+                let s_off = (sy * ow as usize + sx) * 4;
+                let d_off = (dy * tw as usize + dx) * 4;
+                out[d_off..d_off + 4].copy_from_slice(&rgba[s_off..s_off + 4]);
+            }
+        }
+        return Ok((ow, oh, tw, th, out));
+    }
+
+    let raw = zlib_decompress_bounded(&idat_stream, 256 * 1024 * 1024)
+        .map_err(|e| format!("PNG zlib error: {}", e.0))?;
+    let channels: usize = match color_type {
+        0 | 3 => 1,
+        4 => 2,
+        2 => 3,
+        6 => 4,
+        _ => 1,
+    };
+    let bits_per_pixel = channels * (bit_depth as usize);
+    let filter_bpp = bits_per_pixel.div_ceil(8).max(1);
+    let ow_u = width as usize;
+    let oh_u = height as usize;
+    let row_bytes = (ow_u * bits_per_pixel).div_ceil(8);
+    let stride = row_bytes + 1;
+    let needed = stride
+        .checked_mul(oh_u)
+        .ok_or_else(|| "PNG stride overflow".to_string())?;
+    if needed > raw.len() {
+        return Err("Decompressed PNG IDAT shorter than expected scanlines".into());
+    }
+
+    let scale = (cap as f64 / width.max(height) as f64).clamp(0.01, 1.0);
+    let tw = ((width as f64 * scale).round() as u32).max(1);
+    let th = ((height as f64 * scale).round() as u32).max(1);
+    let tw_u = tw as usize;
+    let th_u = th as usize;
+
+    let mut out = vec![0u8; tw_u * th_u * 4];
+    let mut prev_row = vec![0u8; row_bytes];
+    let mut cur_row = vec![0u8; row_bytes];
+
+    let trns_gray_16 = if color_type == 0 && trns.len() >= 2 {
+        Some(u16::from_be_bytes([trns[0], trns[1]]))
+    } else {
+        None
+    };
+    let trns_rgb_16 = if color_type == 2 && trns.len() >= 6 {
+        Some((
+            u16::from_be_bytes([trns[0], trns[1]]),
+            u16::from_be_bytes([trns[2], trns[3]]),
+            u16::from_be_bytes([trns[4], trns[5]]),
+        ))
+    } else {
+        None
+    };
+
+    let sample_xs: Vec<usize> = (0..tw_u).map(|dx| (dx * ow_u) / tw_u).collect();
+    let mut next_dy = 0usize;
+    let mut next_sy = 0usize;
+
+    for py in 0..oh_u {
+        let base = py * stride;
+        let filter = raw[base];
+        let src = &raw[base + 1..base + 1 + row_bytes];
+
+        for i in 0..row_bytes {
+            let left = if i >= filter_bpp {
+                cur_row[i - filter_bpp]
+            } else {
+                0
+            };
+            let up = prev_row[i];
+            let up_left = if i >= filter_bpp {
+                prev_row[i - filter_bpp]
+            } else {
+                0
+            };
+            cur_row[i] = match filter {
+                0 => src[i],
+                1 => src[i].wrapping_add(left),
+                2 => src[i].wrapping_add(up),
+                3 => src[i].wrapping_add(((left as u16 + up as u16) >> 1) as u8),
+                4 => src[i].wrapping_add(paeth_predictor(left, up, up_left)),
+                _ => src[i],
+            };
+        }
+
+        while next_dy < th_u && py == next_sy {
+            let row_dst_base = next_dy * tw_u * 4;
+            for (dx, &sx) in sample_xs.iter().enumerate() {
+                let pixel = unpack_png_pixel(
+                    &cur_row,
+                    sx,
+                    bit_depth,
+                    color_type,
+                    &palette,
+                    &trns,
+                    trns_gray_16,
+                    trns_rgb_16,
+                );
+                let o = row_dst_base + dx * 4;
+                out[o..o + 4].copy_from_slice(&pixel);
+            }
+            next_dy += 1;
+            if next_dy < th_u {
+                next_sy = (next_dy * oh_u) / th_u;
+            }
+        }
+
+        std::mem::swap(&mut prev_row, &mut cur_row);
+    }
+
+    Ok((width, height, tw, th, out))
 }
 
 #[allow(clippy::too_many_arguments)]

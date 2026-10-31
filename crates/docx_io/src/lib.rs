@@ -6,7 +6,7 @@ pub mod reader;
 pub mod writer;
 pub mod xml_lite;
 
-pub use reader::{load_docx_bytes, load_docx_file};
+pub use reader::{load_docx_bytes, load_docx_file, load_docx_shared_with_progress};
 pub use writer::{save_docx_bytes, save_docx_file};
 
 #[derive(Debug, Clone)]
@@ -203,5 +203,72 @@ mod tests {
         assert!((imgs[0].width_pt - 300.0).abs() < 1.0);
         assert_eq!(imgs[1].name, "Legacy VML Diagram");
         assert!((imgs[1].width_pt - 240.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_v24_streaming_lazy_zip_shared_media_dedup_and_word_bloat_skip() {
+        let mut zw = rustpad_zip::ZipWriter::new();
+        zw.add_file(
+            "word/_rels/document.xml.rels",
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId99" Target="media/shared_capture.png"/>
+</Relationships>"#
+                .to_vec(),
+        );
+        // Zero-copy STORED 128 KiB PNG header payload referenced TWICE in `<w:body>`
+        let mut stored_png = vec![0u8; 128 * 1024];
+        stored_png[..8].copy_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
+        stored_png[8..12].copy_from_slice(&13u32.to_be_bytes());
+        stored_png[12..16].copy_from_slice(b"IHDR");
+        stored_png[16..20].copy_from_slice(&2560u32.to_be_bytes());
+        stored_png[20..24].copy_from_slice(&1440u32.to_be_bytes());
+        zw.add_stored("word/media/shared_capture.png", stored_png);
+
+        zw.add_file(
+            "word/document.xml",
+            br#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
+  xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+  xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:p w:rsidR="00AA1122" w14:paraId="77FF0011">
+      <w:proofErr w:type="spellStart"/>
+      <w:bookmarkStart w:id="0" w:name="_GoBack"/>
+      <w:r w:rsidRPr="00BB2233"><w:rPr><w:noProof/></w:rPr><w:t>Streamed zero-DOM paragraph</w:t></w:r>
+      <w:bookmarkEnd w:id="0"/>
+      <w:proofErr w:type="spellEnd"/>
+    </w:p>
+    <w:p><w:r><w:drawing><wp:inline><wp:extent cx="3810000" cy="2143125"/><wp:docPr id="1" name="Cap A"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId99"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+    <w:p><w:r><w:drawing><wp:inline><wp:extent cx="3810000" cy="2143125"/><wp:docPr id="2" name="Cap B"/><a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId99"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>
+  </w:body>
+</w:document>"#
+                .to_vec(),
+        );
+
+        let raw_zip = doc_model::SharedBytes::from_vec(zw.finish());
+        let mut progress_steps = 0usize;
+        let doc = load_docx_shared_with_progress(raw_zip.clone(), |_done, _tot| {
+            progress_steps += 1;
+        })
+        .expect("stream load docx");
+        assert!(progress_steps >= 1);
+        assert!(doc.to_plain_text().contains("Streamed zero-DOM paragraph"));
+
+        let imgs: Vec<&doc_model::ImageBlock> = doc
+            .blocks
+            .iter()
+            .filter_map(|b| match b {
+                Block::Image(i) => Some(i),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(imgs.len(), 2);
+        assert_eq!(imgs[0].intrinsic_px, Some((2560, 1440)));
+        // Both ImageBlocks share the exact same underlying `Arc<[u8]>` slice (zero RAM duplication!)
+        assert_eq!(imgs[0].png_bytes.as_ptr(), imgs[1].png_bytes.as_ptr());
     }
 }
