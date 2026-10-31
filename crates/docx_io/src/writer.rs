@@ -175,7 +175,7 @@ fn build_comments_xml(comments: &[DocComment]) -> String {
     xml
 }
 
-fn build_doc_rels(images: &[(String, Vec<u8>)], has_comments: bool) -> String {
+fn build_doc_rels(images: &[(String, SharedBytes)], has_comments: bool) -> String {
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">

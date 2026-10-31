@@ -203,8 +203,8 @@ mod tests {
             fake_png[12..16].copy_from_slice(b"IHDR");
             fake_png[16..20].copy_from_slice(&3840u32.to_be_bytes());
             fake_png[20..24].copy_from_slice(&2160u32.to_be_bytes());
-            // Unique tail marker so each screenshot is a distinct archive entry
-            let tag = i.to_le_bytes();
+            // Unique big-endian tail marker so each screenshot hashes to its own O(1) bucket
+            let tag = i.to_be_bytes();
             let n = fake_png.len();
             fake_png[n - 4..].copy_from_slice(&tag);
 
