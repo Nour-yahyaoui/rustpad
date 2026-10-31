@@ -1500,12 +1500,19 @@ impl TablePreset {
 
 /// Reference-counted immutable byte buffer (`O(1)` clone & pointer-equality fast path)
 /// so `Document` clones in `UndoHistory` and `SnapshotVault` never duplicate multi-MB media.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SharedBytes(std::sync::Arc<[u8]>);
+
+impl Default for SharedBytes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SharedBytes {
     pub fn new() -> Self {
-        Self(std::sync::Arc::from(&[][..]))
+        let empty: &[u8] = &[];
+        Self(std::sync::Arc::from(empty))
     }
 
     pub fn from_vec(v: Vec<u8>) -> Self {
@@ -1549,7 +1556,7 @@ impl From<&[u8]> for SharedBytes {
 
 impl PartialEq for SharedBytes {
     fn eq(&self, other: &Self) -> bool {
-        std::sync::Arc::ptr_eq(&self.0, &other.0) || self.0[..] == other.0[..]
+        std::sync::Arc::ptr_eq(&self.0, &other.0) || self.0.as_ref() == other.0.as_ref()
     }
 }
 

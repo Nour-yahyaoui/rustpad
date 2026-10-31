@@ -821,13 +821,16 @@ fn warm_visible_page_images(
         if blk_bot < prefetch_top || blk_top > prefetch_bot {
             continue;
         }
-        let Some(Block::Image(img)) = w.doc.blocks.get(item.block_idx) else {
-            continue;
+        let payload = {
+            let Some(Block::Image(img)) = w.doc.blocks.get(item.block_idx) else {
+                continue;
+            };
+            if img.rgba_preview.is_some() || img.png_bytes.is_empty() {
+                continue;
+            }
+            img.png_bytes.clone()
         };
-        if img.rgba_preview.is_some() || img.png_bytes.is_empty() {
-            continue;
-        }
-        let hkey = hash_image_bytes(&img.png_bytes);
+        let hkey = hash_image_bytes(&payload);
         if let Some(pos) = w.image_rgba_cache.iter().position(|(k, _, _, _)| *k == hkey) {
             // Promote hit to MRU tail in O(1)
             let last = w.image_rgba_cache.len() - 1;
@@ -845,7 +848,6 @@ fn warm_visible_page_images(
             continue;
         }
 
-        let payload = img.png_bytes.clone();
         *decoded_this_frame += 1;
         match decode_any_image_thumbnail_rgba(&payload, THUMB_MAX_DIM) {
             Ok((orig_w, orig_h, tw, th, rgba)) => {
