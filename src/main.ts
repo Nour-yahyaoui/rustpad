@@ -871,7 +871,7 @@ function initUxTableCreator(toastEl: HTMLElement | null): void {
       model.zebra = true;
       model.alignRightCols = [];
       model.rows = [
-        ['Dimension', 'Legacy Suites', 'RustPad v2.3'],
+        ['Dimension', 'Legacy Suites', 'RustPad v2.4'],
         ['Table Creation', 'Nested ribbon dialogs', 'Visual grid, /table & TSV'],
         ['Frame Latency', '35–90 ms DOM reflow', '< 1 ms native VSync'],
         ['Runtime Footprint', '340 MB – 2 GB', '~3.9 MB · 0 crates'],

@@ -66,7 +66,16 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
     zw.add_file("word/document.xml", build_document_xml(doc).into_bytes());
 
     for (rel_path, data) in &images {
-        zw.add_file(format!("word/{rel_path}"), data.to_vec());
+        let full = format!("word/{rel_path}");
+        if rel_path.ends_with(".png")
+            || rel_path.ends_with(".jpeg")
+            || rel_path.ends_with(".jpg")
+            || rel_path.ends_with(".gif")
+        {
+            zw.add_stored(full, data.to_vec());
+        } else {
+            zw.add_file(full, data.to_vec());
+        }
     }
 
     // Re-emit unmodeled enterprise passthrough parts (`customXml/*`, `word/theme/*`, etc.)

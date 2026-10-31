@@ -89,15 +89,21 @@ impl SnapshotVault {
         self.next_id += 1;
 
         let media_bytes = doc.estimated_media_bytes();
-        // Fast path for in-memory desktop vaults on screenshot-heavy documents (> 128 KiB media):
+        let passthrough_bytes: usize = doc.passthrough_parts.values().map(|v| v.len()).sum();
+        // Fast path for in-memory desktop vaults on large/media/passthrough documents:
         // store a zero-copy `SharedBytes`-backed `Document` snapshot in < 0.05 ms instead of
-        // running double LZ77 compression over 30–100+ MB of images on the UI thread!
-        let (compressed, approx_bytes, in_memory_doc) =
-            if self.disk_dir.is_none() && media_bytes > 128 * 1024 {
-                let slim = doc.clone_without_passthrough();
-                let est = media_bytes.saturating_add(doc.blocks.len() * 128);
-                (Vec::new(), est, Some(slim))
-            } else {
+        // running double LZ77 compression over 30–100+ MB of images or prose on the UI thread!
+        let (compressed, approx_bytes, in_memory_doc) = if self.disk_dir.is_none()
+            && (media_bytes > 128 * 1024
+                || passthrough_bytes > 128 * 1024
+                || doc.blocks.len() > 256)
+        {
+            let slim = doc.clone_without_passthrough();
+            let est = media_bytes
+                .saturating_add(passthrough_bytes)
+                .saturating_add(doc.blocks.len() * 128);
+            (Vec::new(), est, Some(slim))
+        } else {
                 let docx_bytes = save_docx_bytes(doc);
                 let comp = zlib_compress(&docx_bytes);
                 if let Some(dir) = &self.disk_dir {

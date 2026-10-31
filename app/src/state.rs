@@ -4,11 +4,11 @@
 use crate::commands::{filter_commands, CommandId};
 use doc_model::{
     next_word_char_idx, prev_word_char_idx, word_range_at_char, Alignment, Block, Document,
-    FontFamily, ImageBlock, ListKind, PaperSize, Paragraph, ParagraphStyle, RevisionKind,
-    RevisionMeta, RgbColor, SharedBytes, SpanStyle, TableBlock, TablePreset, TableTheme,
-    TemplateKind, TextSpan, UndoHistory,
+    DocumentStats, FontFamily, ImageBlock, ListKind, OutlineItem, PaperSize, Paragraph,
+    ParagraphStyle, RevisionKind, RevisionMeta, RgbColor, SharedBytes, SpanStyle, TableBlock,
+    TablePreset, TableTheme, TemplateKind, TextSpan, UndoHistory,
 };
-use docx_io::{load_docx_file, save_docx_file};
+use docx_io::{load_docx_file, load_docx_shared_with_progress, save_docx_file};
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
 use pdf_engine::{
     compress_pdf_bytes, load_pdf_file, save_pdf_bytes, save_pdf_file, seal_pdf_bytes,
@@ -20,14 +20,18 @@ use power_tools::{
     AiAgentConfig, AiProviderPreset, AiResponse, AiTask, AuditTrail, EnterprisePolicy,
     SnapshotVault, SpellChecker, WalJournal,
 };
-use rustpad_render::{decode_any_image_rgba, encode_rgba_png, FontBook, Rect};
+use rustpad_render::{
+    decode_any_image_rgba, decode_any_image_thumbnail_rgba, encode_rgba_png, FontBook, Rect,
+};
 use rustpad_window::{
     detect_dpi_scale, get_clipboard_image_bytes, get_clipboard_text, set_clipboard_text,
     spool_pdf_to_os_printer, try_native_open_dialog, try_native_open_image_dialog,
     try_native_save_dialog, CursorShape, Key, Modifiers,
 };
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,10 +97,17 @@ pub struct WordTabState {
     pub image_rgba_cache_bytes: usize,
     /// Tombstones for corrupt or unsupported image payloads so they are never retried at 60Hz.
     pub failed_image_hashes: Vec<u64>,
+    pub in_flight_image_hashes: Vec<u64>,
+    pub image_worker_tx: Option<Sender<(u64, usize, SharedBytes, u32)>>,
+    pub image_worker_rx: Option<Receiver<(u64, usize, Result<(u32, u32, u32, u32, SharedBytes), ()>)>>,
     pub pending_viewport_image_decodes: bool,
     pub media_dimensions_probed: bool,
     pub cached_layout_key: u64,
     pub cached_pages: std::rc::Rc<Vec<Vec<crate::word_view::LaidOutBlock>>>,
+    pub cached_metrics_key: u64,
+    pub cached_stats: DocumentStats,
+    pub cached_outline: Vec<OutlineItem>,
+    pub cached_rev_counts: (usize, usize),
     pub scroll_y: f32,
     pub target_scroll_y: f32,
     pub max_scroll_y: f32,
@@ -133,10 +144,24 @@ impl WordTabState {
             image_rgba_cache: Vec::new(),
             image_rgba_cache_bytes: 0,
             failed_image_hashes: Vec::new(),
+            in_flight_image_hashes: Vec::new(),
+            image_worker_tx: None,
+            image_worker_rx: None,
             pending_viewport_image_decodes: false,
             media_dimensions_probed: false,
             cached_layout_key: 0,
             cached_pages: std::rc::Rc::new(Vec::new()),
+            cached_metrics_key: 0,
+            cached_stats: DocumentStats {
+                words: 0,
+                chars: 0,
+                paragraphs: 0,
+                tables: 0,
+                images: 0,
+                reading_time_minutes: 1,
+            },
+            cached_outline: Vec::new(),
+            cached_rev_counts: (0, 0),
             scroll_y: 0.0,
             target_scroll_y: 0.0,
             max_scroll_y: 0.0,
@@ -147,6 +172,101 @@ impl WordTabState {
             spellcheck: false,
             dirty: false,
         }
+    }
+
+    /// Dispatches a large screenshot/figure payload to a dedicated `16 MiB`-stack background thread
+    /// so `WM_PAINT` never stalls on 4K/8K PNG or JPEG decoding!
+    pub fn enqueue_image_decode(
+        &mut self,
+        hash: u64,
+        block_idx: usize,
+        bytes: SharedBytes,
+        max_dim: u32,
+    ) {
+        if self.in_flight_image_hashes.contains(&hash) || self.failed_image_hashes.contains(&hash) {
+            return;
+        }
+        if self.image_worker_tx.is_none() {
+            let (job_tx, job_rx) = mpsc::channel::<(u64, usize, SharedBytes, u32)>();
+            let (done_tx, done_rx) =
+                mpsc::channel::<(u64, usize, Result<(u32, u32, u32, u32, SharedBytes), ()>)>();
+            let spawn_res = std::thread::Builder::new()
+                .name("rustpad-image-decoder".into())
+                .stack_size(16 * 1024 * 1024)
+                .spawn(move || {
+                    while let Ok((hkey, b_idx, payload, cap)) = job_rx.recv() {
+                        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            decode_any_image_thumbnail_rgba(&payload, cap)
+                                .map(|(ow, oh, tw, th, rgba)| {
+                                    (ow, oh, tw, th, SharedBytes::from_vec(rgba))
+                                })
+                                .map_err(|_| ())
+                        }))
+                        .unwrap_or(Err(()));
+                        if done_tx.send((hkey, b_idx, decoded)).is_err() {
+                            break;
+                        }
+                    }
+                });
+            if spawn_res.is_ok() {
+                self.image_worker_tx = Some(job_tx);
+                self.image_worker_rx = Some(done_rx);
+            }
+        }
+
+        if let Some(tx) = &self.image_worker_tx {
+            if tx.send((hash, block_idx, bytes, max_dim)).is_ok() {
+                if self.in_flight_image_hashes.len() >= 1024 {
+                    self.in_flight_image_hashes.remove(0);
+                }
+                self.in_flight_image_hashes.push(hash);
+            } else {
+                self.image_worker_tx = None;
+                self.image_worker_rx = None;
+            }
+        }
+    }
+
+    /// Drains completed background image thumbnails into the bounded `64 MiB` LRU cache.
+    pub fn poll_decoded_images(&mut self, max_cache_bytes: usize) -> bool {
+        let mut updated = false;
+        if let Some(rx) = &self.image_worker_rx {
+            while let Ok((hkey, block_idx, res)) = rx.try_recv() {
+                self.in_flight_image_hashes.retain(|&x| x != hkey);
+                match res {
+                    Ok((orig_w, orig_h, tw, th, shared_rgba)) => {
+                        if let Some(Block::Image(img_mut)) = self.doc.blocks.get_mut(block_idx) {
+                            if img_mut.intrinsic_px.is_none() {
+                                img_mut.intrinsic_px = Some((orig_w, orig_h));
+                            }
+                        }
+                        if !self.image_rgba_cache.iter().any(|(k, _, _, _)| *k == hkey) {
+                            let added_bytes = shared_rgba.len();
+                            while !self.image_rgba_cache.is_empty()
+                                && self.image_rgba_cache_bytes.saturating_add(added_bytes)
+                                    > max_cache_bytes
+                            {
+                                let removed = self.image_rgba_cache.remove(0);
+                                self.image_rgba_cache_bytes =
+                                    self.image_rgba_cache_bytes.saturating_sub(removed.3.len());
+                            }
+                            self.image_rgba_cache_bytes =
+                                self.image_rgba_cache_bytes.saturating_add(added_bytes);
+                            self.image_rgba_cache.push((hkey, tw, th, shared_rgba));
+                        }
+                        updated = true;
+                    }
+                    Err(()) => {
+                        if self.failed_image_hashes.len() >= 4096 {
+                            self.failed_image_hashes.remove(0);
+                        }
+                        self.failed_image_hashes.push(hkey);
+                        updated = true;
+                    }
+                }
+            }
+        }
+        updated
     }
 
     /// Returns ordered `((start_block, start_char), (end_block, end_char))` when a non-empty range is selected.
@@ -808,6 +928,15 @@ pub enum UiAction {
     FileCandidatePick(PathBuf),
     FindFocusField(bool),
     FindReplaceAll,
+    CancelDocLoad,
+}
+
+pub struct PendingDocLoad {
+    pub path: PathBuf,
+    pub file_size_bytes: u64,
+    pub progress_permille: Arc<AtomicU32>,
+    pub started_at: Instant,
+    pub rx: Receiver<Result<(Document, bool), String>>,
 }
 
 #[derive(Clone)]
@@ -878,6 +1007,7 @@ pub struct RustPadApp {
     pub cursor_blink_on: bool,
     pub status_toast: String,
     pub recent_files: Vec<PathBuf>,
+    pub pending_doc_load: Option<PendingDocLoad>,
 }
 
 impl Default for RustPadApp {
@@ -932,23 +1062,90 @@ impl RustPadApp {
             last_click_pos: (-100.0, -100.0),
             last_click_mods: Modifiers::default(),
             cursor_blink_on: true,
-            status_toast: "Ready · RustPad v2.3 Large-Doc, Table & Figure Studio · 60–120Hz Smooth UX".into(),
+            status_toast: "Ready · RustPad v2.4 Async Streaming Engine · Zero-Freeze 60–120Hz UX".into(),
             recent_files: recent,
+            pending_doc_load: None,
         }
     }
 
-    /// Steps 60Hz kinetic spring scrolling AND polls non-blocking background AI worker threads.
+    /// Steps 60Hz kinetic spring scrolling AND polls non-blocking background document/image/AI workers.
     /// Returns `true` if a repaint is needed.
     pub fn poll_background_tasks(&mut self) -> bool {
         let mut needs_repaint = false;
 
-        // 60Hz critically-damped spring interpolation for silky-smooth document & PDF scrolling
+        // 0. Poll non-blocking 32 MiB-stack `.docx` streaming worker (keeps UI silky at 60–120Hz!)
+        if let Some(load) = &self.pending_doc_load {
+            match load.rx.try_recv() {
+                Ok(Ok((doc, recovered_from_wal))) => {
+                    let p = load.path.clone();
+                    let elapsed_ms = load.started_at.elapsed().as_millis();
+                    self.pending_doc_load = None;
+
+                    let fig_count = doc
+                        .blocks
+                        .iter()
+                        .filter(|b| matches!(b, Block::Image(_)))
+                        .count();
+                    let media_mb = doc.estimated_media_bytes() as f64 / (1024.0 * 1024.0);
+                    let _ = AdvisoryFileLock::acquire(&p, "Nour Yahyaoui");
+                    if self.policy.audit_log_enabled {
+                        self.audit_trail
+                            .record("DOC_OPENED", &p.display().to_string(), "Nour Yahyaoui");
+                    }
+                    self.tabs
+                        .push(StudioTab::Word(WordTabState::from_doc(doc, Some(p.clone()))));
+                    self.active_tab = self.tabs.len() - 1;
+                    self.push_recent(p.clone());
+                    self.status_toast = if recovered_from_wal {
+                        format!("Recovered WAL crash journal for '{}'", p.display())
+                    } else if fig_count > 0 && media_mb >= 1.0 {
+                        format!(
+                            "Opened '{}' in {:.2}s ({fig_count} figures · {media_mb:.1} MB — async viewport streaming active)",
+                            p.display(),
+                            elapsed_ms as f32 / 1000.0
+                        )
+                    } else {
+                        format!(
+                            "Opened '{}' in {:.2}s",
+                            p.display(),
+                            elapsed_ms as f32 / 1000.0
+                        )
+                    };
+                    needs_repaint = true;
+                }
+                Ok(Err(err)) => {
+                    let p = load.path.clone();
+                    self.pending_doc_load = None;
+                    self.status_toast = format!("Could not open '{}': {err}", p.display());
+                    needs_repaint = true;
+                }
+                Err(TryRecvError::Empty) => {
+                    // Animate live streaming progress bar smoothly at 60fps
+                    needs_repaint = true;
+                }
+                Err(TryRecvError::Disconnected) => {
+                    let p = load.path.clone();
+                    self.pending_doc_load = None;
+                    self.status_toast =
+                        format!("Background loader stopped while opening '{}'", p.display());
+                    needs_repaint = true;
+                }
+            }
+        }
+
+        // 1. 60Hz critically-damped spring interpolation + background image thumbnail polling
         for (ti, tab) in self.tabs.iter_mut().enumerate() {
             if ti != self.active_tab && self.split_secondary_tab != Some(ti) {
                 continue;
             }
             match tab {
                 StudioTab::Word(w) => {
+                    if w.poll_decoded_images(64 * 1024 * 1024) {
+                        needs_repaint = true;
+                    }
+                    if !w.in_flight_image_hashes.is_empty() {
+                        needs_repaint = true;
+                    }
                     if w.pending_viewport_image_decodes {
                         w.pending_viewport_image_decodes = false;
                         needs_repaint = true;
@@ -1230,6 +1427,80 @@ impl RustPadApp {
         }
     }
 
+    /// Non-blocking interactive file opener: streams any `.docx >= 256 KiB` on a dedicated
+    /// `32 MiB`-stack background thread with live progress so the Win32 UI NEVER freezes!
+    pub fn open_path_interactive(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
+        let p = path.as_ref().to_path_buf();
+        let ext = p
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let file_size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+
+        if ext == "docx" && file_size >= 256 * 1024 {
+            let progress = Arc::new(AtomicU32::new(25));
+            let prog_worker = Arc::clone(&progress);
+            let worker_path = p.clone();
+            let (tx, rx) = mpsc::channel::<Result<(Document, bool), String>>();
+
+            let spawn_res = std::thread::Builder::new()
+                .name("rustpad-docx-loader".into())
+                .stack_size(32 * 1024 * 1024)
+                .spawn(move || {
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                        || -> Result<(Document, bool), String> {
+                            let wal_p = WalJournal::journal_path_for(Some(&worker_path), 0);
+                            if wal_p.exists() {
+                                if let Ok(wal_doc) = WalJournal::recover_frame(&wal_p) {
+                                    prog_worker.store(1000, Ordering::Relaxed);
+                                    return Ok((wal_doc, true));
+                                }
+                            }
+                            let raw =
+                                std::fs::read(&worker_path).map_err(|e| e.to_string())?;
+                            prog_worker.store(150, Ordering::Relaxed);
+                            let backing = SharedBytes::from_vec(raw);
+                            let doc = load_docx_shared_with_progress(backing, |done, total| {
+                                let ratio = (done as f64 / total.max(1) as f64).clamp(0.0, 1.0);
+                                let permille = (150.0 + ratio * 830.0).round() as u32;
+                                prog_worker.store(permille.min(990), Ordering::Relaxed);
+                            })
+                            .map_err(|e| e.0)?;
+                            prog_worker.store(1000, Ordering::Relaxed);
+                            Ok((doc, false))
+                        },
+                    ));
+                    let msg = match outcome {
+                        Ok(res) => res,
+                        Err(_) => Err(format!(
+                            "Failed to parse '{}' safely (corrupt or unsupported .docx structure)",
+                            worker_path.display()
+                        )),
+                    };
+                    let _ = tx.send(msg);
+                });
+
+            if spawn_res.is_ok() {
+                let mb = file_size as f64 / (1024.0 * 1024.0);
+                self.pending_doc_load = Some(PendingDocLoad {
+                    path: p.clone(),
+                    file_size_bytes: file_size,
+                    progress_permille: progress,
+                    started_at: Instant::now(),
+                    rx,
+                });
+                self.status_toast = format!(
+                    "Streaming '{}' ({mb:.1} MB) on background engine — UI active at 60–120Hz…",
+                    p.display()
+                );
+                return Ok(());
+            }
+        }
+
+        self.open_path(p)
+    }
+
     pub fn open_path(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
         let p = path.as_ref().to_path_buf();
         let ext = p
@@ -1429,7 +1700,7 @@ impl RustPadApp {
             if let Err(e) = self.insert_image_from_path(&path, None) {
                 self.status_toast = format!("Image drop error: {e}");
             }
-        } else if let Err(e) = self.open_path(&path) {
+        } else if let Err(e) = self.open_path_interactive(&path) {
             self.status_toast = format!("Drop open error: {e}");
         }
     }
@@ -1566,7 +1837,7 @@ impl RustPadApp {
                 }
             }
             FileModalKind::OpenAny => {
-                if let Err(e) = self.open_path(&path) {
+                if let Err(e) = self.open_path_interactive(&path) {
                     self.status_toast = format!("Open error: {e}");
                 }
             }
@@ -2911,8 +3182,14 @@ impl RustPadApp {
                 self.status_toast = format!("Created document from '{label}' template");
             }
             UiAction::OpenRecentPath(path) => {
-                if let Err(e) = self.open_path(&path) {
+                if let Err(e) = self.open_path_interactive(&path) {
                     self.status_toast = format!("Could not open '{}': {e}", path.display());
+                }
+            }
+            UiAction::CancelDocLoad => {
+                if let Some(load) = self.pending_doc_load.take() {
+                    self.status_toast =
+                        format!("Cancelled background open for '{}'", load.path.display());
                 }
             }
             UiAction::JumpOutline {
@@ -3844,7 +4121,7 @@ impl RustPadApp {
     }
 
     pub fn handle_key_down(&mut self, key: Key, mods: Modifiers) {
-        // Global Escape closes dropdowns, modals, AI input focus, active selection, or Focus Mode
+        // Global Escape closes dropdowns, modals, background loader, AI input focus, active selection, or Focus Mode
         if key == Key::Escape {
             if self.open_dropdown.is_some() {
                 self.open_dropdown = None;
@@ -3852,6 +4129,11 @@ impl RustPadApp {
             }
             if self.modal.is_some() {
                 self.modal = None;
+                return;
+            }
+            if let Some(load) = self.pending_doc_load.take() {
+                self.status_toast =
+                    format!("Cancelled background open for '{}'", load.path.display());
                 return;
             }
             if self.ai_dock.focused_field.is_some() {
