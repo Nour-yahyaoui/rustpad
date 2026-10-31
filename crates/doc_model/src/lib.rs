@@ -1498,13 +1498,162 @@ impl TablePreset {
     }
 }
 
+/// Reference-counted immutable byte buffer (`O(1)` clone & pointer-equality fast path)
+/// so `Document` clones in `UndoHistory` and `SnapshotVault` never duplicate multi-MB media.
+#[derive(Clone, Default)]
+pub struct SharedBytes(std::sync::Arc<[u8]>);
+
+impl SharedBytes {
+    pub fn new() -> Self {
+        Self(std::sync::Arc::from(&[][..]))
+    }
+
+    pub fn from_vec(v: Vec<u8>) -> Self {
+        Self(std::sync::Arc::from(v))
+    }
+
+    pub fn from_slice(s: &[u8]) -> Self {
+        Self(std::sync::Arc::from(s))
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for SharedBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<Vec<u8>> for SharedBytes {
+    fn from(v: Vec<u8>) -> Self {
+        Self::from_vec(v)
+    }
+}
+
+impl From<&[u8]> for SharedBytes {
+    fn from(s: &[u8]) -> Self {
+        Self::from_slice(s)
+    }
+}
+
+impl PartialEq for SharedBytes {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0) || self.0[..] == other.0[..]
+    }
+}
+
+impl Eq for SharedBytes {}
+
+impl std::fmt::Debug for SharedBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SharedBytes({} B)", self.0.len())
+    }
+}
+
+/// Zero-allocation header dimension probe for PNG, JPEG (`SOF0`..`SOF2`), BMP, DIB, and GIF.
+/// Allows 100+ screenshot `.docx` layouts to compute exact aspect ratios in microseconds
+/// without decoding gigabytes of pixel data upfront.
+pub fn probe_media_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    // 1. PNG IHDR (bytes 16..24)
+    if bytes.len() >= 24
+        && bytes[..8] == [137, 80, 78, 71, 13, 10, 26, 10]
+        && &bytes[12..16] == b"IHDR"
+    {
+        let w = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+        let h = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+        if w > 0 && h > 0 {
+            return Some((w, h));
+        }
+    }
+    // 2. JPEG SOF0 / SOF1 / SOF2 marker scan (zero entropy decoding)
+    if bytes.len() >= 4 && bytes[0] == 0xFF && bytes[1] == 0xD8 {
+        let mut pos = 2usize;
+        while pos + 1 < bytes.len() {
+            if bytes[pos] != 0xFF {
+                pos += 1;
+                continue;
+            }
+            while pos < bytes.len() && bytes[pos] == 0xFF {
+                pos += 1;
+            }
+            if pos >= bytes.len() {
+                break;
+            }
+            let marker = bytes[pos];
+            pos += 1;
+            if marker == 0xD9 || marker == 0xDA {
+                break;
+            }
+            if marker == 0x00 || marker == 0xD8 || (0xD0..=0xD7).contains(&marker) || marker == 0x01
+            {
+                continue;
+            }
+            if pos + 2 > bytes.len() {
+                break;
+            }
+            let seg_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+            if seg_len < 2 || pos + seg_len > bytes.len() {
+                break;
+            }
+            if matches!(marker, 0xC0 | 0xC1 | 0xC2) && seg_len >= 7 {
+                let h = u16::from_be_bytes([bytes[pos + 3], bytes[pos + 4]]) as u32;
+                let w = u16::from_be_bytes([bytes[pos + 5], bytes[pos + 6]]) as u32;
+                if w > 0 && h > 0 {
+                    return Some((w, h));
+                }
+            }
+            pos += seg_len;
+        }
+    }
+    // 3. BMP ("BM" + BITMAPINFOHEADER)
+    if bytes.len() >= 26 && &bytes[0..2] == b"BM" {
+        let w = i32::from_le_bytes([bytes[18], bytes[19], bytes[20], bytes[21]]).unsigned_abs();
+        let h = i32::from_le_bytes([bytes[22], bytes[23], bytes[24], bytes[25]]).unsigned_abs();
+        if w > 0 && h > 0 {
+            return Some((w, h));
+        }
+    }
+    // 4. GIF87a / GIF89a Logical Screen Descriptor
+    if bytes.len() >= 10 && (&bytes[0..6] == b"GIF87a" || &bytes[0..6] == b"GIF89a") {
+        let w = u16::from_le_bytes([bytes[6], bytes[7]]) as u32;
+        let h = u16::from_le_bytes([bytes[8], bytes[9]]) as u32;
+        if w > 0 && h > 0 {
+            return Some((w, h));
+        }
+    }
+    // 5. Raw Win32 DIB header
+    if bytes.len() >= 40 {
+        let hdr = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        if matches!(hdr, 40 | 52 | 56 | 108 | 124) {
+            let w = i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]).unsigned_abs();
+            let h = i32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]).unsigned_abs();
+            if w > 0 && h > 0 && w <= 32_768 && h <= 32_768 {
+                return Some((w, h));
+            }
+        }
+    }
+    None
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImageBlock {
     pub name: String,
     pub width_pt: f32,
     pub height_pt: f32,
-    pub png_bytes: Vec<u8>,
-    pub rgba_preview: Option<(u32, u32, Vec<u8>)>,
+    pub png_bytes: SharedBytes,
+    pub rgba_preview: Option<(u32, u32, SharedBytes)>,
+    pub intrinsic_px: Option<(u32, u32)>,
     pub caption: String,
     pub alignment: Alignment,
 }
@@ -1514,14 +1663,17 @@ impl ImageBlock {
         name: impl Into<String>,
         width_pt: f32,
         height_pt: f32,
-        raw_bytes: Vec<u8>,
+        raw_bytes: impl Into<SharedBytes>,
     ) -> Self {
+        let png_bytes = raw_bytes.into();
+        let intrinsic_px = probe_media_dimensions(&png_bytes);
         Self {
             name: name.into(),
             width_pt: width_pt.max(24.0),
             height_pt: height_pt.max(24.0),
-            png_bytes: raw_bytes,
+            png_bytes,
             rgba_preview: None,
+            intrinsic_px,
             caption: String::new(),
             alignment: Alignment::Center,
         }
@@ -1533,7 +1685,7 @@ impl ImageBlock {
         pixel_w: u32,
         pixel_h: u32,
         rgba: Vec<u8>,
-        raw_bytes: Vec<u8>,
+        raw_bytes: impl Into<SharedBytes>,
         max_content_width_pt: f32,
     ) -> Self {
         let pw = pixel_w.max(1) as f32;
@@ -1546,21 +1698,40 @@ impl ImageBlock {
         let height_pt = (width_pt / aspect).clamp(24.0, 620.0);
         let fitted_w = (height_pt * aspect).min(max_w);
 
+        // Keep inline `rgba_preview` only for compact buffers (<= 4 MiB); larger screenshots
+        // stream through the bounded viewport thumbnail LRU cache on demand.
+        let inline_preview = if rgba.len() <= 4 * 1024 * 1024 {
+            Some((pixel_w, pixel_h, SharedBytes::from_vec(rgba)))
+        } else {
+            None
+        };
+
         Self {
             name: name.into(),
             width_pt: fitted_w,
             height_pt,
-            png_bytes: raw_bytes,
-            rgba_preview: Some((pixel_w, pixel_h, rgba)),
+            png_bytes: raw_bytes.into(),
+            rgba_preview: inline_preview,
+            intrinsic_px: Some((pixel_w, pixel_h)),
             caption: String::new(),
             alignment: Alignment::Center,
         }
     }
 
     pub fn aspect_ratio(&self) -> f32 {
+        if let Some((iw, ih)) = self.intrinsic_px {
+            if iw > 0 && ih > 0 {
+                return (iw as f32 / ih as f32).clamp(0.08, 12.0);
+            }
+        }
         if let Some((iw, ih, _)) = &self.rgba_preview {
             if *iw > 0 && *ih > 0 {
                 return (*iw as f32 / *ih as f32).clamp(0.08, 12.0);
+            }
+        }
+        if let Some((iw, ih)) = probe_media_dimensions(&self.png_bytes) {
+            if iw > 0 && ih > 0 {
+                return (iw as f32 / ih as f32).clamp(0.08, 12.0);
             }
         }
         (self.width_pt / self.height_pt.max(1.0)).clamp(0.08, 12.0)
@@ -1764,6 +1935,47 @@ impl Document {
         if self.blocks.is_empty() {
             self.blocks
                 .push(Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "")));
+        }
+    }
+
+    /// Total binary media + passthrough payload size in bytes (used to skip redundant
+    /// synchronous LZ77 compression on 30–100+ MB screenshot-heavy `.docx` documents).
+    pub fn estimated_media_bytes(&self) -> usize {
+        let mut sum = 0usize;
+        for b in &self.blocks {
+            if let Block::Image(img) = b {
+                sum = sum.saturating_add(img.png_bytes.len());
+            }
+        }
+        for v in self.passthrough_parts.values() {
+            sum = sum.saturating_add(v.len());
+        }
+        sum
+    }
+
+    /// Lightweight `O(1)` media-refcounted clone that omits archive `passthrough_parts`
+    /// and decoded `rgba_preview` buffers for fast Undo/Redo and in-memory Time-Machine snapshots.
+    pub fn clone_without_passthrough(&self) -> Self {
+        let mut blocks = Vec::with_capacity(self.blocks.len());
+        for b in &self.blocks {
+            match b {
+                Block::Image(img) => {
+                    let mut slim = img.clone();
+                    slim.rgba_preview = None;
+                    blocks.push(Block::Image(slim));
+                }
+                other => blocks.push(other.clone()),
+            }
+        }
+        Self {
+            title: self.title.clone(),
+            author: self.author.clone(),
+            classification: self.classification,
+            track_changes: self.track_changes,
+            page_setup: self.page_setup.clone(),
+            blocks,
+            comments: self.comments.clone(),
+            passthrough_parts: BTreeMap::new(),
         }
     }
 
@@ -2352,19 +2564,22 @@ impl UndoHistory {
     }
 
     pub fn record(&mut self, current: &Document) {
-        if self.undo_stack.last() == Some(current) {
+        let slim = current.clone_without_passthrough();
+        if self.undo_stack.last() == Some(&slim) {
             return;
         }
         if self.undo_stack.len() >= self.max_depth {
             self.undo_stack.remove(0);
         }
-        self.undo_stack.push(current.clone());
+        self.undo_stack.push(slim);
         self.redo_stack.clear();
     }
 
     pub fn undo(&mut self, current: &mut Document) -> bool {
-        if let Some(prev) = self.undo_stack.pop() {
-            self.redo_stack.push(current.clone());
+        if let Some(mut prev) = self.undo_stack.pop() {
+            let preserved_passthrough = std::mem::take(&mut current.passthrough_parts);
+            self.redo_stack.push(current.clone_without_passthrough());
+            prev.passthrough_parts = preserved_passthrough;
             *current = prev;
             true
         } else {
@@ -2373,8 +2588,10 @@ impl UndoHistory {
     }
 
     pub fn redo(&mut self, current: &mut Document) -> bool {
-        if let Some(next) = self.redo_stack.pop() {
-            self.undo_stack.push(current.clone());
+        if let Some(mut next) = self.redo_stack.pop() {
+            let preserved_passthrough = std::mem::take(&mut current.passthrough_parts);
+            self.undo_stack.push(current.clone_without_passthrough());
+            next.passthrough_parts = preserved_passthrough;
             *current = next;
             true
         } else {

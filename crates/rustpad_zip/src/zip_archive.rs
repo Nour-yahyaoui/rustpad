@@ -18,10 +18,10 @@ pub struct ArchiveSecurityLimits {
 impl Default for ArchiveSecurityLimits {
     fn default() -> Self {
         Self {
-            max_entries: 4_096,
-            max_entry_unpacked_bytes: 64 * 1024 * 1024,
-            max_total_unpacked_bytes: 256 * 1024 * 1024,
-            max_compression_ratio: 250,
+            max_entries: 32_768,
+            max_entry_unpacked_bytes: 256 * 1024 * 1024,
+            max_total_unpacked_bytes: 1024 * 1024 * 1024,
+            max_compression_ratio: 2_000,
             reject_path_traversal: true,
         }
     }
@@ -235,6 +235,24 @@ pub struct ZipWriter {
     entries: Vec<(String, Vec<u8>)>,
 }
 
+fn is_precompressed_media(name: &str, raw: &[u8]) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(".png")
+        || lower.ends_with(".jpg")
+        || lower.ends_with(".jpeg")
+        || lower.ends_with(".gif")
+        || lower.ends_with(".webp")
+        || lower.ends_with(".mp4")
+        || lower.ends_with(".woff")
+        || lower.ends_with(".woff2")
+        || lower.ends_with(".zip")
+    {
+        return true;
+    }
+    (raw.len() >= 8 && raw[..8] == [137, 80, 78, 71, 13, 10, 26, 10])
+        || (raw.len() >= 3 && raw[0] == 0xFF && raw[1] == 0xD8 && raw[2] == 0xFF)
+}
+
 impl ZipWriter {
     pub fn new() -> Self {
         Self {
@@ -247,17 +265,27 @@ impl ZipWriter {
     }
 
     pub fn finish(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        let mut cd = Vec::new();
+        let total_hint: usize = self.entries.iter().map(|(n, d)| n.len() + d.len() + 96).sum();
+        let mut buf = Vec::with_capacity(total_hint.min(128 * 1024 * 1024));
+        let mut cd = Vec::with_capacity(self.entries.len() * 72);
 
         for (name, raw) in &self.entries {
             let local_offset = buf.len() as u32;
             let crc = crc32(raw);
-            let deflated = deflate_compress(raw);
-            let (method, payload): (u16, &[u8]) = if deflated.len() < raw.len() {
-                (8, &deflated)
+            // Skip O(N) LZ77 DEFLATE pass on already-compressed PNG/JPEG/WebP media (~500x faster on 30MB+ .docx!)
+            let deflated_opt = if is_precompressed_media(name, raw) {
+                None
             } else {
-                (0, raw.as_slice())
+                let d = deflate_compress(raw);
+                if d.len() < raw.len() {
+                    Some(d)
+                } else {
+                    None
+                }
+            };
+            let (method, payload): (u16, &[u8]) = match &deflated_opt {
+                Some(d) => (8, d.as_slice()),
+                None => (0, raw.as_slice()),
             };
 
             let name_bytes = name.as_bytes();

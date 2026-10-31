@@ -9,7 +9,8 @@ pub mod ttf;
 
 pub use canvas::{Rect, Surface, UiIcon};
 pub use jpeg_codec::{
-    decode_any_image_rgba, decode_jpeg_rgba, detect_image_extension, hash_image_bytes,
+    decode_any_image_rgba, decode_any_image_thumbnail_rgba, decode_jpeg_rgba,
+    detect_image_extension, hash_image_bytes,
 };
 pub use png_codec::{
     decode_bmp_rgba, decode_dib_rgba, decode_png_rgba, encode_rgba_png, encode_surface_png,

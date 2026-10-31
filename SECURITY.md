@@ -1,6 +1,6 @@
 # Security Policy & Enterprise Threat Model
 
-**Project:** RustPad Enterprise Suite (`v2.2.0`)  
+**Project:** RustPad Enterprise Suite (`v2.3.0`)  
 **Maintainer:** Nour Yahyaoui (<nourryahyaoui@gmail.com>)  
 **Repository:** <https://github.com/Nour-yahyaoui/rustpad>
 

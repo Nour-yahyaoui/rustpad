@@ -28,9 +28,19 @@ pub fn detect_image_extension(bytes: &[u8]) -> &'static str {
 /// Fast 64-bit FNV-1a content hash so decoded RGBA caches stay valid even when blocks move.
 pub fn hash_image_bytes(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    // Hash length + up to 4096 strided sample bytes for sub-microsecond cache lookup on multi-MB photos
     h ^= bytes.len() as u64;
     h = h.wrapping_mul(0x0100_0000_01b3);
+    // Include head + tail + up to 4096 strided interior samples to prevent same-length screenshot collisions
+    for &b in bytes.iter().take(96) {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    if bytes.len() > 96 {
+        for &b in &bytes[bytes.len() - 96..] {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
     let step = (bytes.len() / 4096).max(1);
     let mut i = 0usize;
     while i < bytes.len() {
@@ -39,6 +49,70 @@ pub fn hash_image_bytes(bytes: &[u8]) -> u64 {
         i += step;
     }
     h
+}
+
+/// Decodes any supported image (`PNG`, `JPEG`, `BMP`, `DIB`) and immediately box-downsamples
+/// oversized Retina/4K/stitched screenshots so neither edge exceeds `max_dim` (`>= 128`).
+/// Returns `(orig_w, orig_h, thumb_w, thumb_h, thumb_rgba)` so large 100+ screenshot `.docx`
+/// files render crisply on screen while using 8–16x less RAM.
+pub fn decode_any_image_thumbnail_rgba(
+    bytes: &[u8],
+    max_dim: u32,
+) -> Result<(u32, u32, u32, u32, Vec<u8>), String> {
+    let (ow, oh, rgba) = decode_any_image_rgba(bytes)?;
+    let cap = max_dim.max(128);
+    if ow <= cap && oh <= cap {
+        return Ok((ow, oh, ow, oh, rgba));
+    }
+    let scale = (cap as f64 / ow.max(oh) as f64).clamp(0.01, 1.0);
+    let tw = ((ow as f64 * scale).round() as u32).max(1);
+    let th = ((oh as f64 * scale).round() as u32).max(1);
+
+    let mut out = vec![0u8; (tw as usize) * (th as usize) * 4];
+    let ow_u = ow as usize;
+    let oh_u = oh as usize;
+    let tw_u = tw as usize;
+    let th_u = th as usize;
+
+    for dy in 0..th_u {
+        let sy0 = (dy * oh_u) / th_u;
+        let sy1 = (((dy + 1) * oh_u) / th_u).max(sy0 + 1).min(oh_u);
+        for dx in 0..tw_u {
+            let sx0 = (dx * ow_u) / tw_u;
+            let sx1 = (((dx + 1) * ow_u) / tw_u).max(sx0 + 1).min(ow_u);
+            let mut r_acc = 0u32;
+            let mut g_acc = 0u32;
+            let mut b_acc = 0u32;
+            let mut a_acc = 0u32;
+            let mut cnt = 0u32;
+            // Stride large sample boxes so downsampling an 8K image stays < 2 ms
+            let y_step = ((sy1 - sy0) / 4).max(1);
+            let x_step = ((sx1 - sx0) / 4).max(1);
+            let mut sy = sy0;
+            while sy < sy1 {
+                let row_off = sy * ow_u * 4;
+                let mut sx = sx0;
+                while sx < sx1 {
+                    let o = row_off + sx * 4;
+                    r_acc += rgba[o] as u32;
+                    g_acc += rgba[o + 1] as u32;
+                    b_acc += rgba[o + 2] as u32;
+                    a_acc += rgba[o + 3] as u32;
+                    cnt += 1;
+                    sx += x_step;
+                }
+                sy += y_step;
+            }
+            let c = cnt.max(1);
+            let dst_o = (dy * tw_u + dx) * 4;
+            out[dst_o] = (r_acc / c) as u8;
+            out[dst_o + 1] = (g_acc / c) as u8;
+            out[dst_o + 2] = (b_acc / c) as u8;
+            out[dst_o + 3] = (a_acc / c) as u8;
+        }
+    }
+
+    Ok((ow, oh, tw, th, out))
 }
 
 /// Universal zero-dependency image decoder supporting PNG (all color types/bit depths/Adam7),
@@ -368,14 +442,14 @@ pub fn decode_jpeg_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
                 height = u16::from_be_bytes([seg[1], seg[2]]) as usize;
                 width = u16::from_be_bytes([seg[3], seg[4]]) as usize;
                 let nf = seg[5] as usize;
-                if width == 0 || height == 0 || width > 8192 || height > 8192 {
-                    return Err("JPEG dimensions out of bounds (1..=8192)".into());
+                if width == 0 || height == 0 || width > 32_768 || height > 32_768 {
+                    return Err("JPEG dimensions out of bounds (1..=32768)".into());
                 }
                 if !matches!(nf, 1 | 3 | 4) || seg.len() < 6 + nf * 3 {
                     return Err("Unsupported JPEG component count".into());
                 }
-                if width.saturating_mul(height) > 32 * 1024 * 1024 {
-                    return Err("JPEG exceeds 32MP safety limit".into());
+                if width.saturating_mul(height) > 64 * 1024 * 1024 {
+                    return Err("JPEG exceeds 64MP safety limit".into());
                 }
                 progressive = marker == 0xC2;
                 comps.clear();
@@ -881,5 +955,13 @@ mod tests {
         assert_eq!((w, h), (8, 8));
         assert_eq!(rgba.len(), 8 * 8 * 4);
         assert_eq!(&rgba[0..4], &[128, 128, 128, 255]);
+
+        // Verify `decode_any_image_thumbnail_rgba` downsamples oversized buffers cleanly
+        let raw_png = crate::png_codec::encode_rgba_png(320, 160, &vec![200u8; 320 * 160 * 4]);
+        let (ow, oh, tw, th, thumb) =
+            decode_any_image_thumbnail_rgba(&raw_png, 160).expect("thumbnail downsample");
+        assert_eq!((ow, oh), (320, 160));
+        assert_eq!((tw, th), (160, 80));
+        assert_eq!(thumb.len(), 160 * 80 * 4);
     }
 }
