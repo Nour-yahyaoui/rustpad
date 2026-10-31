@@ -6,12 +6,13 @@ use crate::state::{
     DragInteraction, HitRegion, ToolbarDropdown, UiAction, WordLineHitBox, WordTabState,
 };
 use doc_model::{
-    Alignment, Block, FontFamily, ListKind, Paragraph, ParagraphStyle, RevisionKind,
+    probe_media_dimensions, Alignment, Block, FontFamily, ListKind, Paragraph, ParagraphStyle,
+    RevisionKind, SharedBytes,
 };
 use power_tools::SpellChecker;
 use rustpad_render::{
-    decode_any_image_rgba, hash_image_bytes, Color, DaylightTheme, FontBook, FontSlot, Rect,
-    Surface, UiIcon,
+    decode_any_image_thumbnail_rgba, hash_image_bytes, Color, DaylightTheme, FontBook, FontSlot,
+    Rect, Surface, UiIcon,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -157,27 +158,20 @@ pub fn paint_word_tab(
     let content_w = (page_w - margin_x * 2.0).max(120.0);
     let usable_page_h = (page_h - margin_top - margin_bot).max(160.0);
 
-    // Lazily decode any embedded PNG/JPEG/BMP figures BEFORE layout so `img.aspect_ratio()` is exact!
-    for blk in &mut w.doc.blocks {
-        if let Block::Image(img) = blk {
-            if img.rgba_preview.is_none() && !img.png_bytes.is_empty() {
-                let hkey = hash_image_bytes(&img.png_bytes);
-                if let Some((_, iw, ih, rgba)) =
-                    w.image_rgba_cache.iter().find(|(k, _, _, _)| *k == hkey)
-                {
-                    img.rgba_preview = Some((*iw, *ih, rgba.clone()));
-                } else if let Ok((iw, ih, rgba)) = decode_any_image_rgba(&img.png_bytes) {
-                    if w.image_rgba_cache.len() >= 32 {
-                        w.image_rgba_cache.remove(0);
-                    }
-                    w.image_rgba_cache.push((hkey, iw, ih, rgba.clone()));
-                    img.rgba_preview = Some((iw, ih, rgba));
+    // Zero-allocation header probe on first frame: populate `intrinsic_px` for all figures in
+    // microseconds without decoding gigabytes of off-screen screenshots upfront!
+    if !w.media_dimensions_probed {
+        for blk in &mut w.doc.blocks {
+            if let Block::Image(img) = blk {
+                if img.intrinsic_px.is_none() && !img.png_bytes.is_empty() {
+                    img.intrinsic_px = probe_media_dimensions(&img.png_bytes);
                 }
             }
         }
+        w.media_dimensions_probed = true;
     }
 
-    let pages = layout_document_pages(fonts, w, scale, content_w, usable_page_h);
+    let pages = ensure_cached_layout(fonts, w, scale, content_w, usable_page_h);
     let page_gap = 28.0 * s;
     let top_pad = 26.0 * s;
     let total_pages = pages.len().max(1);
@@ -260,6 +254,7 @@ pub fn paint_word_tab(
     let sheet_x = canvas_rect.x
         + ((canvas_rect.w - scrollbar_reserve - page_w) * 0.5).max(18.0 * s);
     let mut sel_bar_anchor: Option<Rect> = None;
+    let mut decoded_images_this_frame = 0usize;
 
     for (page_idx, page_items) in pages.iter().enumerate() {
         let sheet_y =
@@ -366,7 +361,22 @@ pub fn paint_word_tab(
 
         let content_origin_x = sheet.x + margin_x;
         let content_origin_y = sheet.y + margin_top;
+
+        // Progressive viewport-only HiDPI thumbnail decoder (64 MiB LRU budget, max 3 decodes/frame)
+        warm_visible_page_images(
+            w,
+            page_items,
+            content_origin_y,
+            canvas_rect,
+            &mut decoded_images_this_frame,
+        );
+
         for item in page_items {
+            let blk_top = content_origin_y + item.rel_y;
+            let blk_bot = blk_top + item.height;
+            if blk_bot < canvas_rect.y - 36.0 || blk_top > canvas_rect.y + canvas_rect.h + 36.0 {
+                continue;
+            }
             paint_laid_out_block(
                 surface,
                 fonts,
@@ -637,25 +647,233 @@ pub fn paint_canvas_scrollbar(
     ));
 }
 
-struct LaidOutBlock {
-    block_idx: usize,
-    rel_y: f32,
-    height: f32,
-    lines: Vec<LaidOutLine>,
-    table_row_heights: Vec<f32>,
-    table_wrapped_cells: Vec<Vec<Vec<String>>>,
+const MAX_IMAGE_DECODES_PER_FRAME: usize = 3;
+const THUMB_MAX_DIM: u32 = 1440;
+const IMAGE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Clone)]
+pub struct LaidOutBlock {
+    pub block_idx: usize,
+    pub rel_y: f32,
+    pub height: f32,
+    pub lines: Vec<LaidOutLine>,
+    pub table_row_heights: Vec<f32>,
+    pub table_wrapped_cells: Vec<Vec<Vec<String>>>,
 }
 
-struct LaidOutLine {
-    text: String,
-    char_start: usize,
-    slot: FontSlot,
-    px_size: f32,
-    line_h: f32,
-    color: Color,
-    highlight: Option<Color>,
-    underline: bool,
-    strike: bool,
+#[derive(Clone)]
+pub struct LaidOutLine {
+    pub text: String,
+    pub char_start: usize,
+    pub slot: FontSlot,
+    pub px_size: f32,
+    pub line_h: f32,
+    pub color: Color,
+    pub highlight: Option<Color>,
+    pub underline: bool,
+    pub strike: bool,
+}
+
+fn fnv_mix_u64(mut h: u64, val: u64) -> u64 {
+    h ^= val;
+    h.wrapping_mul(0x0100_0000_01b3)
+}
+
+fn fnv_mix_bytes(mut h: u64, bytes: &[u8]) -> u64 {
+    h ^= bytes.len() as u64;
+    h = h.wrapping_mul(0x0100_0000_01b3);
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
+fn compute_layout_key(
+    w: &WordTabState,
+    scale: f32,
+    content_w: f32,
+    usable_page_h: f32,
+) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    h = fnv_mix_u64(h, scale.to_bits() as u64);
+    h = fnv_mix_u64(h, content_w.to_bits() as u64);
+    h = fnv_mix_u64(h, usable_page_h.to_bits() as u64);
+    h = fnv_mix_u64(h, w.doc.track_changes as u64);
+    h = fnv_mix_u64(
+        h,
+        w.selected_image_block.map(|i| (i as u64) + 1).unwrap_or(0),
+    );
+    h = fnv_mix_u64(h, w.doc.blocks.len() as u64);
+    for (tb_idx, weights) in &w.table_col_weights {
+        h = fnv_mix_u64(h, *tb_idx as u64);
+        for wt in weights {
+            h = fnv_mix_u64(h, wt.to_bits() as u64);
+        }
+    }
+    for blk in &w.doc.blocks {
+        match blk {
+            Block::PageBreak => h = fnv_mix_u64(h, 0xA1),
+            Block::HorizontalRule => h = fnv_mix_u64(h, 0xA2),
+            Block::Image(img) => {
+                h = fnv_mix_u64(h, 0xA3);
+                h = fnv_mix_u64(h, img.width_pt.to_bits() as u64);
+                h = fnv_mix_u64(h, img.height_pt.to_bits() as u64);
+                h = fnv_mix_u64(h, img.aspect_ratio().to_bits() as u64);
+                h = fnv_mix_bytes(h, img.caption.as_bytes());
+            }
+            Block::Table(t) => {
+                h = fnv_mix_u64(h, 0xA4);
+                h = fnv_mix_u64(h, t.cols as u64);
+                h = fnv_mix_u64(h, t.rows.len() as u64);
+                for row in &t.rows {
+                    for cell in row {
+                        h = fnv_mix_u64(h, cell.bold as u64);
+                        h = fnv_mix_bytes(h, cell.text.as_bytes());
+                    }
+                }
+            }
+            Block::Paragraph(p) => {
+                h = fnv_mix_u64(h, 0xA5);
+                h = fnv_mix_u64(h, p.style as u64);
+                h = fnv_mix_u64(h, p.alignment as u64);
+                h = fnv_mix_u64(h, p.indent_level as u64);
+                h = fnv_mix_u64(h, p.line_spacing.to_bits() as u64);
+                let lk_tag = match p.list_kind {
+                    ListKind::None => 0u64,
+                    ListKind::Bullet => 1,
+                    ListKind::Numbered(n) => 2 + (n as u64) * 8,
+                    ListKind::Checklist(b) => 3 + (b as u64),
+                };
+                h = fnv_mix_u64(h, lk_tag);
+                for sp in &p.spans {
+                    h = fnv_mix_bytes(h, sp.text.as_bytes());
+                    h = fnv_mix_u64(
+                        h,
+                        (sp.style.bold as u64)
+                            | ((sp.style.italic as u64) << 1)
+                            | ((sp.style.underline as u64) << 2)
+                            | ((sp.style.strikethrough as u64) << 3)
+                            | ((sp.style.font_family as u64) << 4),
+                    );
+                    h = fnv_mix_u64(h, sp.style.font_size_pt.to_bits() as u64);
+                    h = fnv_mix_u64(
+                        h,
+                        ((sp.style.color.r as u64) << 16)
+                            | ((sp.style.color.g as u64) << 8)
+                            | (sp.style.color.b as u64),
+                    );
+                    if let Some(hl) = sp.style.highlight {
+                        h = fnv_mix_u64(
+                            h,
+                            0x100_0000
+                                | ((hl.r as u64) << 16)
+                                | ((hl.g as u64) << 8)
+                                | (hl.b as u64),
+                        );
+                    }
+                    if let Some(rev) = &sp.revision {
+                        h = fnv_mix_u64(h, 0x9000 + (rev.id as u64) * 4 + (rev.kind as u64));
+                    }
+                }
+            }
+        }
+    }
+    h.max(1)
+}
+
+fn ensure_cached_layout(
+    fonts: &mut FontBook,
+    w: &mut WordTabState,
+    scale: f32,
+    content_w: f32,
+    usable_page_h: f32,
+) -> std::rc::Rc<Vec<Vec<LaidOutBlock>>> {
+    let key = compute_layout_key(w, scale, content_w, usable_page_h);
+    if w.cached_layout_key == key && !w.cached_pages.is_empty() {
+        return w.cached_pages.clone();
+    }
+    let built = std::rc::Rc::new(layout_document_pages(
+        fonts,
+        w,
+        scale,
+        content_w,
+        usable_page_h,
+    ));
+    w.cached_layout_key = key;
+    w.cached_pages = built.clone();
+    built
+}
+
+fn warm_visible_page_images(
+    w: &mut WordTabState,
+    page_items: &[LaidOutBlock],
+    content_origin_y: f32,
+    canvas_rect: Rect,
+    decoded_this_frame: &mut usize,
+) {
+    let prefetch_top = canvas_rect.y - 140.0;
+    let prefetch_bot = canvas_rect.y + canvas_rect.h + 140.0;
+
+    for item in page_items {
+        let blk_top = content_origin_y + item.rel_y;
+        let blk_bot = blk_top + item.height;
+        if blk_bot < prefetch_top || blk_top > prefetch_bot {
+            continue;
+        }
+        let Some(Block::Image(img)) = w.doc.blocks.get(item.block_idx) else {
+            continue;
+        };
+        if img.rgba_preview.is_some() || img.png_bytes.is_empty() {
+            continue;
+        }
+        let hkey = hash_image_bytes(&img.png_bytes);
+        if let Some(pos) = w.image_rgba_cache.iter().position(|(k, _, _, _)| *k == hkey) {
+            // Promote hit to MRU tail in O(1)
+            let last = w.image_rgba_cache.len() - 1;
+            if pos != last {
+                let entry = w.image_rgba_cache.remove(pos);
+                w.image_rgba_cache.push(entry);
+            }
+            continue;
+        }
+        if w.failed_image_hashes.contains(&hkey) {
+            continue;
+        }
+        if *decoded_this_frame >= MAX_IMAGE_DECODES_PER_FRAME {
+            w.pending_viewport_image_decodes = true;
+            continue;
+        }
+
+        let payload = img.png_bytes.clone();
+        *decoded_this_frame += 1;
+        match decode_any_image_thumbnail_rgba(&payload, THUMB_MAX_DIM) {
+            Ok((orig_w, orig_h, tw, th, rgba)) => {
+                if let Some(Block::Image(img_mut)) = w.doc.blocks.get_mut(item.block_idx) {
+                    if img_mut.intrinsic_px.is_none() {
+                        img_mut.intrinsic_px = Some((orig_w, orig_h));
+                    }
+                }
+                let added_bytes = rgba.len();
+                let shared_rgba = SharedBytes::from_vec(rgba);
+                while !w.image_rgba_cache.is_empty()
+                    && w.image_rgba_cache_bytes.saturating_add(added_bytes) > IMAGE_CACHE_MAX_BYTES
+                {
+                    let removed = w.image_rgba_cache.remove(0);
+                    w.image_rgba_cache_bytes =
+                        w.image_rgba_cache_bytes.saturating_sub(removed.3.len());
+                }
+                w.image_rgba_cache_bytes = w.image_rgba_cache_bytes.saturating_add(added_bytes);
+                w.image_rgba_cache.push((hkey, tw, th, shared_rgba));
+            }
+            Err(_) => {
+                if w.failed_image_hashes.len() >= 4096 {
+                    w.failed_image_hashes.remove(0);
+                }
+                w.failed_image_hashes.push(hkey);
+            }
+        }
+    }
 }
 
 fn layout_document_pages(
@@ -814,28 +1032,35 @@ fn wrap_plain_text(
     }
     let mut lines = Vec::new();
     let mut cur = String::new();
+    let mut cur_w = 0.0f32;
     for word in text.split_inclusive(' ') {
-        let candidate = format!("{cur}{word}");
-        if !cur.is_empty() && fonts.measure_text(slot, &candidate, px_size) > max_w {
+        let word_w = fonts.measure_text(slot, word, px_size);
+        if !cur.is_empty() && cur_w + word_w > max_w {
             lines.push(cur.trim_end().to_string());
-            cur = word.to_string();
-        } else {
-            // Handle single extra-long token wider than cell width
-            if cur.is_empty() && fonts.measure_text(slot, word, px_size) > max_w {
-                let mut chunk = String::new();
-                for ch in word.chars() {
-                    let test = format!("{chunk}{ch}");
-                    if !chunk.is_empty() && fonts.measure_text(slot, &test, px_size) > max_w {
-                        lines.push(chunk);
-                        chunk = ch.to_string();
-                    } else {
-                        chunk.push(ch);
-                    }
+            cur.clear();
+            cur_w = 0.0;
+        }
+        if cur.is_empty() && word_w > max_w {
+            let mut chunk = String::new();
+            let mut chunk_w = 0.0f32;
+            let mut ch_buf = [0u8; 4];
+            for ch in word.chars() {
+                let s_ch = ch.encode_utf8(&mut ch_buf);
+                let cw = fonts.measure_text(slot, s_ch, px_size);
+                if !chunk.is_empty() && chunk_w + cw > max_w {
+                    lines.push(chunk);
+                    chunk = s_ch.to_string();
+                    chunk_w = cw;
+                } else {
+                    chunk.push(ch);
+                    chunk_w += cw;
                 }
-                cur = chunk;
-            } else {
-                cur = candidate;
             }
+            cur = chunk;
+            cur_w = chunk_w;
+        } else {
+            cur.push_str(word);
+            cur_w += word_w;
         }
     }
     if !cur.is_empty() || lines.is_empty() {
@@ -894,13 +1119,13 @@ fn wrap_paragraph_lines(
 
     let mut out = Vec::new();
     let mut cur_line = String::new();
+    let mut cur_w = 0.0f32;
     let mut cur_start = 0usize;
     let mut char_cursor = 0usize;
 
     for token in full_text.split_inclusive(' ') {
-        let candidate = format!("{cur_line}{token}");
-        let cand_w = fonts.measure_text(slot, &candidate, px_size);
-        if !cur_line.is_empty() && cand_w > wrap_w {
+        let tok_w = fonts.measure_text(slot, token, px_size);
+        if !cur_line.is_empty() && cur_w + tok_w > wrap_w {
             out.push(LaidOutLine {
                 text: cur_line,
                 char_start: cur_start,
@@ -913,9 +1138,11 @@ fn wrap_paragraph_lines(
                 strike,
             });
             cur_line = token.to_string();
+            cur_w = tok_w;
             cur_start = char_cursor;
         } else {
-            cur_line = candidate;
+            cur_line.push_str(token);
+            cur_w += tok_w;
         }
         char_cursor += token.chars().count();
     }
@@ -1013,6 +1240,12 @@ fn paint_laid_out_block(
                 {
                     surface.blit_rgba_scaled(inner, *iw, *ih, rgba);
                 } else {
+                    let is_failed = w.failed_image_hashes.contains(&hkey);
+                    let status_lbl = if is_failed {
+                        format!("Figure: {} (Unsupported Legacy Media)", img.name)
+                    } else {
+                        format!("Streaming HiDPI Figure · {}", img.name)
+                    };
                     surface.fill_rounded_rect(inner, 3.0, DaylightTheme::SIDEBAR);
                     surface.draw_icon(
                         UiIcon::Image,
@@ -1029,7 +1262,7 @@ fn paint_laid_out_block(
                         r.y + r.h * 0.5 + 4.0 * scale,
                         (r.w - 46.0 * scale).max(24.0),
                         DaylightTheme::INK_SUB,
-                        &format!("Figure: {}", img.name),
+                        &status_lbl,
                     );
                 }
             }

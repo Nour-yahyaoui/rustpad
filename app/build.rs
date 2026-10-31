@@ -42,6 +42,9 @@ fn main() {
     fs::write(&res_path, res_bytes).expect("failed to write OUT_DIR/rustpad.res");
 
     println!("cargo:rustc-link-arg-bin=rustpad={}", res_path.display());
+    // Provision a 16 MiB main-thread stack on Windows MSVC (default is only 1 MiB) so deeply
+    // nested DrawingML / table XML in 30–100+ MB enterprise `.docx` files never stack-overflows.
+    println!("cargo:rustc-link-arg-bin=rustpad=/STACK:16777216");
 }
 
 fn align4(buf: &mut Vec<u8>) {
@@ -279,7 +282,7 @@ fn build_app_manifest_xml() -> &'static str {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity
-    version="2.2.0.0"
+    version="2.3.0.0"
     processorArchitecture="amd64"
     name="NourYahyaoui.RustPad.DesktopStudio"
     type="win32"

@@ -922,7 +922,7 @@ fn prepare_pdf_image_xobject(img: &ImageBlock) -> Option<PdfImageXObject> {
             height: h,
             color_space: cs,
             filter: "/DCTDecode",
-            data: img.png_bytes.clone(),
+            data: img.png_bytes.to_vec(),
         });
     }
 

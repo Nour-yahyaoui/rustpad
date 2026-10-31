@@ -358,6 +358,21 @@ unsafe extern "system" fn wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    // Guard Win32 FFI boundary against unwinding panics (which otherwise cause hard process abort)
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wnd_proc_inner(hwnd, msg, wparam, lparam)
+    })) {
+        Ok(res) => res,
+        Err(_) => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+unsafe fn wnd_proc_inner(
+    hwnd: HWND,
+    msg: UINT,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     let ptr = GetWindowLongPtrW(hwnd, -21 /* GWLP_USERDATA */) as *mut Win32Context<'static>;
     if ptr.is_null() {
         return DefWindowProcW(hwnd, msg, wparam, lparam);

@@ -5,8 +5,8 @@ use crate::commands::{filter_commands, CommandId};
 use doc_model::{
     next_word_char_idx, prev_word_char_idx, word_range_at_char, Alignment, Block, Document,
     FontFamily, ImageBlock, ListKind, PaperSize, Paragraph, ParagraphStyle, RevisionKind,
-    RevisionMeta, RgbColor, SpanStyle, TableBlock, TablePreset, TableTheme, TemplateKind, TextSpan,
-    UndoHistory,
+    RevisionMeta, RgbColor, SharedBytes, SpanStyle, TableBlock, TablePreset, TableTheme,
+    TemplateKind, TextSpan, UndoHistory,
 };
 use docx_io::{load_docx_file, save_docx_file};
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
@@ -88,7 +88,15 @@ pub struct WordTabState {
     pub selected_image_block: Option<usize>,
     pub table_cursor_char: usize,
     pub table_col_weights: Vec<(usize, Vec<f32>)>,
-    pub image_rgba_cache: Vec<(u64, u32, u32, Vec<u8>)>, // (content_hash, w, h, rgba)
+    /// Bounded 64 MiB LRU cache of downsampled viewport thumbnails `(content_hash, w, h, rgba)`.
+    pub image_rgba_cache: Vec<(u64, u32, u32, SharedBytes)>,
+    pub image_rgba_cache_bytes: usize,
+    /// Tombstones for corrupt or unsupported image payloads so they are never retried at 60Hz.
+    pub failed_image_hashes: Vec<u64>,
+    pub pending_viewport_image_decodes: bool,
+    pub media_dimensions_probed: bool,
+    pub cached_layout_key: u64,
+    pub cached_pages: std::rc::Rc<Vec<Vec<crate::word_view::LaidOutBlock>>>,
     pub scroll_y: f32,
     pub target_scroll_y: f32,
     pub max_scroll_y: f32,
@@ -123,6 +131,12 @@ impl WordTabState {
             table_cursor_char: 0,
             table_col_weights: Vec::new(),
             image_rgba_cache: Vec::new(),
+            image_rgba_cache_bytes: 0,
+            failed_image_hashes: Vec::new(),
+            pending_viewport_image_decodes: false,
+            media_dimensions_probed: false,
+            cached_layout_key: 0,
+            cached_pages: std::rc::Rc::new(Vec::new()),
             scroll_y: 0.0,
             target_scroll_y: 0.0,
             max_scroll_y: 0.0,
@@ -301,7 +315,6 @@ impl WordTabState {
         self.cursor_block = b0.min(self.doc.blocks.len() - 1);
         self.cursor_char = c0;
         self.selection_anchor = None;
-        self.image_rgba_cache.clear();
         self.dirty = true;
         true
     }
@@ -919,7 +932,7 @@ impl RustPadApp {
             last_click_pos: (-100.0, -100.0),
             last_click_mods: Modifiers::default(),
             cursor_blink_on: true,
-            status_toast: "Ready · RustPad v2.2 Effortless Table & Figure Studio · 60–120Hz Smooth UX".into(),
+            status_toast: "Ready · RustPad v2.3 Large-Doc, Table & Figure Studio · 60–120Hz Smooth UX".into(),
             recent_files: recent,
         }
     }
@@ -936,6 +949,10 @@ impl RustPadApp {
             }
             match tab {
                 StudioTab::Word(w) => {
+                    if w.pending_viewport_image_decodes {
+                        w.pending_viewport_image_decodes = false;
+                        needs_repaint = true;
+                    }
                     let target = w.target_scroll_y.clamp(0.0, w.max_scroll_y.max(0.0));
                     w.target_scroll_y = target;
                     let diff = target - w.scroll_y;
@@ -1222,16 +1239,35 @@ impl RustPadApp {
             .to_ascii_lowercase();
         match ext.as_str() {
             "docx" => {
-                // Recover from SHA-256 verified WAL crash frame if a newer journal exists
-                let wal_p = WalJournal::journal_path_for(Some(&p), 0);
-                let (doc, recovered_from_wal) = if wal_p.exists() {
-                    match WalJournal::recover_frame(&wal_p) {
-                        Ok(wal_doc) => (wal_doc, true),
-                        Err(_) => (load_docx_file(&p).map_err(|e| e.0)?, false),
+                // Guard third-party `.docx` archive/XML loading behind `catch_unwind` so malformed
+                // files surface an error toast instead of crashing the desktop session.
+                let load_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(Document, bool), String> {
+                    let wal_p = WalJournal::journal_path_for(Some(&p), 0);
+                    if wal_p.exists() {
+                        match WalJournal::recover_frame(&wal_p) {
+                            Ok(wal_doc) => Ok((wal_doc, true)),
+                            Err(_) => Ok((load_docx_file(&p).map_err(|e| e.0)?, false)),
+                        }
+                    } else {
+                        Ok((load_docx_file(&p).map_err(|e| e.0)?, false))
                     }
-                } else {
-                    (load_docx_file(&p).map_err(|e| e.0)?, false)
+                }));
+                let (doc, recovered_from_wal) = match load_res {
+                    Ok(Ok(pair)) => pair,
+                    Ok(Err(msg)) => return Err(msg),
+                    Err(_) => {
+                        return Err(format!(
+                            "Failed to parse '{}' safely (corrupt or unsupported .docx structure)",
+                            p.display()
+                        ))
+                    }
                 };
+                let fig_count = doc
+                    .blocks
+                    .iter()
+                    .filter(|b| matches!(b, Block::Image(_)))
+                    .count();
+                let media_mb = doc.estimated_media_bytes() as f64 / (1024.0 * 1024.0);
                 let _ = AdvisoryFileLock::acquire(&p, "Nour Yahyaoui");
                 if self.policy.audit_log_enabled {
                     self.audit_trail
@@ -1243,13 +1279,29 @@ impl RustPadApp {
                 self.push_recent(p.clone());
                 self.status_toast = if recovered_from_wal {
                     format!("Recovered WAL crash journal for '{}'", p.display())
+                } else if fig_count > 0 && media_mb >= 1.0 {
+                    format!(
+                        "Opened '{}' ({fig_count} figures · {media_mb:.1} MB — progressive viewport engine active)",
+                        p.display()
+                    )
                 } else {
                     format!("Opened Word document '{}'", p.display())
                 };
                 Ok(())
             }
             "pdf" => {
-                let pdf = load_pdf_file(&p)?;
+                let pdf = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    load_pdf_file(&p)
+                })) {
+                    Ok(Ok(doc)) => doc,
+                    Ok(Err(msg)) => return Err(msg),
+                    Err(_) => {
+                        return Err(format!(
+                            "Failed to parse PDF '{}' safely (unsupported or damaged stream)",
+                            p.display()
+                        ))
+                    }
+                };
                 if self.policy.audit_log_enabled {
                     self.audit_trail
                         .record("PDF_OPENED", &p.display().to_string(), "Nour Yahyaoui");
@@ -1679,7 +1731,6 @@ impl RustPadApp {
                         w.active_table_cell = None;
                         w.selected_image_block = None;
                         w.selection_anchor = None;
-                        w.image_rgba_cache.clear();
                         w.cursor_block = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
                         w.cursor_char = 0;
                         self.status_toast = "Undid last edit".into();
@@ -1694,7 +1745,6 @@ impl RustPadApp {
                         w.active_table_cell = None;
                         w.selected_image_block = None;
                         w.selection_anchor = None;
-                        w.image_rgba_cache.clear();
                         w.cursor_block = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
                         w.cursor_char = 0;
                         self.status_toast = "Redid edit".into();

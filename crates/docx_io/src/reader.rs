@@ -4,9 +4,9 @@
 use crate::xml_lite::{parse_xml, XmlChild, XmlNode};
 use crate::DocxError;
 use doc_model::{
-    Alignment, Block, DocComment, Document, FontFamily, ImageBlock, ListKind, PageSetup, PaperSize,
-    Paragraph, ParagraphStyle, RevisionKind, RevisionMeta, RgbColor, SecurityClassification,
-    SpanStyle, TableBlock, TableCell, TextSpan,
+    probe_media_dimensions, Alignment, Block, DocComment, Document, FontFamily, ImageBlock,
+    ListKind, PageSetup, PaperSize, Paragraph, ParagraphStyle, RevisionKind, RevisionMeta,
+    RgbColor, SecurityClassification, SharedBytes, SpanStyle, TableBlock, TableCell, TextSpan,
 };
 use rustpad_zip::ZipArchive;
 use std::collections::{BTreeMap, BTreeSet};
@@ -171,6 +171,28 @@ pub fn load_docx_bytes(bytes: &[u8]) -> Result<Document, DocxError> {
         passthrough_parts.insert(entry_name.clone(), raw_bytes.clone());
     }
 
+    // Deduplicate identical archive media paths across `blocks` so repeated logos/figures
+    // share a single `SharedBytes` (`Arc<[u8]>`) allocation in memory.
+    let mut shared_media_pool: BTreeMap<(usize, u8, u8), SharedBytes> = BTreeMap::new();
+    for blk in &mut blocks {
+        if let Block::Image(img) = blk {
+            if img.png_bytes.len() >= 16 {
+                let sig = (
+                    img.png_bytes.len(),
+                    img.png_bytes[img.png_bytes.len() / 3],
+                    img.png_bytes[img.png_bytes.len() - 1],
+                );
+                if let Some(existing) = shared_media_pool.get(&sig) {
+                    if existing.as_slice() == img.png_bytes.as_slice() {
+                        img.png_bytes = existing.clone();
+                        continue;
+                    }
+                }
+                shared_media_pool.insert(sig, img.png_bytes.clone());
+            }
+        }
+    }
+
     // Enable track_changes automatically if loaded spans carry revisions
     if !track_changes {
         track_changes = blocks.iter().any(|b| match b {
@@ -253,6 +275,13 @@ fn parse_body_element(
         "tbl" => {
             if let Some(tbl) = parse_table(el) {
                 blocks.push(Block::Table(tbl));
+            }
+            // Also surface any `<w:drawing>` / `<w:pict>` screenshots placed inside layout table cells
+            let mut tbl_imgs = Vec::new();
+            collect_embedded_images(el, archive, rels, Alignment::Center, &mut tbl_imgs);
+            for (img, media_path) in tbl_imgs {
+                consumed_media_paths.insert(media_path);
+                blocks.push(Block::Image(img));
             }
         }
         "sectPr" => {
@@ -810,7 +839,9 @@ fn extract_drawing_image(
     let blip_id = find_attr_recursive(container, "blip", "embed")
         .or_else(|| find_attr_recursive(container, "blip", "link"))?;
     let target = rels.get(&blip_id)?;
-    let (full_path, png_bytes) = resolve_docx_rel_path(archive, target)?;
+    let (full_path, raw_bytes) = resolve_docx_rel_path(archive, target)?;
+    let intrinsic_px = probe_media_dimensions(&raw_bytes);
+    let png_bytes = SharedBytes::from_vec(raw_bytes);
 
     Some((
         ImageBlock {
@@ -819,6 +850,7 @@ fn extract_drawing_image(
             height_pt,
             png_bytes,
             rgba_preview: None,
+            intrinsic_px,
             caption,
             alignment,
         },
@@ -861,7 +893,9 @@ fn extract_vml_pict_image(
         .or_else(|| img_data.attr("pict"))
         .or_else(|| img_data.attr("href"))?;
     let target = rels.get(rel_id)?;
-    let (full_path, png_bytes) = resolve_docx_rel_path(archive, target)?;
+    let (full_path, raw_bytes) = resolve_docx_rel_path(archive, target)?;
+    let intrinsic_px = probe_media_dimensions(&raw_bytes);
+    let png_bytes = SharedBytes::from_vec(raw_bytes);
 
     let mut width_pt = 280.0f32;
     let mut height_pt = 180.0f32;
@@ -898,6 +932,7 @@ fn extract_vml_pict_image(
             height_pt,
             png_bytes,
             rgba_preview: None,
+            intrinsic_px,
             caption: String::new(),
             alignment,
         },

@@ -5,7 +5,7 @@ use crate::xml_lite::escape_xml;
 use crate::DocxError;
 use doc_model::{
     Alignment, Block, DocComment, Document, ListKind, Paragraph, ParagraphStyle, RevisionKind,
-    RgbColor, TableBlock,
+    RgbColor, SharedBytes, TableBlock,
 };
 use rustpad_zip::ZipWriter;
 use std::path::Path;
@@ -19,7 +19,7 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
     let mut zw = ZipWriter::new();
 
     // Collect embedded images with true media extensions (`png`, `jpeg`, `bmp`, `gif`)
-    let mut images: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut images: Vec<(String, SharedBytes)> = Vec::new();
     for block in &doc.blocks {
         if let Block::Image(img) = block {
             if !img.png_bytes.is_empty() {
@@ -66,7 +66,7 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
     zw.add_file("word/document.xml", build_document_xml(doc).into_bytes());
 
     for (rel_path, data) in &images {
-        zw.add_file(format!("word/{rel_path}"), data.clone());
+        zw.add_file(format!("word/{rel_path}"), data.to_vec());
     }
 
     // Re-emit unmodeled enterprise passthrough parts (`customXml/*`, `word/theme/*`, etc.)

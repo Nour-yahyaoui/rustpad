@@ -665,7 +665,7 @@ fn run_cli() -> Result<(), String> {
         tick_counter: 0,
     };
     run_native_window(
-        "RustPad v2.2 — Effortless Table Studio & 60–120Hz Native Word (.docx), PDF & AI Suite",
+        "RustPad v2.3 — Large-Doc & Figure Engine · 60–120Hz Native Word (.docx), PDF & AI Suite",
         1380,
         880,
         &mut runner,

@@ -2391,7 +2391,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     .list()
                     .iter()
                     .rev()
-                    .map(|e| (e.id, e.label.clone(), e.word_count, e.compressed_bytes.len()))
+                    .map(|e| (e.id, e.label.clone(), e.word_count, e.approx_size_bytes()))
                     .collect::<Vec<_>>(),
                 _ => Vec::new(),
             };

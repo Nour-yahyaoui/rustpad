@@ -115,8 +115,8 @@ pub fn decode_png_rgba(png_bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> 
                 bit_depth = chunk_data[8];
                 color_type = chunk_data[9];
                 interlace = chunk_data[12];
-                if width == 0 || height == 0 || width > 8192 || height > 8192 {
-                    return Err("PNG dimensions out of supported bounds (1..=8192)".into());
+                if width == 0 || height == 0 || width > 32_768 || height > 32_768 {
+                    return Err("PNG dimensions out of supported bounds (1..=32768)".into());
                 }
                 if !matches!(bit_depth, 1 | 2 | 4 | 8 | 16) {
                     return Err(format!("Unsupported PNG bit depth {bit_depth}"));
@@ -152,8 +152,8 @@ pub fn decode_png_rgba(png_bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> 
     if color_type == 3 && palette.is_empty() {
         return Err("Indexed PNG missing PLTE palette".into());
     }
-    if (width as usize).saturating_mul(height as usize) > 32 * 1024 * 1024 {
-        return Err("PNG pixel count exceeds 32MP safety ceiling".into());
+    if (width as usize).saturating_mul(height as usize) > 64 * 1024 * 1024 {
+        return Err("PNG pixel count exceeds 64MP safety ceiling".into());
     }
 
     let raw = zlib_decompress(&idat_stream).map_err(|e| format!("PNG zlib error: {}", e.0))?;
@@ -465,8 +465,11 @@ fn decode_dib_internal(
     let top_down = h_i32 < 0;
     let width = w_i32.unsigned_abs();
     let height = h_i32.unsigned_abs();
-    if width == 0 || height == 0 || width > 8192 || height > 8192 {
+    if width == 0 || height == 0 || width > 32_768 || height > 32_768 {
         return Err("BMP/DIB dimensions out of bounds".into());
+    }
+    if (width as usize).saturating_mul(height as usize) > 64 * 1024 * 1024 {
+        return Err("BMP/DIB pixel count exceeds 64MP safety ceiling".into());
     }
     let bpp = u16::from_le_bytes([dib[14], dib[15]]);
     let compression = u32::from_le_bytes([dib[16], dib[17], dib[18], dib[19]]);

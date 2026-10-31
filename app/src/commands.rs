@@ -109,7 +109,7 @@ pub struct CommandSpec {
 pub const ALL_COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: CommandId::NewWordBlank, category: "File", title: "New Blank Word Document (.docx)", shortcut: "Ctrl+N" },
     CommandSpec { id: CommandId::NewWordEnterpriseMsa, category: "Enterprise", title: "New Enterprise MSA Legal Redline Contract (.docx)", shortcut: "" },
-    CommandSpec { id: CommandId::NewWordWelcome, category: "File", title: "New Document from Welcome Guide v2.2", shortcut: "" },
+    CommandSpec { id: CommandId::NewWordWelcome, category: "File", title: "New Document from Welcome Guide v2.3", shortcut: "" },
     CommandSpec { id: CommandId::NewPdfBlank, category: "PDF", title: "Create New Blank PDF Studio Tab (.pdf)", shortcut: "" },
     CommandSpec { id: CommandId::OpenFile, category: "File", title: "Open Word / PDF / Markdown File…", shortcut: "Ctrl+O" },
     CommandSpec { id: CommandId::SaveFile, category: "File", title: "Save Active Document", shortcut: "Ctrl+S" },
@@ -198,7 +198,7 @@ pub const ALL_COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: CommandId::UiScaleUp, category: "View", title: "Increase Interface Font & UI Scale (+10%)", shortcut: "" },
     CommandSpec { id: CommandId::UiScaleDown, category: "View", title: "Decrease Interface Font & UI Scale (-10%)", shortcut: "" },
     CommandSpec { id: CommandId::UiScaleReset, category: "View", title: "Reset Interface UI Scale to 100%", shortcut: "" },
-    CommandSpec { id: CommandId::OpenAbout, category: "Help", title: "About RustPad v2.2 Smooth UX Studio & Author Info", shortcut: "" },
+    CommandSpec { id: CommandId::OpenAbout, category: "Help", title: "About RustPad v2.3 Smooth UX Studio & Author Info", shortcut: "" },
 ];
 
 pub fn filter_commands(query: &str) -> Vec<&'static CommandSpec> {
