@@ -345,9 +345,10 @@ fn parse_inline_md(text: &str) -> Paragraph {
                 continue;
             }
         }
-        let next_special = rest[1..]
+        let step = rest.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        let next_special = rest[step..]
             .find(['*', '`', '['])
-            .map(|idx| idx + 1)
+            .map(|idx| idx + step)
             .unwrap_or(rest.len());
         spans.push(TextSpan::plain(&rest[..next_special]));
         rest = &rest[next_special..];

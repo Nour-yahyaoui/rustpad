@@ -57,6 +57,7 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
     );
     zw.add_file("_rels/.rels", build_root_rels().into_bytes());
     zw.add_file("docProps/core.xml", build_core_props(doc).into_bytes());
+    zw.add_file("docProps/app.xml", build_app_props(doc).into_bytes());
     zw.add_file(
         "word/_rels/document.xml.rels",
         build_doc_rels(
@@ -111,6 +112,7 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
         "[Content_Types].xml",
         "_rels/.rels",
         "docProps/core.xml",
+        "docProps/app.xml",
         "word/_rels/document.xml.rels",
         "word/styles.xml",
         "word/numbering.xml",
@@ -197,7 +199,8 @@ fn build_content_types(has_comments: bool, has_footnotes: bool, has_endnotes: bo
   <Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
   <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
   <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
-  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>{extras}
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>{extras}
 </Types>"#
     )
 }
@@ -207,6 +210,7 @@ fn build_root_rels() -> String {
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
 </Relationships>"#
         .to_string()
 }

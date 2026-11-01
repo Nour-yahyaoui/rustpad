@@ -288,6 +288,28 @@ pub fn clean_document_metadata(
         rep.removed_passthrough_parts += 1;
     }
 
+    if strip_macros {
+        doc.extra_relationships.retain(|r| {
+            let is_ext = r
+                .target_mode
+                .as_deref()
+                .is_some_and(|m| m.eq_ignore_ascii_case("external"));
+            if is_ext {
+                return true;
+            }
+            let cleaned = r.target.trim().trim_start_matches('/').replace('\\', "/");
+            let full = if cleaned.starts_with("word/")
+                || cleaned.starts_with("customXml/")
+                || cleaned.starts_with("docProps/")
+            {
+                cleaned
+            } else {
+                format!("word/{cleaned}")
+            };
+            !should_drop_part(&full)
+        });
+    }
+
     if opts.strip_external_template_links {
         let before = doc.extra_relationships.len();
         doc.extra_relationships.retain(|r| {
@@ -404,7 +426,9 @@ fn wipe_and_remove(path: &Path, zero_len: usize) -> std::io::Result<()> {
 }
 
 fn build_secure_temp_sibling(dest: &Path) -> PathBuf {
+    static TEMP_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let pid = std::process::id();
+    let seq = TEMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -413,7 +437,7 @@ fn build_secure_temp_sibling(dest: &Path) -> PathBuf {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("document");
-    let tmp_name = format!(".{stem}.rustpad-tmp-{pid}-{nanos:x}");
+    let tmp_name = format!(".{stem}.rustpad-tmp-{pid}-{nanos:x}-{seq:x}");
     match dest.parent() {
         Some(p) if !p.as_os_str().is_empty() => p.join(tmp_name),
         _ => PathBuf::from(tmp_name),
