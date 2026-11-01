@@ -200,17 +200,18 @@ fn run_cli_validate(args: &[String]) -> Result<(), String> {
     let path = args
         .first()
         .ok_or("Usage: rustpad validate <FILE.docx>")?;
+    let packed_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let rep = validate_docx_file(path).map_err(|e| e.0)?;
     println!(
         "STATUS:   {}",
         if rep.is_valid { "VALID" } else { "INVALID" }
     );
     println!("Entries:  {}", rep.archive_entries);
-    println!("Size:     {} bytes", rep.total_packed_bytes);
+    println!("Size:     {} bytes", packed_size);
     println!("Errors:   {}", rep.error_count());
     println!("Warnings: {}", rep.warning_count());
     for f in &rep.findings {
-        println!("  [{}] {}: {}", f.severity.label(), f.code, f.message);
+        println!("  [{}] {}: {}", f.severity.badge(), f.code, f.message);
     }
     if !rep.is_valid {
         return Err(format!("Validation failed with {} error(s)", rep.error_count()));
@@ -236,8 +237,7 @@ fn run_cli_repair(args: &[String]) -> Result<(), String> {
         i += 1;
     }
     let out = out_p.ok_or("Missing `-o <REPAIRED.docx>`")?;
-    let (bytes, rep) = repair_docx_file(&in_p).map_err(|e| e.0)?;
-    std::fs::write(&out, bytes).map_err(|e| e.to_string())?;
+    let rep = repair_docx_file(&in_p, &out).map_err(|e| e.0)?;
     println!(
         "Repaired .docx (salvaged {} entries, {} paragraphs, {} images) -> '{}'",
         rep.salvaged_entries,
@@ -255,25 +255,20 @@ fn run_cli_compare(args: &[String]) -> Result<(), String> {
     let base = load_docx_file(&args[0]).map_err(|e| e.0)?;
     let rev = load_docx_file(&args[1]).map_err(|e| e.0)?;
     let rep = compare_documents(&base, &rev);
-    println!("Similarity:          {:.1}%", rep.similarity_score() * 100.0);
-    println!("Unchanged Paras:     {}", rep.unchanged_paragraphs);
-    println!("Modified Paras:      {}", rep.modified_paragraphs);
-    println!("Inserted Paras:      {}", rep.inserted_paragraphs);
-    println!("Deleted Paras:       {}", rep.deleted_paragraphs);
+    println!("Summary:             {}", rep.summary_line());
+    println!("Identical:           {}", rep.is_identical());
+    println!("Unchanged Paras:     {}", rep.paragraphs_unchanged);
+    println!("Modified Paras:      {}", rep.paragraphs_modified);
+    println!("Inserted Paras:      {}", rep.paragraphs_inserted);
+    println!("Deleted Paras:       {}", rep.paragraphs_deleted);
     println!(
-        "Char Diff:           +{} inserted / -{} deleted ({} unchanged)",
-        rep.inserted_chars, rep.deleted_chars, rep.unchanged_chars
+        "Char Diff:           +{} inserted / -{} deleted",
+        rep.char_insertions, rep.char_deletions
     );
     println!("Formatting Changes:  {}", rep.formatting_changes.len());
     println!("Structural Changes:  {}", rep.structural_changes.len());
     for fc in rep.formatting_changes.iter().take(10) {
-        println!(
-            "  [Format #{}] {}: {} -> {}",
-            fc.revised_block + 1,
-            fc.aspect,
-            fc.before,
-            fc.after
-        );
+        println!("  [Format #{}] {}", fc.block_index + 1, fc.summary);
     }
     for sc in rep.structural_changes.iter().take(10) {
         println!("  [Struct] {}: {}", sc.category, sc.summary);
@@ -808,13 +803,13 @@ fn inspect_file(path: &Path, mode_flag: Option<&str>) -> Result<(), String> {
             if mode_flag == Some("--security") {
                 let sec = inspect_security_and_hidden(&doc, Some(&raw));
                 println!("Hidden Runs:        {}", sec.hidden_runs_count);
-                println!("White Stealth Runs: {}", sec.white_on_white_runs_count);
-                println!("Micro-Text Runs:    {}", sec.micro_text_runs_count);
+                println!("White Stealth Runs: {}", sec.camouflaged_runs_count);
+                println!("Micro-Text Runs:    {}", sec.micro_font_runs_count);
                 println!("VBA Macros:         {}", sec.has_vba_macros);
                 println!("Embedded OLE:       {}", sec.has_embedded_ole);
                 println!("Remote Template:    {}", sec.has_external_template_injection);
                 for f in &sec.findings {
-                    println!("  [{}] {}: {}", f.severity.label(), f.category, f.detail);
+                    println!("  [{}] {}: {}", f.severity.badge(), f.category, f.detail);
                 }
                 return Ok(());
             }
@@ -826,7 +821,7 @@ fn inspect_file(path: &Path, mode_flag: Option<&str>) -> Result<(), String> {
                 println!("Duplicate Groups:     {}", dups.len());
                 println!("Broken Links:         {}", broken.len());
                 for c in &cons {
-                    println!("  [Block #{}] {}: {}", c.block_index + 1, c.category, c.detail);
+                    println!("  [Block #{}] {}: {}", c.block_index + 1, c.category, c.message);
                 }
                 for bl in &broken {
                     println!("  [Link #{}] '{}': {}", bl.block_index + 1, bl.link_target, bl.reason);
@@ -945,7 +940,7 @@ fn run_cli() -> Result<(), String> {
                     .unwrap_or("")
                     .to_ascii_lowercase();
                 if out_ext == "docx" {
-                    let mut strategy = MergeStrategy::AnnotateConflicts;
+                    let mut strategy = MergeStrategy::AnnotateConflictsAsTrackChanges;
                     let mut doc_paths: Vec<PathBuf> = Vec::new();
                     let mut idx = 2;
                     while idx < args.len() {
@@ -956,7 +951,7 @@ fn run_cli() -> Result<(), String> {
                                 Some("theirs") | Some("prefer-theirs") => {
                                     MergeStrategy::PreferTheirs
                                 }
-                                _ => MergeStrategy::AnnotateConflicts,
+                                _ => MergeStrategy::AnnotateConflictsAsTrackChanges,
                             };
                         } else {
                             doc_paths.push(PathBuf::from(&args[idx]));
@@ -979,7 +974,7 @@ fn run_cli() -> Result<(), String> {
                     save_docx_file(&args[1], &outcome.document).map_err(|e| e.0)?;
                     println!(
                         "Smart .docx merge complete ({} clean merges, {} conflict(s)) -> '{}'",
-                        outcome.clean_merges, outcome.conflict_count, args[1]
+                        outcome.clean_auto_merges, outcome.conflicts_count, args[1]
                     );
                     return Ok(());
                 }

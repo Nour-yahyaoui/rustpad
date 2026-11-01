@@ -9,7 +9,7 @@ use doc_model::{
     TableBlock, TablePreset, TableTheme, TemplateKind, TextSpan, UndoHistory,
 };
 use docx_io::{
-    load_docx_file, load_docx_shared_with_progress, repair_docx_file, save_docx_bytes,
+    load_docx_file, load_docx_shared_with_progress, repair_docx_bytes, save_docx_bytes,
     save_docx_file,
 };
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
@@ -1540,9 +1540,11 @@ impl RustPadApp {
                         match load_docx_file(&p) {
                             Ok(doc) => Ok((doc, false)),
                             Err(_) => {
-                                let (_repaired_bytes, rep) =
-                                    repair_docx_file(&p).map_err(|e| e.0)?;
-                                let salvaged = docx_io::load_docx_bytes(&_repaired_bytes)
+                                let raw_bytes =
+                                    std::fs::read(&p).map_err(|e| e.to_string())?;
+                                let (repaired_bytes, rep) =
+                                    repair_docx_bytes(&raw_bytes).map_err(|e| e.0)?;
+                                let salvaged = docx_io::load_docx_bytes(&repaired_bytes)
                                     .map_err(|e| e.0)?;
                                 let _ = rep.recovered_paragraphs;
                                 Ok((salvaged, false))

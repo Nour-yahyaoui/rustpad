@@ -2744,12 +2744,19 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 let dups = detect_duplicate_paragraphs(&w.doc, 24);
                 let broken = detect_broken_links(&w.doc, w.path.as_deref().and_then(|p| p.parent()));
 
+                let custom_xml_count = w
+                    .doc
+                    .passthrough_parts
+                    .keys()
+                    .chain(w.doc.passthrough_shared.keys())
+                    .filter(|k| k.to_ascii_lowercase().starts_with("customxml/"))
+                    .count();
                 report_lines.push((
                     format!(
                         "Hidden & Privacy Surface: {} hidden runs · {} stealth white runs · {} customXml · {} external rels",
                         sec.hidden_runs_count,
-                        sec.white_on_white_runs_count,
-                        sec.custom_xml_parts,
+                        sec.camouflaged_runs_count,
+                        custom_xml_count,
                         w.doc.extra_relationships.len()
                     ),
                     if sec.findings.is_empty() {
