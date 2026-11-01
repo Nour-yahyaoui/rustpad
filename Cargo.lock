@@ -4,14 +4,14 @@ version = 4
 
 [[package]]
 name = "doc_model"
-version = "2.4.0"
+version = "3.0.0"
 dependencies = [
  "rustpad_zip",
 ]
 
 [[package]]
 name = "docx_io"
-version = "2.4.0"
+version = "3.0.0"
 dependencies = [
  "doc_model",
  "rustpad_zip",
@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "pdf_create"
-version = "2.4.0"
+version = "3.0.0"
 dependencies = [
  "doc_model",
  "rustpad_zip",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "pdf_engine"
-version = "2.4.0"
+version = "3.0.0"
 dependencies = [
  "doc_model",
  "pdf_create",
@@ -36,18 +36,19 @@ dependencies = [
 
 [[package]]
 name = "power_tools"
-version = "2.4.0"
+version = "3.0.0"
 dependencies = [
  "doc_model",
  "docx_io",
  "pdf_create",
  "pdf_engine",
+ "rustpad_render",
  "rustpad_zip",
 ]
 
 [[package]]
 name = "rustpad"
-version = "2.4.0"
+version = "3.0.0"
 dependencies = [
  "doc_model",
  "docx_io",
@@ -61,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "rustpad_render"
-version = "2.4.0"
+version = "3.0.0"
 dependencies = [
  "doc_model",
  "rustpad_zip",
@@ -69,11 +70,11 @@ dependencies = [
 
 [[package]]
 name = "rustpad_window"
-version = "2.4.0"
+version = "3.0.0"
 dependencies = [
  "rustpad_render",
 ]
 
 [[package]]
 name = "rustpad_zip"
-version = "2.4.0"
+version = "3.0.0"

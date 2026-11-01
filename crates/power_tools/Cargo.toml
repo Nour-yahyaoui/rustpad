@@ -12,3 +12,4 @@ doc_model = { path = "../doc_model" }
 docx_io = { path = "../docx_io" }
 pdf_create = { path = "../pdf_create" }
 pdf_engine = { path = "../pdf_engine" }
+rustpad_render = { path = "../rustpad_render" }

@@ -4,10 +4,11 @@
 use crate::xml_lite::escape_xml;
 use crate::DocxError;
 use doc_model::{
-    Alignment, Block, DocComment, Document, ListKind, Paragraph, ParagraphStyle, RevisionKind,
-    RgbColor, SharedBytes, TableBlock,
+    Alignment, Block, DocComment, DocNote, Document, ListKind, Paragraph, ParagraphStyle,
+    RawRelationship, RevisionKind, RgbColor, SharedBytes, TableBlock,
 };
 use rustpad_zip::ZipWriter;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub fn save_docx_file(path: impl AsRef<Path>, doc: &Document) -> Result<(), DocxError> {
@@ -30,17 +31,43 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
         }
     }
 
+    // Collect unique external hyperlink URLs -> rIdLink1..N
+    let mut hyperlink_ids: BTreeMap<String, String> = BTreeMap::new();
+    for block in &doc.blocks {
+        if let Block::Paragraph(p) = block {
+            for sp in &p.spans {
+                if let Some(url) = &sp.style.hyperlink {
+                    if !url.is_empty() && !url.starts_with('#') && !hyperlink_ids.contains_key(url)
+                    {
+                        let lid = format!("rIdLink{}", hyperlink_ids.len() + 1);
+                        hyperlink_ids.insert(url.clone(), lid);
+                    }
+                }
+            }
+        }
+    }
+
     let has_comments = !doc.comments.is_empty();
+    let has_footnotes = !doc.footnotes.is_empty();
+    let has_endnotes = !doc.endnotes.is_empty();
 
     zw.add_file(
         "[Content_Types].xml",
-        build_content_types(has_comments).into_bytes(),
+        build_content_types(has_comments, has_footnotes, has_endnotes).into_bytes(),
     );
     zw.add_file("_rels/.rels", build_root_rels().into_bytes());
     zw.add_file("docProps/core.xml", build_core_props(doc).into_bytes());
     zw.add_file(
         "word/_rels/document.xml.rels",
-        build_doc_rels(&images, has_comments).into_bytes(),
+        build_doc_rels(
+            &images,
+            &hyperlink_ids,
+            &doc.extra_relationships,
+            has_comments,
+            has_footnotes,
+            has_endnotes,
+        )
+        .into_bytes(),
     );
     zw.add_file("word/styles.xml", build_styles_xml().into_bytes());
     zw.add_file("word/numbering.xml", build_numbering_xml().into_bytes());
@@ -63,10 +90,51 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
             build_comments_xml(&doc.comments).into_bytes(),
         );
     }
-    zw.add_file("word/document.xml", build_document_xml(doc).into_bytes());
+    if has_footnotes {
+        zw.add_file(
+            "word/footnotes.xml",
+            build_notes_xml(&doc.footnotes, "footnotes", "footnote").into_bytes(),
+        );
+    }
+    if has_endnotes {
+        zw.add_file(
+            "word/endnotes.xml",
+            build_notes_xml(&doc.endnotes, "endnotes", "endnote").into_bytes(),
+        );
+    }
+    zw.add_file(
+        "word/document.xml",
+        build_document_xml(doc, &hyperlink_ids).into_bytes(),
+    );
+
+    let mut emitted_names: BTreeSet<String> = [
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "docProps/core.xml",
+        "word/_rels/document.xml.rels",
+        "word/styles.xml",
+        "word/numbering.xml",
+        "word/settings.xml",
+        "word/header1.xml",
+        "word/footer1.xml",
+        "word/document.xml",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    if has_comments {
+        emitted_names.insert("word/comments.xml".into());
+    }
+    if has_footnotes {
+        emitted_names.insert("word/footnotes.xml".into());
+    }
+    if has_endnotes {
+        emitted_names.insert("word/endnotes.xml".into());
+    }
 
     for (rel_path, data) in &images {
         let full = format!("word/{rel_path}");
+        emitted_names.insert(full.clone());
         if rel_path.ends_with(".png")
             || rel_path.ends_with(".jpeg")
             || rel_path.ends_with(".jpg")
@@ -78,30 +146,46 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
         }
     }
 
-    // Re-emit unmodeled enterprise passthrough parts (`customXml/*`, `word/theme/*`, etc.)
+    if !doc.metadata.company.is_empty()
+        && !doc.passthrough_parts.contains_key("docProps/app.xml")
+        && !doc.passthrough_shared.contains_key("docProps/app.xml")
+    {
+        emitted_names.insert("docProps/app.xml".into());
+        zw.add_file("docProps/app.xml", build_app_props(doc).into_bytes());
+    }
+
+    // Re-emit unmodeled enterprise passthrough parts (`customXml/*`, `word/theme/*`, OLE, VBA, etc.)
     for (part_name, data) in &doc.passthrough_parts {
-        let collides_img = images
-            .iter()
-            .any(|(rel, _)| format!("word/{rel}") == *part_name);
-        if !collides_img {
+        if emitted_names.insert(part_name.clone()) {
             zw.add_file(part_name.clone(), data.clone());
+        }
+    }
+    for (part_name, shared) in &doc.passthrough_shared {
+        if emitted_names.insert(part_name.clone()) {
+            zw.add_stored(part_name.clone(), shared.to_vec());
         }
     }
 
     zw.finish()
 }
 
-fn build_content_types(has_comments: bool) -> String {
-    let comments_override = if has_comments {
-        "\n  <Override PartName=\"/word/comments.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml\"/>"
-    } else {
-        ""
-    };
+fn build_content_types(has_comments: bool, has_footnotes: bool, has_endnotes: bool) -> String {
+    let mut extras = String::new();
+    if has_comments {
+        extras.push_str("\n  <Override PartName=\"/word/comments.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml\"/>");
+    }
+    if has_footnotes {
+        extras.push_str("\n  <Override PartName=\"/word/footnotes.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml\"/>");
+    }
+    if has_endnotes {
+        extras.push_str("\n  <Override PartName=\"/word/endnotes.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml\"/>");
+    }
     format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
+  <Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>
   <Default Extension="png" ContentType="image/png"/>
   <Default Extension="jpeg" ContentType="image/jpeg"/>
   <Default Extension="jpg" ContentType="image/jpeg"/>
@@ -113,7 +197,7 @@ fn build_content_types(has_comments: bool) -> String {
   <Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
   <Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>
   <Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
-  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>{comments_override}
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>{extras}
 </Types>"#
     )
 }
@@ -128,6 +212,36 @@ fn build_root_rels() -> String {
 }
 
 fn build_core_props(doc: &Document) -> String {
+    let last_mod = if doc.metadata.last_modified_by.is_empty() {
+        doc.author.as_str()
+    } else {
+        doc.metadata.last_modified_by.as_str()
+    };
+    let mut extra = String::new();
+    if !doc.metadata.subject.is_empty() {
+        extra.push_str(&format!(
+            "\n  <dc:subject>{}</dc:subject>",
+            escape_xml(&doc.metadata.subject)
+        ));
+    }
+    if !doc.metadata.keywords.is_empty() {
+        extra.push_str(&format!(
+            "\n  <cp:keywords>{}</cp:keywords>",
+            escape_xml(&doc.metadata.keywords)
+        ));
+    }
+    if !doc.metadata.description.is_empty() {
+        extra.push_str(&format!(
+            "\n  <dc:description>{}</dc:description>",
+            escape_xml(&doc.metadata.description)
+        ));
+    }
+    if doc.metadata.revision_number > 0 {
+        extra.push_str(&format!(
+            "\n  <cp:revision>{}</cp:revision>",
+            doc.metadata.revision_number
+        ));
+    }
     format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
@@ -136,13 +250,48 @@ fn build_core_props(doc: &Document) -> String {
   <dc:title>{}</dc:title>
   <dc:creator>{}</dc:creator>
   <cp:lastModifiedBy>{}</cp:lastModifiedBy>
-  <cp:category>{}</cp:category>
+  <cp:category>{}</cp:category>{extra}
 </cp:coreProperties>"#,
         escape_xml(&doc.title),
         escape_xml(&doc.author),
-        escape_xml(&doc.author),
+        escape_xml(last_mod),
         escape_xml(doc.classification.slug()),
     )
+}
+
+fn build_app_props(doc: &Document) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">
+  <Application>RustPad Desktop Studio</Application>
+  <AppVersion>3.0000</AppVersion>
+  <Company>{}</Company>
+</Properties>"#,
+        escape_xml(&doc.metadata.company)
+    )
+}
+
+fn build_notes_xml(notes: &[DocNote], root_tag: &str, item_tag: &str) -> String {
+    let mut xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:{root_tag} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+"#
+    );
+    for n in notes {
+        let author_attr = if n.author.is_empty() {
+            String::new()
+        } else {
+            format!(r#" w:author="{}""#, escape_xml(&n.author))
+        };
+        xml.push_str(&format!(
+            r#"  <w:{item_tag} w:id="{}"{author_attr}><w:p><w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p></w:{item_tag}>"#,
+            n.id,
+            escape_xml(&n.text)
+        ));
+        xml.push('\n');
+    }
+    xml.push_str(&format!("</w:{root_tag}>"));
+    xml
 }
 
 fn build_settings_xml(track_changes: bool) -> String {
@@ -184,7 +333,25 @@ fn build_comments_xml(comments: &[DocComment]) -> String {
     xml
 }
 
-fn build_doc_rels(images: &[(String, SharedBytes)], has_comments: bool) -> String {
+fn build_doc_rels(
+    images: &[(String, SharedBytes)],
+    hyperlink_ids: &BTreeMap<String, String>,
+    extra_rels: &[RawRelationship],
+    has_comments: bool,
+    has_footnotes: bool,
+    has_endnotes: bool,
+) -> String {
+    let mut used_ids: BTreeSet<String> = [
+        "rIdStyles",
+        "rIdNumbering",
+        "rIdSettings",
+        "rIdHeader1",
+        "rIdFooter1",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
     let mut xml = String::from(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -196,17 +363,57 @@ fn build_doc_rels(images: &[(String, SharedBytes)], has_comments: bool) -> Strin
 "#,
     );
     if has_comments {
+        used_ids.insert("rIdComments".into());
         xml.push_str(
             r#"  <Relationship Id="rIdComments" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/>"#,
         );
         xml.push('\n');
     }
+    if has_footnotes {
+        used_ids.insert("rIdFootnotes".into());
+        xml.push_str(
+            r#"  <Relationship Id="rIdFootnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>"#,
+        );
+        xml.push('\n');
+    }
+    if has_endnotes {
+        used_ids.insert("rIdEndnotes".into());
+        xml.push_str(
+            r#"  <Relationship Id="rIdEndnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes" Target="endnotes.xml"/>"#,
+        );
+        xml.push('\n');
+    }
     for (idx, (target, _)) in images.iter().enumerate() {
         let id = idx + 1;
+        let rid = format!("rIdImg{id}");
+        used_ids.insert(rid.clone());
         xml.push_str(&format!(
-            r#"  <Relationship Id="rIdImg{id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="{target}"/>"#
+            r#"  <Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="{target}"/>"#
         ));
         xml.push('\n');
+    }
+    for (url, rid) in hyperlink_ids {
+        used_ids.insert(rid.clone());
+        xml.push_str(&format!(
+            r#"  <Relationship Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="{}" TargetMode="External"/>"#,
+            escape_xml(url)
+        ));
+        xml.push('\n');
+    }
+    for rel in extra_rels {
+        if used_ids.insert(rel.id.clone()) {
+            let mode_attr = match &rel.target_mode {
+                Some(m) if !m.is_empty() => format!(r#" TargetMode="{}""#, escape_xml(m)),
+                _ => String::new(),
+            };
+            xml.push_str(&format!(
+                r#"  <Relationship Id="{}" Type="{}" Target="{}"{mode_attr}/>"#,
+                escape_xml(&rel.id),
+                escape_xml(&rel.rel_type),
+                escape_xml(&rel.target)
+            ));
+            xml.push('\n');
+        }
     }
     xml.push_str("</Relationships>");
     xml
@@ -329,7 +536,12 @@ fn jc_val(a: Alignment) -> &'static str {
     }
 }
 
-fn write_paragraph_xml(out: &mut String, p: &Paragraph, anchored_comments: &[&DocComment]) {
+fn write_paragraph_xml(
+    out: &mut String,
+    p: &Paragraph,
+    anchored_comments: &[&DocComment],
+    hyperlink_ids: &BTreeMap<String, String>,
+) {
     out.push_str("<w:p><w:pPr>");
     out.push_str(&format!(r#"<w:pStyle w:val="{}"/>"#, style_id(p.style)));
     if p.alignment != Alignment::Left {
@@ -387,7 +599,15 @@ fn write_paragraph_xml(out: &mut String, p: &Paragraph, anchored_comments: &[&Do
         if span.style.strikethrough {
             r_xml.push_str("<w:strike/>");
         }
-        let half_pts = (span.style.font_size_pt * 2.0).round() as u32;
+        if span.style.hidden {
+            r_xml.push_str("<w:vanish/>");
+        }
+        if span.style.superscript {
+            r_xml.push_str(r#"<w:vertAlign w:val="superscript"/>"#);
+        } else if span.style.subscript {
+            r_xml.push_str(r#"<w:vertAlign w:val="subscript"/>"#);
+        }
+        let half_pts = ((span.style.font_size_pt * 2.0).round() as u32).max(1);
         r_xml.push_str(&format!(r#"<w:sz w:val="{half_pts}"/>"#));
         r_xml.push_str(&format!(
             r#"<w:color w:val="{}"/>"#,
@@ -401,10 +621,18 @@ fn write_paragraph_xml(out: &mut String, p: &Paragraph, anchored_comments: &[&Do
         }
         r_xml.push_str("</w:rPr>");
 
+        let mut note_refs = String::new();
+        if let Some(fid) = span.style.footnote_ref {
+            note_refs.push_str(&format!(r#"<w:footnoteReference w:id="{fid}"/>"#));
+        }
+        if let Some(eid) = span.style.endnote_ref {
+            note_refs.push_str(&format!(r#"<w:endnoteReference w:id="{eid}"/>"#));
+        }
+
         match &span.revision {
             Some(rev) if rev.kind == RevisionKind::Deletion => {
                 r_xml.push_str(&format!(
-                    r#"<w:delText xml:space="preserve">{}</w:delText></w:r>"#,
+                    r#"{note_refs}<w:delText xml:space="preserve">{}</w:delText></w:r>"#,
                     escape_xml(&span.text)
                 ));
                 let date_attr = if rev.date_iso.is_empty() {
@@ -421,7 +649,7 @@ fn write_paragraph_xml(out: &mut String, p: &Paragraph, anchored_comments: &[&Do
             }
             Some(rev) => {
                 r_xml.push_str(&format!(
-                    r#"<w:t xml:space="preserve">{}</w:t></w:r>"#,
+                    r#"{note_refs}<w:t xml:space="preserve">{}</w:t></w:r>"#,
                     escape_xml(&span.text)
                 ));
                 let date_attr = if rev.date_iso.is_empty() {
@@ -438,10 +666,25 @@ fn write_paragraph_xml(out: &mut String, p: &Paragraph, anchored_comments: &[&Do
             }
             None => {
                 r_xml.push_str(&format!(
-                    r#"<w:t xml:space="preserve">{}</w:t></w:r>"#,
+                    r#"{note_refs}<w:t xml:space="preserve">{}</w:t></w:r>"#,
                     escape_xml(&span.text)
                 ));
-                out.push_str(&r_xml);
+                if let Some(link) = &span.style.hyperlink {
+                    if let Some(anchor) = link.strip_prefix('#') {
+                        out.push_str(&format!(
+                            r#"<w:hyperlink w:anchor="{}">{r_xml}</w:hyperlink>"#,
+                            escape_xml(anchor)
+                        ));
+                    } else if let Some(rid) = hyperlink_ids.get(link) {
+                        out.push_str(&format!(
+                            r#"<w:hyperlink r:id="{rid}">{r_xml}</w:hyperlink>"#
+                        ));
+                    } else {
+                        out.push_str(&r_xml);
+                    }
+                } else {
+                    out.push_str(&r_xml);
+                }
             }
         }
     }
@@ -509,7 +752,7 @@ fn write_table_xml(out: &mut String, t: &TableBlock, content_width_twips: u32) {
     out.push_str("</w:tbl>\n");
 }
 
-fn build_document_xml(doc: &Document) -> String {
+fn build_document_xml(doc: &Document, hyperlink_ids: &BTreeMap<String, String>) -> String {
     let (w_pt, h_pt) = doc
         .page_setup
         .paper_size
@@ -542,7 +785,7 @@ fn build_document_xml(doc: &Document) -> String {
                     .iter()
                     .filter(|c| c.block_index == block_idx)
                     .collect();
-                write_paragraph_xml(&mut xml, p, &anchored);
+                write_paragraph_xml(&mut xml, p, &anchored, hyperlink_ids);
             }
             Block::Table(t) => write_table_xml(&mut xml, t, content_twips),
             Block::HorizontalRule => {
@@ -552,6 +795,12 @@ fn build_document_xml(doc: &Document) -> String {
             }
             Block::PageBreak => {
                 xml.push_str(r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#);
+            }
+            Block::SectionBreak(kind) => {
+                xml.push_str(&format!(
+                    r#"<w:p><w:pPr><w:sectPr><w:type w:val="{}"/></w:sectPr></w:pPr></w:p>"#,
+                    kind.docx_val()
+                ));
             }
             Block::Image(img) => {
                 if !img.png_bytes.is_empty() {
@@ -575,10 +824,15 @@ fn build_document_xml(doc: &Document) -> String {
     } else {
         ""
     };
+    let title_pg = if doc.page_setup.different_first_page {
+        "\n      <w:titlePg/>"
+    } else {
+        ""
+    };
     xml.push_str(&format!(
         r#"  <w:sectPr>
       <w:headerReference w:type="default" r:id="rIdHeader1"/>
-      <w:footerReference w:type="default" r:id="rIdFooter1"/>
+      <w:footerReference w:type="default" r:id="rIdFooter1"/>{title_pg}
       <w:pgSz w:w="{w_twips}" w:h="{h_twips}"{orient_attr}/>
       <w:pgMar w:top="{m_top}" w:right="{m_right}" w:bottom="{m_bot}" w:left="{m_left}" w:header="720" w:footer="720"/>
     </w:sectPr>

@@ -4,18 +4,18 @@
 use crate::xml_lite::{parse_xml, stream_docx_body_elements, XmlChild, XmlNode};
 use crate::DocxError;
 use doc_model::{
-    probe_media_dimensions, Alignment, Block, DocComment, Document, FontFamily, ImageBlock,
-    ListKind, PageSetup, PaperSize, Paragraph, ParagraphStyle, RevisionKind, RevisionMeta,
-    RgbColor, SecurityClassification, SharedBytes, SpanStyle, TableBlock, TableCell, TextSpan,
+    probe_media_dimensions, Alignment, Block, DocComment, DocMetadata, DocNote, Document,
+    FontFamily, ImageBlock, ListKind, PageSetup, PaperSize, Paragraph, ParagraphStyle,
+    RawRelationship, RevisionKind, RevisionMeta, RgbColor, SectionBreakKind,
+    SecurityClassification, SharedBytes, SpanStyle, TableBlock, TableCell, TextSpan,
 };
 use rustpad_zip::LazyZipArchive;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 pub fn load_docx_file(path: impl AsRef<Path>) -> Result<Document, DocxError> {
     let bytes = std::fs::read(&path).map_err(|e| DocxError(e.to_string()))?;
-    let mut doc = load_docx_shared_with_progress(SharedBytes::from_vec(bytes), None)?;
+    let mut doc = load_docx_shared_with_progress(SharedBytes::from_vec(bytes), |_, _| {})?;
     if doc.title == "Untitled Document" {
         if let Some(stem) = path.as_ref().file_stem().and_then(|s| s.to_str()) {
             doc.title = stem.to_string();
@@ -25,39 +25,58 @@ pub fn load_docx_file(path: impl AsRef<Path>) -> Result<Document, DocxError> {
 }
 
 pub fn load_docx_bytes(bytes: &[u8]) -> Result<Document, DocxError> {
-    load_docx_shared_with_progress(SharedBytes::from_slice(bytes), None)
+    load_docx_shared_with_progress(SharedBytes::from_slice(bytes), |_, _| {})
 }
 
 /// Zero-copy streaming `.docx` loader backed by a single `SharedBytes` (`Arc<[u8]>`) buffer.
 /// Indexes the PKZIP Central Directory in `< 0.1 ms`, streams `<w:body>` elements one block at
 /// a time (`< 32 KB` peak XML DOM), and slices `STORED` media (`PNG`/`JPEG`) without copying bytes.
-pub fn load_docx_shared_with_progress(
+pub fn load_docx_shared_with_progress<F>(
     backing: SharedBytes,
-    progress_pct: Option<&AtomicU32>,
-) -> Result<Document, DocxError> {
-    if let Some(p) = progress_pct {
-        p.store(8, Ordering::Relaxed);
-    }
-    let archive_total_len = backing.len();
+    mut on_progress: F,
+) -> Result<Document, DocxError>
+where
+    F: FnMut(usize, usize),
+{
+    let archive_total_len = backing.len().max(1);
+    on_progress(archive_total_len / 12, archive_total_len);
     let archive = LazyZipArchive::from_shared(backing).map_err(|e| DocxError(e.0))?;
-    if let Some(p) = progress_pct {
-        p.store(16, Ordering::Relaxed);
-    }
+    on_progress(archive_total_len / 6, archive_total_len);
+
     let doc_xml = archive
         .get_str("word/document.xml")
         .map_err(|e| DocxError(e.0))?
         .ok_or_else(|| DocxError("Missing word/document.xml inside .docx archive".into()))?;
-    if let Some(p) = progress_pct {
-        p.store(28, Ordering::Relaxed);
-    }
+    on_progress(archive_total_len / 4, archive_total_len);
 
-    // Relationships map (rId -> Target)
+    // Relationships map (rId -> Target) + lossless preservation of unmodeled relationships
     let mut rels = BTreeMap::new();
+    let mut extra_relationships: Vec<RawRelationship> = Vec::new();
     if let Ok(Some(rels_xml)) = archive.get_str("word/_rels/document.xml.rels") {
         if let Some(rels_root) = parse_xml(&rels_xml) {
             for rel in rels_root.children_named("Relationship") {
                 if let (Some(id), Some(target)) = (rel.attr("Id"), rel.attr("Target")) {
                     rels.insert(id.to_string(), target.to_string());
+                    let rel_type = rel.attr("Type").unwrap_or("").to_string();
+                    let target_mode = rel.attr("TargetMode").map(|s| s.to_string());
+                    let is_managed_rel = rel_type.ends_with("/styles")
+                        || rel_type.ends_with("/numbering")
+                        || rel_type.ends_with("/settings")
+                        || rel_type.ends_with("/header")
+                        || rel_type.ends_with("/footer")
+                        || rel_type.ends_with("/comments")
+                        || rel_type.ends_with("/footnotes")
+                        || rel_type.ends_with("/endnotes")
+                        || rel_type.ends_with("/image")
+                        || rel_type.ends_with("/hyperlink");
+                    if !is_managed_rel && !rel_type.is_empty() {
+                        extra_relationships.push(RawRelationship {
+                            id: id.to_string(),
+                            rel_type,
+                            target: target.to_string(),
+                            target_mode,
+                        });
+                    }
                 }
             }
         }
@@ -66,6 +85,7 @@ pub fn load_docx_shared_with_progress(
     let mut title = "Untitled Document".to_string();
     let mut author = "Nour Yahyaoui".to_string();
     let mut classification = SecurityClassification::Unclassified;
+    let mut metadata = DocMetadata::default();
     if let Ok(Some(core_xml)) = archive.get_str("docProps/core.xml") {
         if let Some(core_root) = parse_xml(&core_xml) {
             if let Some(t) = core_root.child("title") {
@@ -81,7 +101,48 @@ pub fn load_docx_shared_with_progress(
                 }
             }
             if let Some(cat) = core_root.child("category") {
-                classification = SecurityClassification::from_slug(&cat.text_content());
+                let cat_txt = cat.text_content().trim().to_string();
+                classification = SecurityClassification::from_slug(&cat_txt);
+                metadata.category = cat_txt;
+            }
+            if let Some(n) = core_root.child("subject") {
+                metadata.subject = n.text_content().trim().to_string();
+            }
+            if let Some(n) = core_root.child("keywords") {
+                metadata.keywords = n.text_content().trim().to_string();
+            }
+            if let Some(n) = core_root.child("description") {
+                metadata.description = n.text_content().trim().to_string();
+            }
+            if let Some(n) = core_root.child("lastModifiedBy") {
+                metadata.last_modified_by = n.text_content().trim().to_string();
+            }
+            if let Some(n) = core_root.child("created") {
+                metadata.created_iso = n.text_content().trim().to_string();
+            }
+            if let Some(n) = core_root.child("modified") {
+                metadata.modified_iso = n.text_content().trim().to_string();
+            }
+            if let Some(n) = core_root.child("revision") {
+                metadata.revision_number = n.text_content().trim().parse::<u32>().unwrap_or(0);
+            }
+        }
+    }
+    if let Ok(Some(app_xml)) = archive.get_str("docProps/app.xml") {
+        if let Some(app_root) = parse_xml(&app_xml) {
+            if let Some(comp) = app_root.child("Company") {
+                metadata.company = comp.text_content().trim().to_string();
+            }
+        }
+    }
+    if let Ok(Some(custom_xml)) = archive.get_str("docProps/custom.xml") {
+        if let Some(custom_root) = parse_xml(&custom_xml) {
+            for prop in custom_root.children_named("property") {
+                if let Some(pname) = prop.attr("name") {
+                    metadata
+                        .custom_properties
+                        .insert(pname.to_string(), prop.text_content().trim().to_string());
+                }
             }
         }
     }
@@ -121,10 +182,7 @@ pub fn load_docx_shared_with_progress(
 
     // Stream `<w:body>` direct child elements one block at a time (`< 32 KB` peak XML DOM!)
     let streamed_ok = stream_docx_body_elements(&doc_xml, |el, cur_pos, total_len| {
-        if let Some(p) = progress_pct {
-            let pct = 30 + ((cur_pos.saturating_mul(58)) / total_len.max(1)) as u32;
-            p.store(pct.min(88), Ordering::Relaxed);
-        }
+        on_progress(cur_pos, total_len.max(1));
         parse_body_element(
             el,
             &archive,
@@ -191,10 +249,15 @@ pub fn load_docx_shared_with_progress(
         }
     }
 
-    // Preserve compact enterprise passthrough parts (`customXml/*`, `word/theme/*`, etc.)
-    // while skipping bulky unreferenced binary blobs (`embeddings/*`, duplicate `.wdp`/`.emf`)
-    // on large 30+ MB `.docx` archives so memory stays lean.
-    let managed_parts: [&str; 11] = [
+    // Parse `word/footnotes.xml` and `word/endnotes.xml` if present
+    let footnotes = parse_notes_xml(&archive, "word/footnotes.xml", "footnote");
+    let endnotes = parse_notes_xml(&archive, "word/endnotes.xml", "endnote");
+
+    // Preserve ALL unmodeled enterprise archive entries (`customXml/*`, `word/theme/*`,
+    // `word/vbaProject.bin`, `word/embeddings/*`, charts, SmartArt, unreferenced media)
+    // losslessly: compact XML/config parts (< 256 KiB) in `passthrough_parts`, and larger
+    // binary/OLE/VBA payloads zero-copy in `passthrough_shared` (`Arc<[u8]>`)!
+    let managed_parts: [&str; 13] = [
         "[Content_Types].xml",
         "_rels/.rels",
         "docProps/core.xml",
@@ -206,10 +269,11 @@ pub fn load_docx_shared_with_progress(
         "word/footer1.xml",
         "word/document.xml",
         "word/comments.xml",
+        "word/footnotes.xml",
+        "word/endnotes.xml",
     ];
-    let is_large_archive = archive_total_len > 4 * 1024 * 1024;
     let mut passthrough_parts = BTreeMap::new();
-    let mut passthrough_budget_used = 0usize;
+    let mut passthrough_shared = BTreeMap::new();
     for entry_name in archive.file_names() {
         if managed_parts.contains(&entry_name.as_str()) {
             continue;
@@ -217,30 +281,12 @@ pub fn load_docx_shared_with_progress(
         if consumed_media_paths.contains(entry_name) {
             continue;
         }
-        if is_large_archive
-            && (entry_name.starts_with("word/media/")
-                || entry_name.starts_with("word/embeddings/")
-                || entry_name.ends_with(".bin")
-                || entry_name.ends_with(".emf")
-                || entry_name.ends_with(".wmf")
-                || entry_name.ends_with(".wdp"))
-        {
-            continue;
-        }
-        if let Some(hint) = archive.entry_unpacked_hint(entry_name) {
-            if is_large_archive && (hint > 1024 * 1024 || passthrough_budget_used + hint > 8 * 1024 * 1024) {
-                continue;
-            }
-        }
         if let Ok(Some(raw_bytes)) = archive.get_shared(entry_name) {
-            if is_large_archive
-                && (raw_bytes.len() > 1024 * 1024
-                    || passthrough_budget_used + raw_bytes.len() > 8 * 1024 * 1024)
-            {
-                continue;
+            if raw_bytes.len() <= 256 * 1024 && !entry_name.ends_with(".bin") {
+                passthrough_parts.insert(entry_name.clone(), raw_bytes.to_vec());
+            } else {
+                passthrough_shared.insert(entry_name.clone(), raw_bytes);
             }
-            passthrough_budget_used += raw_bytes.len();
-            passthrough_parts.insert(entry_name.clone(), raw_bytes.to_vec());
         }
     }
 
@@ -266,9 +312,7 @@ pub fn load_docx_shared_with_progress(
         }
     }
 
-    if let Some(p) = progress_pct {
-        p.store(95, Ordering::Relaxed);
-    }
+    on_progress(archive_total_len, archive_total_len);
 
     // Enable track_changes automatically if loaded spans carry revisions
     if !track_changes {
@@ -286,13 +330,53 @@ pub fn load_docx_shared_with_progress(
         page_setup,
         blocks,
         comments,
+        footnotes,
+        endnotes,
+        metadata,
+        extra_relationships,
         passthrough_parts,
+        passthrough_shared,
     };
     doc.ensure_non_empty();
     Ok(doc)
 }
 
+fn parse_notes_xml(archive: &LazyZipArchive, part: &str, item_tag: &str) -> Vec<DocNote> {
+    let mut notes = Vec::new();
+    let Ok(Some(xml_str)) = archive.get_str(part) else {
+        return notes;
+    };
+    let Some(root) = parse_xml(&xml_str) else {
+        return notes;
+    };
+    for n_el in root.children_named(item_tag) {
+        if let Some(ntype) = n_el.attr("type") {
+            if ntype.contains("separator") {
+                continue;
+            }
+        }
+        let Some(id_i32) = n_el.attr("id").and_then(|s| s.parse::<i32>().ok()) else {
+            continue;
+        };
+        if id_i32 <= 0 {
+            continue;
+        }
+        let txt = n_el.text_content().trim().to_string();
+        if !txt.is_empty() {
+            notes.push(DocNote {
+                id: id_i32 as u32,
+                text: txt,
+                author: n_el.attr("author").unwrap_or("").to_string(),
+            });
+        }
+    }
+    notes
+}
+
 fn parse_sect_pr(sect: &XmlNode, setup: &mut PageSetup) {
+    if sect.child("titlePg").is_some() {
+        setup.different_first_page = true;
+    }
     if let Some(pg_sz) = sect.child("pgSz") {
         if let (Some(w_s), Some(h_s)) = (pg_sz.attr("w"), pg_sz.attr("h")) {
             if let (Ok(w), Ok(h)) = (w_s.parse::<f32>(), h_s.parse::<f32>()) {
@@ -453,8 +537,17 @@ fn parse_paragraph_or_special(
     let mut list_kind = ListKind::None;
     let mut line_spacing = 1.35f32;
     let mut indent_level = 0u8;
+    let mut trailing_section_break: Option<SectionBreakKind> = None;
 
     if let Some(p_pr) = p_node.child("pPr") {
+        if let Some(sect_pr) = p_pr.child("sectPr") {
+            let kind = sect_pr
+                .child("type")
+                .and_then(|n| n.attr("val"))
+                .map(SectionBreakKind::from_docx_val)
+                .unwrap_or(SectionBreakKind::NextPage);
+            trailing_section_break = Some(kind);
+        }
         if let Some(p_style) = p_pr.child("pStyle").and_then(|n| n.attr("val")) {
             let lower = p_style.to_ascii_lowercase();
             style = if lower == "title" {
@@ -586,10 +679,15 @@ fn parse_paragraph_or_special(
                 }
             }
             "hyperlink" => {
+                let resolved_url = el
+                    .attr("id")
+                    .and_then(|rid| rels.get(rid).cloned())
+                    .or_else(|| el.attr("anchor").map(|a| format!("#{a}")));
                 for r in el.children_named("r") {
                     if let Some(mut span) = parse_run(r, style, None) {
                         span.style.underline = true;
                         span.style.color = RgbColor::COBALT;
+                        span.style.hyperlink = resolved_url.clone();
                         spans.push(span);
                     }
                 }
@@ -600,12 +698,19 @@ fn parse_paragraph_or_special(
 
     let has_text = spans.iter().any(|s| !s.text.is_empty());
 
+    if let Some(sb_kind) = trailing_section_break {
+        if !has_text && extracted_images.is_empty() {
+            blocks.push(Block::SectionBreak(sb_kind));
+            return;
+        }
+    }
+
     if has_page_break && !has_text && extracted_images.is_empty() {
         blocks.push(Block::PageBreak);
         return;
     }
 
-    if has_text || (extracted_images.is_empty() && !has_page_break) {
+    if has_text || (extracted_images.is_empty() && !has_page_break && trailing_section_break.is_none()) {
         if let Some(first) = spans.first_mut() {
             if let Some(rest) = first.text.strip_prefix("☑ ") {
                 list_kind = ListKind::Checklist(true);
@@ -637,6 +742,9 @@ fn parse_paragraph_or_special(
     {
         blocks.push(Block::PageBreak);
     }
+    if let Some(sb_kind) = trailing_section_break {
+        blocks.push(Block::SectionBreak(sb_kind));
+    }
 }
 
 fn parse_run(
@@ -645,12 +753,30 @@ fn parse_run(
     revision: Option<RevisionMeta>,
 ) -> Option<TextSpan> {
     let mut text = String::new();
+    let mut footnote_ref: Option<u32> = None;
+    let mut endnote_ref: Option<u32> = None;
     for child in &r_node.children {
         if let XmlChild::Element(el) = child {
             match el.local_name() {
                 "t" | "delText" => text.push_str(&el.text_content()),
                 "tab" => text.push('\t'),
                 "br" if el.attr("type") != Some("page") => text.push('\n'),
+                "footnoteReference" => {
+                    if let Some(fid) = el.attr("id").and_then(|v| v.parse::<u32>().ok()) {
+                        footnote_ref = Some(fid);
+                        if text.is_empty() {
+                            text.push_str(&format!("[{fid}]"));
+                        }
+                    }
+                }
+                "endnoteReference" => {
+                    if let Some(eid) = el.attr("id").and_then(|v| v.parse::<u32>().ok()) {
+                        endnote_ref = Some(eid);
+                        if text.is_empty() {
+                            text.push_str(&format!("[e{eid}]"));
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -668,6 +794,9 @@ fn parse_run(
         } else {
             RgbColor::INK_SLATE
         },
+        footnote_ref,
+        endnote_ref,
+        superscript: footnote_ref.is_some() || endnote_ref.is_some(),
         ..SpanStyle::default()
     };
 
@@ -689,12 +818,22 @@ fn parse_run(
         if r_pr.child("strike").is_some() {
             style.strikethrough = true;
         }
+        if let Some(van) = r_pr.child("vanish").or_else(|| r_pr.child("webHidden")) {
+            style.hidden = van.attr("val") != Some("0") && van.attr("val") != Some("false");
+        }
+        if let Some(va) = r_pr.child("vertAlign").and_then(|n| n.attr("val")) {
+            match va {
+                "superscript" => style.superscript = true,
+                "subscript" => style.subscript = true,
+                _ => {}
+            }
+        }
         if let Some(sz) = r_pr
             .child("sz")
             .and_then(|n| n.attr("val"))
             .and_then(|v| v.parse::<f32>().ok())
         {
-            style.font_size_pt = (sz / 2.0).clamp(6.0, 96.0);
+            style.font_size_pt = (sz / 2.0).clamp(0.5, 96.0);
         }
         if let Some(col) = r_pr
             .child("color")

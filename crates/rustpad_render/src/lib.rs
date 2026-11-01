@@ -15,5 +15,8 @@ pub use jpeg_codec::{
 pub use png_codec::{
     decode_bmp_rgba, decode_dib_rgba, decode_png_rgba, encode_rgba_png, encode_surface_png,
 };
-pub use theme::{Color, DaylightTheme};
+pub use theme::{
+    active_theme_mode, cycle_theme_mode, load_saved_or_system_theme, save_theme_preference,
+    set_active_theme_mode, Color, DaylightTheme, MidnightTheme, StudioTheme, ThemeMode,
+};
 pub use ttf::{FontBook, FontSlot};

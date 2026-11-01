@@ -103,10 +103,8 @@ pub fn pdf_to_word(pdf: &PdfDocument) -> Document {
                         font_size_pt: item.font_size,
                         bold: item.bold,
                         italic: item.italic,
-                        underline: false,
-                        strikethrough: false,
                         color: item.color,
-                        highlight: None,
+                        ..SpanStyle::default()
                     },
                     revision: None,
                 });
@@ -155,12 +153,8 @@ pub fn pdf_to_word(pdf: &PdfDocument) -> Document {
     let mut doc = Document {
         title: pdf.title.clone(),
         author: pdf.author.clone(),
-        classification: doc_model::SecurityClassification::Unclassified,
-        track_changes: false,
-        page_setup: doc_model::PageSetup::default(),
         blocks,
-        comments: Vec::new(),
-        passthrough_parts: std::collections::BTreeMap::new(),
+        ..Document::blank()
     };
     doc.ensure_non_empty();
     doc
@@ -280,12 +274,8 @@ pub fn markdown_to_word(md: &str, title: impl Into<String>) -> Document {
     let mut doc = Document {
         title: title.into(),
         author: "Nour Yahyaoui".into(),
-        classification: doc_model::SecurityClassification::Unclassified,
-        track_changes: false,
-        page_setup: doc_model::PageSetup::default(),
         blocks,
-        comments: Vec::new(),
-        passthrough_parts: std::collections::BTreeMap::new(),
+        ..Document::blank()
     };
     doc.ensure_non_empty();
     doc
@@ -295,6 +285,26 @@ fn parse_inline_md(text: &str) -> Paragraph {
     let mut spans = Vec::new();
     let mut rest = text;
     while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix('[') {
+            if let Some((label, after_bracket)) = after.split_once("](") {
+                if let Some(close_paren) = after_bracket.find(')') {
+                    let url = after_bracket[..close_paren].trim();
+                    if !label.is_empty() && !url.is_empty() {
+                        spans.push(TextSpan::styled(
+                            label,
+                            SpanStyle {
+                                underline: true,
+                                color: RgbColor::COBALT,
+                                hyperlink: Some(url.to_string()),
+                                ..SpanStyle::default()
+                            },
+                        ));
+                        rest = &after_bracket[close_paren + 1..];
+                        continue;
+                    }
+                }
+            }
+        }
         if let Some(after) = rest.strip_prefix("**") {
             if let Some(end) = after.find("**") {
                 spans.push(TextSpan::styled(
@@ -336,7 +346,7 @@ fn parse_inline_md(text: &str) -> Paragraph {
             }
         }
         let next_special = rest[1..]
-            .find(['*', '`'])
+            .find(['*', '`', '['])
             .map(|idx| idx + 1)
             .unwrap_or(rest.len());
         spans.push(TextSpan::plain(&rest[..next_special]));
@@ -370,7 +380,12 @@ pub fn word_to_markdown(doc: &Document) -> String {
                     },
                 }
                 for span in &p.spans {
-                    if span.style.bold && p.style == ParagraphStyle::Normal {
+                    if span.style.hidden {
+                        continue;
+                    }
+                    if let Some(url) = &span.style.hyperlink {
+                        md.push_str(&format!("[{}]({})", span.text, url));
+                    } else if span.style.bold && p.style == ParagraphStyle::Normal {
                         md.push_str(&format!("**{}**", span.text));
                     } else if span.style.italic
                         && !matches!(p.style, ParagraphStyle::Subtitle | ParagraphStyle::Quote)
@@ -401,11 +416,262 @@ pub fn word_to_markdown(doc: &Document) -> String {
                 md.push('\n');
             }
             Block::HorizontalRule => md.push_str("---\n\n"),
-            Block::PageBreak => md.push_str("\n---\n\n"),
+            Block::PageBreak | Block::SectionBreak(_) => md.push_str("\n---\n\n"),
             Block::Image(img) => md.push_str(&format!("![{}]({})\n\n", img.caption, img.name)),
         }
     }
+    if !doc.footnotes.is_empty() || !doc.endnotes.is_empty() {
+        md.push_str("---\n\n");
+        for n in &doc.footnotes {
+            md.push_str(&format!("[^{}]: {}\n", n.id, n.text));
+        }
+        for n in &doc.endnotes {
+            md.push_str(&format!("[^e{}]: {}\n", n.id, n.text));
+        }
+    }
     md
+}
+
+/// Exports `doc` to a self-contained, responsive HTML5 document with Daylight & Native Dark Mode
+/// CSS tokens, semantic headings, tables, Track Changes `<ins>`/`<del>` markup, footnotes,
+/// and inline Base64 images.
+pub fn word_to_html(doc: &Document, dark_mode_default: bool) -> String {
+    let theme_attr = if dark_mode_default { "dark" } else { "light" };
+    let mut body = String::with_capacity(8192);
+
+    if doc.classification != doc_model::SecurityClassification::Unclassified {
+        body.push_str(&format!(
+            "<div class=\"rp-banner\">{}</div>\n",
+            escape_html(doc.classification.label())
+        ));
+    }
+    if !doc.page_setup.header_text.trim().is_empty() {
+        body.push_str(&format!(
+            "<header class=\"rp-running-hdr\">{}</header>\n",
+            escape_html(&doc.page_setup.header_text)
+        ));
+    }
+
+    for block in &doc.blocks {
+        match block {
+            Block::Paragraph(p) => {
+                let tag = match p.style {
+                    ParagraphStyle::Title => "h1",
+                    ParagraphStyle::Subtitle => "p",
+                    ParagraphStyle::Heading1 => "h2",
+                    ParagraphStyle::Heading2 => "h3",
+                    ParagraphStyle::Heading3 => "h4",
+                    ParagraphStyle::Quote => "blockquote",
+                    ParagraphStyle::Normal => "p",
+                };
+                let cls = if p.style == ParagraphStyle::Subtitle {
+                    " class=\"rp-subtitle\""
+                } else {
+                    ""
+                };
+                body.push_str(&format!("<{tag}{cls}>"));
+                match p.list_kind {
+                    ListKind::Bullet => body.push_str("• "),
+                    ListKind::Numbered(n) => body.push_str(&format!("{n}. ")),
+                    ListKind::Checklist(true) => body.push_str("☑ "),
+                    ListKind::Checklist(false) => body.push_str("☐ "),
+                    ListKind::None => {}
+                }
+                for sp in &p.spans {
+                    if sp.style.hidden {
+                        continue;
+                    }
+                    let mut chunk = escape_html(&sp.text);
+                    if sp.style.bold {
+                        chunk = format!("<strong>{chunk}</strong>");
+                    }
+                    if sp.style.italic {
+                        chunk = format!("<em>{chunk}</em>");
+                    }
+                    if sp.style.underline && sp.style.hyperlink.is_none() {
+                        chunk = format!("<u>{chunk}</u>");
+                    }
+                    if sp.style.strikethrough {
+                        chunk = format!("<s>{chunk}</s>");
+                    }
+                    if sp.style.superscript {
+                        chunk = format!("<sup>{chunk}</sup>");
+                    } else if sp.style.subscript {
+                        chunk = format!("<sub>{chunk}</sub>");
+                    }
+                    if let Some(url) = &sp.style.hyperlink {
+                        chunk = format!(
+                            "<a href=\"{}\" rel=\"noopener noreferrer\">{}</a>",
+                            escape_html(url),
+                            chunk
+                        );
+                    }
+                    if let Some(rev) = &sp.revision {
+                        chunk = match rev.kind {
+                            doc_model::RevisionKind::Insertion => {
+                                format!("<ins title=\"{}\">{chunk}</ins>", escape_html(&rev.author))
+                            }
+                            doc_model::RevisionKind::Deletion => {
+                                format!("<del title=\"{}\">{chunk}</del>", escape_html(&rev.author))
+                            }
+                        };
+                    }
+                    body.push_str(&chunk);
+                }
+                body.push_str(&format!("</{tag}>\n"));
+            }
+            Block::Table(t) => {
+                body.push_str("<div class=\"rp-table-wrap\"><table>\n");
+                for (r_idx, row) in t.rows.iter().enumerate() {
+                    body.push_str("  <tr>");
+                    let cell_tag = if r_idx == 0 { "th" } else { "td" };
+                    for cell in row {
+                        body.push_str(&format!(
+                            "<{cell_tag}>{}</{cell_tag}>",
+                            escape_html(&cell.text)
+                        ));
+                    }
+                    body.push_str("</tr>\n");
+                }
+                body.push_str("</table></div>\n");
+            }
+            Block::Image(img) => {
+                body.push_str("<figure class=\"rp-figure\">");
+                if !img.png_bytes.is_empty() {
+                    let mime = match img.media_extension() {
+                        "jpeg" => "image/jpeg",
+                        "gif" => "image/gif",
+                        "bmp" => "image/bmp",
+                        _ => "image/png",
+                    };
+                    let b64 = encode_base64(img.png_bytes.as_slice());
+                    body.push_str(&format!(
+                        "<img src=\"data:{mime};base64,{b64}\" alt=\"{}\" style=\"max-width:{}px;\"/>",
+                        escape_html(&img.name),
+                        (img.width_pt * 1.33).round() as u32
+                    ));
+                }
+                if !img.caption.trim().is_empty() {
+                    body.push_str(&format!(
+                        "<figcaption>{}</figcaption>",
+                        escape_html(&img.caption)
+                    ));
+                }
+                body.push_str("</figure>\n");
+            }
+            Block::HorizontalRule => body.push_str("<hr/>\n"),
+            Block::PageBreak | Block::SectionBreak(_) => {
+                body.push_str("<hr class=\"rp-page-break\"/>\n")
+            }
+        }
+    }
+
+    if !doc.footnotes.is_empty() || !doc.endnotes.is_empty() {
+        body.push_str("<section class=\"rp-notes\"><hr/><ol>\n");
+        for n in &doc.footnotes {
+            body.push_str(&format!(
+                "<li id=\"fn-{}\">[{}] {}</li>\n",
+                n.id,
+                n.id,
+                escape_html(&n.text)
+            ));
+        }
+        for n in &doc.endnotes {
+            body.push_str(&format!(
+                "<li id=\"en-{}\">[e{}] {}</li>\n",
+                n.id,
+                n.id,
+                escape_html(&n.text)
+            ));
+        }
+        body.push_str("</ol></section>\n");
+    }
+
+    if !doc.page_setup.footer_text.trim().is_empty() {
+        body.push_str(&format!(
+            "<footer class=\"rp-running-ftr\">{}</footer>\n",
+            escape_html(&doc.page_setup.footer_text)
+        ));
+    }
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en" data-theme="{theme_attr}">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="generator" content="RustPad v3.0.0"/>
+  <title>{}</title>
+  <style>
+    :root {{ --desk:#eef2f7; --sheet:#ffffff; --ink:#0f172a; --muted:#64748b; --border:#d0d8e4; --accent:#2563eb; --th:#f1f5f9; }}
+    [data-theme="dark"] {{ --desk:#0b0f17; --sheet:#161e2e; --ink:#e2e8f0; --muted:#94a3b8; --border:#273449; --accent:#60a5fa; --th:#1e293b; }}
+    @media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ --desk:#0b0f17; --sheet:#161e2e; --ink:#e2e8f0; --muted:#94a3b8; --border:#273449; --accent:#60a5fa; --th:#1e293b; }} }}
+    body {{ margin:0; padding:32px 16px; background:var(--desk); color:var(--ink); font:16px/1.65 system-ui,-apple-system,Segoe UI,sans-serif; }}
+    main {{ max-width:816px; margin:0 auto; background:var(--sheet); border:1px solid var(--border); border-radius:10px; padding:56px 64px; box-shadow:0 8px 30px rgba(0,0,0,.12); }}
+    h1,h2,h3,h4 {{ line-height:1.25; margin:1.2em 0 .45em; }}
+    .rp-subtitle {{ color:var(--muted); font-style:italic; margin-top:-.4em; }}
+    blockquote {{ border-left:3px solid var(--accent); margin:1em 0; padding:.25em 1em; color:var(--muted); }}
+    a {{ color:var(--accent); }}
+    ins {{ color:#10b981; text-decoration:underline; }}
+    del {{ color:#ef4444; text-decoration:line-through; }}
+    .rp-table-wrap {{ overflow-x:auto; margin:1.1em 0; }}
+    table {{ width:100%; border-collapse:collapse; }}
+    th,td {{ border:1px solid var(--border); padding:8px 12px; text-align:left; }}
+    th {{ background:var(--th); }}
+    .rp-figure {{ text-align:center; margin:1.4em 0; }}
+    .rp-figure img {{ height:auto; border-radius:6px; max-width:100%; }}
+    .rp-figure figcaption,.rp-running-hdr,.rp-running-ftr,.rp-notes {{ color:var(--muted); font-size:.88rem; }}
+    .rp-banner {{ display:inline-block; font-size:.75rem; font-weight:700; padding:3px 10px; border-radius:999px; background:var(--th); margin-bottom:14px; }}
+    .rp-page-break {{ border:none; border-top:2px dashed var(--border); margin:2.2em 0; }}
+    @media (max-width:640px) {{ main {{ padding:24px 18px; }} }}
+  </style>
+</head>
+<body>
+  <main>
+{body}  </main>
+</body>
+</html>
+"#,
+        escape_html(&doc.title)
+    )
+}
+
+fn escape_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn encode_base64(bytes: &[u8]) -> String {
+    const LUT: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(LUT[((n >> 18) & 63) as usize] as char);
+        out.push(LUT[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            LUT[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            LUT[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 pub fn convert_file(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Result<String, String> {
@@ -449,6 +715,11 @@ pub fn convert_file(input: impl AsRef<Path>, output: impl AsRef<Path>) -> Result
         "md" | "markdown" => {
             let md = word_to_markdown(&word_doc);
             std::fs::write(out_p, md).map_err(|e| e.to_string())?;
+        }
+        "html" | "htm" => {
+            let dark = rustpad_render::load_saved_or_system_theme().is_dark_chrome();
+            let html = word_to_html(&word_doc, dark);
+            std::fs::write(out_p, html).map_err(|e| e.to_string())?;
         }
         "txt" => {
             std::fs::write(out_p, word_doc.to_plain_text()).map_err(|e| e.to_string())?;

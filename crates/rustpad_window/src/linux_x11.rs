@@ -7,7 +7,7 @@ use crate::{
     AppControl, CursorShape, DesktopAppHandler, Key, Modifiers, MouseButton, WindowEvent,
 };
 use rustpad_render::canvas::LOGO_64_RGBA;
-use rustpad_render::{DaylightTheme, Surface};
+use rustpad_render::{active_theme_mode, StudioTheme, Surface};
 use std::ffi::{c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void, CString};
 use std::time::{Duration, Instant};
 
@@ -324,13 +324,32 @@ pub fn run_x11_window(
         let mut wm_delete = XInternAtom(dpy, b"WM_DELETE_WINDOW\0".as_ptr() as *const c_char, 0);
         XSetWMProtocols(dpy, win, &mut wm_delete, 1);
 
+        let gtk_theme_atom =
+            XInternAtom(dpy, b"_GTK_THEME_VARIANT\0".as_ptr() as *const c_char, 0);
+        let mut applied_dark_variant = active_theme_mode().is_dark_chrome();
+        let initial_variant: &[u8] = if applied_dark_variant {
+            b"dark"
+        } else {
+            b"light"
+        };
+        XChangeProperty(
+            dpy,
+            win,
+            gtk_theme_atom,
+            utf8_atom,
+            8,
+            0,
+            initial_variant.as_ptr(),
+            initial_variant.len() as c_int,
+        );
+
         // KeyPressMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | ExposureMask | StructureNotifyMask
         let event_mask: c_long =
             (1 << 0) | (1 << 2) | (1 << 3) | (1 << 6) | (1 << 15) | (1 << 17);
         XSelectInput(dpy, win, event_mask);
         XMapWindow(dpy, win);
 
-        let mut surface = Surface::new(initial_width, initial_height, DaylightTheme::DESK_BG);
+        let mut surface = Surface::new(initial_width, initial_height, StudioTheme::desk_bg());
         app.render(&mut surface);
         blit_surface_x11(
             dpy,
@@ -387,7 +406,7 @@ pub fn run_x11_window(
                         let nw = cfg.width.max(320) as u32;
                         let nh = cfg.height.max(240) as u32;
                         if nw != surface.width || nh != surface.height {
-                            surface.resize(nw, nh, DaylightTheme::DESK_BG);
+                            surface.resize(nw, nh, StudioTheme::desk_bg());
                             let _ = app.on_event(
                                 WindowEvent::Resize {
                                     width: nw,
@@ -569,6 +588,21 @@ pub fn run_x11_window(
             }
 
             if needs_redraw && running {
+                let want_dark = active_theme_mode().is_dark_chrome();
+                if want_dark != applied_dark_variant {
+                    applied_dark_variant = want_dark;
+                    let variant: &[u8] = if want_dark { b"dark" } else { b"light" };
+                    XChangeProperty(
+                        dpy,
+                        win,
+                        gtk_theme_atom,
+                        utf8_atom,
+                        8,
+                        0,
+                        variant.as_ptr(),
+                        variant.len() as c_int,
+                    );
+                }
                 app.render(&mut surface);
                 blit_surface_x11(
                     dpy,

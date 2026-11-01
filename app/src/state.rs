@@ -5,28 +5,33 @@ use crate::commands::{filter_commands, CommandId};
 use doc_model::{
     next_word_char_idx, prev_word_char_idx, word_range_at_char, Alignment, Block, Document,
     DocumentStats, FontFamily, ImageBlock, ListKind, OutlineItem, PaperSize, Paragraph,
-    ParagraphStyle, RevisionKind, RevisionMeta, RgbColor, SharedBytes, SpanStyle, TableBlock,
-    TablePreset, TableTheme, TemplateKind, TextSpan, UndoHistory,
+    ParagraphStyle, RevisionKind, RevisionMeta, RgbColor, SectionBreakKind, SharedBytes, SpanStyle,
+    TableBlock, TablePreset, TableTheme, TemplateKind, TextSpan, UndoHistory,
 };
-use docx_io::{load_docx_file, load_docx_shared_with_progress, save_docx_file};
+use docx_io::{
+    load_docx_file, load_docx_shared_with_progress, repair_docx_file, save_docx_bytes,
+    save_docx_file,
+};
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
 use pdf_engine::{
     compress_pdf_bytes, load_pdf_file, save_pdf_bytes, save_pdf_file, seal_pdf_bytes,
     PdfAnnotation, PdfDocument,
 };
 use power_tools::{
-    discover_local_ollama_models, markdown_to_word, parse_ai_output_to_blocks, pdf_to_word,
-    run_ai_task_with_policy, word_to_markdown, word_to_pdf_document, AdvisoryFileLock,
+    clean_document_metadata, discover_local_ollama_models, markdown_to_word,
+    parse_ai_output_to_blocks, pdf_to_word, run_ai_task_with_policy, word_to_html,
+    word_to_markdown, word_to_pdf_document, write_bytes_secure_atomic, AdvisoryFileLock,
     AiAgentConfig, AiProviderPreset, AiResponse, AiTask, AuditTrail, EnterprisePolicy,
-    SnapshotVault, SpellChecker, WalJournal,
+    MetadataCleanOptions, SnapshotVault, SpellChecker, WalJournal,
 };
 use rustpad_render::{
-    decode_any_image_rgba, decode_any_image_thumbnail_rgba, encode_rgba_png, FontBook, Rect,
+    active_theme_mode, cycle_theme_mode, decode_any_image_rgba, decode_any_image_thumbnail_rgba,
+    encode_rgba_png, load_saved_or_system_theme, save_theme_preference, FontBook, Rect,
 };
 use rustpad_window::{
     detect_dpi_scale, get_clipboard_image_bytes, get_clipboard_text, set_clipboard_text,
-    spool_pdf_to_os_printer, try_native_open_dialog, try_native_open_image_dialog,
-    try_native_save_dialog, CursorShape, Key, Modifiers,
+    spool_pdf_to_os_printer, sync_native_window_theme, try_native_open_dialog,
+    try_native_open_image_dialog, try_native_save_dialog, CursorShape, Key, Modifiers,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -152,14 +157,7 @@ impl WordTabState {
             cached_layout_key: 0,
             cached_pages: std::rc::Rc::new(Vec::new()),
             cached_metrics_key: 0,
-            cached_stats: DocumentStats {
-                words: 0,
-                chars: 0,
-                paragraphs: 0,
-                tables: 0,
-                images: 0,
-                reading_time_minutes: 1,
-            },
+            cached_stats: DocumentStats::default(),
             cached_outline: Vec::new(),
             cached_rev_counts: (0, 0),
             scroll_y: 0.0,
@@ -713,6 +711,7 @@ pub enum ActiveModal {
     },
     SnapshotsDrawer,
     Governance,
+    DocumentInspector,
     About,
 }
 
@@ -1008,6 +1007,7 @@ pub struct RustPadApp {
     pub status_toast: String,
     pub recent_files: Vec<PathBuf>,
     pub pending_doc_load: Option<PendingDocLoad>,
+    pub last_autosave_at: Instant,
 }
 
 impl Default for RustPadApp {
@@ -1018,6 +1018,8 @@ impl Default for RustPadApp {
 
 impl RustPadApp {
     pub fn new() -> Self {
+        let startup_theme = load_saved_or_system_theme();
+        sync_native_window_theme(startup_theme.is_dark_chrome());
         let welcome_doc = TemplateKind::WelcomeGuide.build();
         let recent = discover_workspace_documents();
         let dpi_scale = detect_dpi_scale().clamp(0.95, 1.45);
@@ -1062,9 +1064,13 @@ impl RustPadApp {
             last_click_pos: (-100.0, -100.0),
             last_click_mods: Modifiers::default(),
             cursor_blink_on: true,
-            status_toast: "Ready · RustPad v2.4 Async Streaming Engine · Zero-Freeze 60–120Hz UX".into(),
+            status_toast: format!(
+                "Ready · RustPad v3.0 · {} · 60–120Hz Native Engine",
+                startup_theme.label()
+            ),
             recent_files: recent,
             pending_doc_load: None,
+            last_autosave_at: Instant::now(),
         }
     }
 
@@ -1133,7 +1139,18 @@ impl RustPadApp {
             }
         }
 
-        // 1. 60Hz critically-damped spring interpolation + background image thumbnail polling
+        // 1. Periodic background WAL crash-recovery autosave (every 45s on dirty compact docs)
+        if self.last_autosave_at.elapsed().as_secs() >= 45 {
+            self.last_autosave_at = Instant::now();
+            if let Some(StudioTab::Word(w)) = self.tabs.get(self.active_tab) {
+                if w.dirty && w.doc.estimated_media_bytes() <= 4 * 1024 * 1024 {
+                    let wal_p = WalJournal::journal_path_for(w.path.as_deref(), self.active_tab);
+                    let _ = WalJournal::write_frame(&wal_p, &w.doc);
+                }
+            }
+        }
+
+        // 2. 60Hz critically-damped spring interpolation + background image thumbnail polling
         for (ti, tab) in self.tabs.iter_mut().enumerate() {
             if ti != self.active_tab && self.split_secondary_tab != Some(ti) {
                 continue;
@@ -1520,7 +1537,17 @@ impl RustPadApp {
                             Err(_) => Ok((load_docx_file(&p).map_err(|e| e.0)?, false)),
                         }
                     } else {
-                        Ok((load_docx_file(&p).map_err(|e| e.0)?, false))
+                        match load_docx_file(&p) {
+                            Ok(doc) => Ok((doc, false)),
+                            Err(_) => {
+                                let (_repaired_bytes, rep) =
+                                    repair_docx_file(&p).map_err(|e| e.0)?;
+                                let salvaged = docx_io::load_docx_bytes(&_repaired_bytes)
+                                    .map_err(|e| e.0)?;
+                                let _ = rep.recovered_paragraphs;
+                                Ok((salvaged, false))
+                            }
+                        }
                     }
                 }));
                 let (doc, recovered_from_wal) = match load_res {
@@ -1730,8 +1757,12 @@ impl RustPadApp {
                     self.status_toast = format!("Exported vector PDF '{}'", target.display());
                 } else if ext == "md" {
                     let md = word_to_markdown(&w.doc);
-                    std::fs::write(&target, md).map_err(|e| e.to_string())?;
+                    write_bytes_secure_atomic(&target, md.as_bytes())?;
                     self.status_toast = format!("Saved Markdown '{}'", target.display());
+                } else if ext == "html" || ext == "htm" {
+                    let html = word_to_html(&w.doc, active_theme_mode().is_dark_chrome());
+                    write_bytes_secure_atomic(&target, html.as_bytes())?;
+                    self.status_toast = format!("Exported HTML5 '{}'", target.display());
                 } else {
                     let final_path = if ext.is_empty() {
                         target.with_extension("docx")
@@ -1741,7 +1772,9 @@ impl RustPadApp {
                     if let Some(stem) = final_path.file_stem().and_then(|s| s.to_str()) {
                         w.doc.title = stem.to_string();
                     }
-                    save_docx_file(&final_path, &w.doc).map_err(|e| e.0)?;
+                    let docx_bytes = save_docx_bytes(&w.doc);
+                    write_bytes_secure_atomic(&final_path, &docx_bytes)?;
+                    let _ = &save_docx_file;
                     WalJournal::clear_frame(&WalJournal::journal_path_for(Some(&final_path), self.active_tab));
                     let _ = AdvisoryFileLock::acquire(&final_path, &w.doc.author);
                     w.path = Some(final_path.clone());
@@ -2503,6 +2536,70 @@ impl RustPadApp {
                 self.ui_scale = 1.0;
                 self.status_toast = "Interface Scale reset to 100%".into();
             }
+            CommandId::CycleThemeMode => {
+                let next = cycle_theme_mode();
+                save_theme_preference(next);
+                sync_native_window_theme(next.is_dark_chrome());
+                self.status_toast = format!(
+                    "Theme: {} — press Ctrl+Shift+D to cycle Daylight / Midnight / Hybrid",
+                    next.label()
+                );
+            }
+            CommandId::OpenDocumentInspector => {
+                self.modal = Some(ActiveModal::DocumentInspector);
+            }
+            CommandId::CleanDocumentPrivacy => {
+                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
+                    w.history.record(&w.doc);
+                    let rep = clean_document_metadata(
+                        &mut w.doc,
+                        &MetadataCleanOptions::strict_privacy(),
+                    );
+                    w.dirty = true;
+                    if self.policy.audit_log_enabled {
+                        self.audit_trail.record(
+                            "PRIVACY_CLEANED",
+                            &format!(
+                                "{} (meta:{}, hidden:{}, rels:{})",
+                                w.doc.title,
+                                rep.cleared_metadata_fields,
+                                rep.removed_hidden_runs,
+                                rep.removed_external_rels
+                            ),
+                            "PrivacyEngine",
+                        );
+                    }
+                    self.status_toast = format!(
+                        "Privacy Cleaner: scrubbed {} metadata fields, {} hidden runs, {} comments, {} external links",
+                        rep.cleared_metadata_fields,
+                        rep.removed_hidden_runs,
+                        rep.removed_comments,
+                        rep.removed_external_rels
+                    );
+                } else {
+                    self.status_toast = "Open a Word (.docx) tab to run Privacy Cleaner".into();
+                }
+            }
+            CommandId::ExportWordToHtml => {
+                let def_opt = match self.tabs.get(self.active_tab) {
+                    Some(StudioTab::Word(w)) => {
+                        Some(format!("{}.html", sanitize_filename(&w.doc.title)))
+                    }
+                    _ => None,
+                };
+                if let Some(def) = def_opt {
+                    self.prompt_or_open_modal(FileModalKind::SaveActive, &def);
+                } else {
+                    self.status_toast = "Switch to a Word (.docx) tab to export HTML5".into();
+                }
+            }
+            CommandId::InsertSectionBreak
+            | CommandId::AddFootnote
+            | CommandId::AddEndnote
+            | CommandId::ToggleSuperscript
+            | CommandId::ToggleSubscript => {
+                self.exec_word_command(cmd);
+            }
             CommandId::OpenAbout => {
                 self.modal = Some(ActiveModal::About);
             }
@@ -2883,6 +2980,92 @@ impl RustPadApp {
                 w.active_table_cell = None;
                 w.scroll_to_caret = true;
                 self.status_toast = "Inserted physical Page Break".into();
+                return;
+            }
+            CommandId::InsertSectionBreak => {
+                let insert_at = (idx + 1).min(w.doc.blocks.len());
+                w.doc
+                    .blocks
+                    .insert(insert_at, Block::SectionBreak(SectionBreakKind::NextPage));
+                w.doc.blocks.insert(
+                    insert_at + 1,
+                    Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "")),
+                );
+                w.cursor_block = insert_at + 1;
+                w.cursor_char = 0;
+                w.active_table_cell = None;
+                w.scroll_to_caret = true;
+                self.status_toast = "Inserted Next-Page Section Break (<w:sectPr>)".into();
+                return;
+            }
+            CommandId::AddFootnote => {
+                let author = w.doc.author.clone();
+                let fid = w.doc.add_footnote(
+                    idx,
+                    format!("Footnote {} citation note.", w.doc.footnotes.len() + 1),
+                    author,
+                );
+                self.status_toast = format!("Inserted Footnote [{fid}] into word/footnotes.xml");
+                return;
+            }
+            CommandId::AddEndnote => {
+                let author = w.doc.author.clone();
+                let eid = w.doc.add_endnote(
+                    idx,
+                    format!("Endnote {} reference note.", w.doc.endnotes.len() + 1),
+                    author,
+                );
+                self.status_toast = format!("Inserted Endnote [e{eid}] into word/endnotes.xml");
+                return;
+            }
+            CommandId::ToggleSuperscript | CommandId::ToggleSubscript => {
+                let is_sup = cmd == CommandId::ToggleSuperscript;
+                if let Some(((b0, c0), (b1, c1))) = w.ordered_selection() {
+                    for bi in b0..=b1.min(w.doc.blocks.len().saturating_sub(1)) {
+                        if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(bi) {
+                            let len = p.plain_text().chars().count();
+                            let s = if bi == b0 { c0.min(len) } else { 0 };
+                            let e = if bi == b1 { c1.min(len) } else { len };
+                            p.transform_range(s, e, |st| {
+                                if is_sup {
+                                    st.superscript = !st.superscript;
+                                    if st.superscript {
+                                        st.subscript = false;
+                                    }
+                                } else {
+                                    st.subscript = !st.subscript;
+                                    if st.subscript {
+                                        st.superscript = false;
+                                    }
+                                }
+                            });
+                        }
+                    }
+                } else if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
+                    let target = if is_sup {
+                        !p.spans.first().is_some_and(|s| s.style.superscript)
+                    } else {
+                        !p.spans.first().is_some_and(|s| s.style.subscript)
+                    };
+                    for sp in &mut p.spans {
+                        if is_sup {
+                            sp.style.superscript = target;
+                            if target {
+                                sp.style.subscript = false;
+                            }
+                        } else {
+                            sp.style.subscript = target;
+                            if target {
+                                sp.style.superscript = false;
+                            }
+                        }
+                    }
+                }
+                self.status_toast = if is_sup {
+                    "Toggled Superscript (<w:vertAlign w:val=\"superscript\"/>)".into()
+                } else {
+                    "Toggled Subscript (<w:vertAlign w:val=\"subscript\"/>)".into()
+                };
                 return;
             }
             _ => {}
@@ -3829,6 +4012,7 @@ impl RustPadApp {
             ActiveModal::FindReplace { .. }
             | ActiveModal::SnapshotsDrawer
             | ActiveModal::Governance
+            | ActiveModal::DocumentInspector
             | ActiveModal::About => {}
         }
     }
@@ -4310,6 +4494,14 @@ impl RustPadApp {
                     self.execute_command(CommandId::PrintDocument);
                     return;
                 }
+                Key::Char('d') if mods.shift => {
+                    self.execute_command(CommandId::CycleThemeMode);
+                    return;
+                }
+                Key::Char('j') if mods.shift => {
+                    self.execute_command(CommandId::OpenDocumentInspector);
+                    return;
+                }
                 Key::Char('e') if mods.shift => {
                     self.execute_command(CommandId::ToggleTrackChanges);
                     return;
@@ -4481,7 +4673,10 @@ impl RustPadApp {
                             follow_up = ModalKeyFollowUp::Confirm;
                         }
                     }
-                    ActiveModal::SnapshotsDrawer | ActiveModal::Governance | ActiveModal::About => {}
+                    ActiveModal::SnapshotsDrawer
+                    | ActiveModal::Governance
+                    | ActiveModal::DocumentInspector
+                    | ActiveModal::About => {}
                 }
             }
             match follow_up {
@@ -5054,6 +5249,7 @@ impl RustPadApp {
                 ActiveModal::SignaturePad { .. }
                 | ActiveModal::SnapshotsDrawer
                 | ActiveModal::Governance
+                | ActiveModal::DocumentInspector
                 | ActiveModal::About => {}
             }
             if matches!(self.modal, Some(ActiveModal::FindReplace { .. })) {
@@ -5314,7 +5510,7 @@ fn word_backspace(w: &mut WordTabState) {
             );
             let prev_is_break_or_rule = matches!(
                 w.doc.blocks.get(w.cursor_block),
-                Some(Block::PageBreak | Block::HorizontalRule)
+                Some(Block::PageBreak | Block::SectionBreak(_) | Block::HorizontalRule)
             );
 
             if prev_is_para {

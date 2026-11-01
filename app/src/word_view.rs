@@ -11,8 +11,8 @@ use doc_model::{
 };
 use power_tools::SpellChecker;
 use rustpad_render::{
-    decode_any_image_thumbnail_rgba, hash_image_bytes, Color, DaylightTheme, FontBook, FontSlot,
-    Rect, Surface, UiIcon,
+    decode_any_image_thumbnail_rgba, hash_image_bytes, Color, FontBook, FontSlot, Rect,
+    StudioTheme, Surface, UiIcon,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -66,7 +66,7 @@ pub fn paint_word_tab(
     // 1. Primary Formatting Ribbon (hidden in Distraction-Free Focus Mode)
     if ribbon_h > 0.0 {
         let ribbon_rect = Rect::new(area.x, area.y, area.w, ribbon_h);
-        surface.fill_rect(ribbon_rect, DaylightTheme::CHROME);
+        surface.fill_rect(ribbon_rect, StudioTheme::chrome());
         surface.fill_rect(
             Rect::new(
                 ribbon_rect.x,
@@ -74,7 +74,7 @@ pub fn paint_word_tab(
                 ribbon_rect.w,
                 1.0,
             ),
-            DaylightTheme::BORDER,
+            StudioTheme::border(),
         );
         if is_focused {
             paint_word_ribbon(
@@ -96,7 +96,7 @@ pub fn paint_word_tab(
                 12.0 * s,
                 ribbon_rect.x + 16.0 * s,
                 ribbon_rect.y + ribbon_h * 0.63,
-                DaylightTheme::WORD_ACCENT,
+                StudioTheme::word_accent(),
                 &lbl,
             );
             hit_regions.push(HitRegion::button(ribbon_rect, UiAction::SwitchTab(tab_idx)));
@@ -134,7 +134,7 @@ pub fn paint_word_tab(
         area.w,
         (area.h - top_used).max(40.0),
     );
-    surface.fill_rect(body_rect, DaylightTheme::DESK_BG);
+    surface.fill_rect(body_rect, StudioTheme::desk_bg());
 
     // 3. Resizable + Collapsible Left Document Outline Rail (hidden in Focus Mode)
     let can_fit_sidebar = !focus_mode && sidebar_open && body_rect.w >= 640.0;
@@ -252,7 +252,7 @@ pub fn paint_word_tab(
         if split_hov {
             surface.fill_rect(
                 Rect::new(sb_rect.x + sb_rect.w - 1.5, sb_rect.y, 3.0, sb_rect.h),
-                DaylightTheme::RUST_ORANGE,
+                StudioTheme::rust_orange(),
             );
         }
         hit_regions.push(HitRegion::splitter(
@@ -301,11 +301,16 @@ pub fn paint_word_tab(
         ));
 
         surface.draw_paper_shadow(sheet, 2.0, 12.0, 18);
-        surface.fill_rounded_rect(sheet, 2.0, DaylightTheme::PAPER);
-        surface.stroke_rounded_rect(sheet, 2.0, 1.0, DaylightTheme::BORDER);
+        surface.fill_rounded_rect(sheet, 2.0, StudioTheme::sheet_paper());
+        surface.stroke_rounded_rect(sheet, 2.0, 1.0, StudioTheme::sheet_border());
 
-        // Running Header
-        if !w.doc.page_setup.header_text.is_empty() {
+        // Running Header (respects `different_first_page` when `first_page_header` is set or blank)
+        let active_hdr = if page_idx == 0 && w.doc.page_setup.different_first_page {
+            w.doc.page_setup.first_page_header.as_str()
+        } else {
+            w.doc.page_setup.header_text.as_str()
+        };
+        if !active_hdr.is_empty() {
             surface.draw_text_clipped(
                 fonts,
                 FontSlot::SansRegular,
@@ -313,8 +318,8 @@ pub fn paint_word_tab(
                 sheet.x + margin_x,
                 sheet.y + (margin_top * 0.56).max(20.0),
                 content_w,
-                DaylightTheme::INK_MUTED,
-                &w.doc.page_setup.header_text,
+                StudioTheme::sheet_ink_muted(),
+                active_hdr,
             );
             surface.fill_rect(
                 Rect::new(
@@ -323,13 +328,18 @@ pub fn paint_word_tab(
                     content_w,
                     1.0,
                 ),
-                DaylightTheme::BORDER,
+                StudioTheme::sheet_border(),
             );
         }
 
-        // Running Footer + Page Counter
+        // Running Footer + Page Counter + Footnotes preview on final page
         let footer_y = sheet.y + sheet.h - (margin_bot * 0.42).max(16.0);
-        if !w.doc.page_setup.footer_text.is_empty() {
+        let active_ftr = if page_idx == 0 && w.doc.page_setup.different_first_page {
+            w.doc.page_setup.first_page_footer.as_str()
+        } else {
+            w.doc.page_setup.footer_text.as_str()
+        };
+        if !active_ftr.is_empty() {
             surface.draw_text_clipped(
                 fonts,
                 FontSlot::SansRegular,
@@ -337,8 +347,8 @@ pub fn paint_word_tab(
                 sheet.x + margin_x,
                 footer_y,
                 content_w * 0.72,
-                DaylightTheme::INK_MUTED,
-                &w.doc.page_setup.footer_text,
+                StudioTheme::sheet_ink_muted(),
+                active_ftr,
             );
         }
         if w.doc.page_setup.show_page_numbers {
@@ -354,9 +364,47 @@ pub fn paint_word_tab(
                 (9.2 * scale).clamp(8.0, 13.5),
                 sheet.x + sheet.w - margin_x - pw,
                 footer_y,
-                DaylightTheme::INK_MUTED,
+                StudioTheme::sheet_ink_muted(),
                 &p_str,
             );
+        }
+        if page_idx + 1 == total_pages && (!w.doc.footnotes.is_empty() || !w.doc.endnotes.is_empty()) {
+            let note_count = w.doc.footnotes.len() + w.doc.endnotes.len();
+            let max_show = note_count.min(3);
+            let base_ny = footer_y - (16.0 + max_show as f32 * 12.5) * scale;
+            surface.fill_rect(
+                Rect::new(sheet.x + margin_x, base_ny, content_w * 0.34, 1.0),
+                StudioTheme::sheet_border(),
+            );
+            let mut ny = base_ny + 11.5 * scale;
+            for n in w.doc.footnotes.iter().take(max_show) {
+                surface.draw_text_clipped(
+                    fonts,
+                    FontSlot::SerifRegular,
+                    (8.8 * scale).clamp(8.0, 12.5),
+                    sheet.x + margin_x,
+                    ny,
+                    content_w,
+                    StudioTheme::sheet_ink_sub(),
+                    &format!("[{}] {}", n.id, n.text),
+                );
+                ny += 12.0 * scale;
+            }
+            if w.doc.footnotes.len() < max_show {
+                for n in w.doc.endnotes.iter().take(max_show - w.doc.footnotes.len()) {
+                    surface.draw_text_clipped(
+                        fonts,
+                        FontSlot::SerifRegular,
+                        (8.8 * scale).clamp(8.0, 12.5),
+                        sheet.x + margin_x,
+                        ny,
+                        content_w,
+                        StudioTheme::sheet_ink_sub(),
+                        &format!("[e{}] {}", n.id, n.text),
+                    );
+                    ny += 12.0 * scale;
+                }
+            }
         }
 
         // Optional Watermark
@@ -449,12 +497,12 @@ pub fn paint_word_tab(
             pill,
             13.0,
             if hov {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             } else {
                 Color::rgba(255, 255, 255, 228)
             },
         );
-        surface.stroke_rounded_rect(pill, 13.0, 1.0, DaylightTheme::BORDER_STRONG);
+        surface.stroke_rounded_rect(pill, 13.0, 1.0, StudioTheme::border_strong());
         let lbl = "Exit Focus · Ctrl+Shift+F";
         let tw = fonts.measure_text(FontSlot::SansBold, lbl, 10.6 * s);
         surface.draw_text(
@@ -463,7 +511,7 @@ pub fn paint_word_tab(
             10.6 * s,
             pill.x + (pill.w - tw) * 0.5,
             pill.y + pill_h * 0.67,
-            DaylightTheme::WORD_ACCENT,
+            StudioTheme::word_accent(),
             lbl,
         );
         hit_regions.push(HitRegion::button(
@@ -556,8 +604,8 @@ fn paint_floating_selection_bar(
 
     let pop = Rect::new(pop_x, pop_y, total_w, bar_h);
     surface.draw_paper_shadow(pop, 7.0, 12.0, 26);
-    surface.fill_rounded_rect(pop, 7.0, DaylightTheme::PAPER);
-    surface.stroke_rounded_rect(pop, 7.0, 1.0, DaylightTheme::BORDER_STRONG);
+    surface.fill_rounded_rect(pop, 7.0, StudioTheme::paper());
+    surface.stroke_rounded_rect(pop, 7.0, 1.0, StudioTheme::border_strong());
 
     let bh = (24.0 * s).round();
     let by = (pop.y + (bar_h - bh) * 0.5).round();
@@ -572,32 +620,32 @@ fn paint_floating_selection_bar(
                 br,
                 4.5,
                 if hov {
-                    DaylightTheme::WORD_ACCENT
+                    StudioTheme::word_accent()
                 } else {
-                    DaylightTheme::WORD_SOFT
+                    StudioTheme::word_soft()
                 },
             );
-            surface.stroke_rounded_rect(br, 4.5, 1.0, DaylightTheme::WORD_ACCENT);
+            surface.stroke_rounded_rect(br, 4.5, 1.0, StudioTheme::word_accent());
         } else if *active || hov {
             surface.fill_rounded_rect(
                 br,
                 4.5,
                 if *active {
-                    DaylightTheme::WORD_SOFT
+                    StudioTheme::word_soft()
                 } else {
-                    DaylightTheme::HOVER
+                    StudioTheme::hover()
                 },
             );
             if *active {
-                surface.stroke_rounded_rect(br, 4.5, 1.0, DaylightTheme::WORD_ACCENT);
+                surface.stroke_rounded_rect(br, 4.5, 1.0, StudioTheme::word_accent());
             }
         }
         let fg = if *ai_accent && hov {
-            DaylightTheme::PAPER
+            StudioTheme::paper()
         } else if *ai_accent || *active {
-            DaylightTheme::WORD_ACCENT
+            StudioTheme::word_accent()
         } else {
-            DaylightTheme::INK
+            StudioTheme::ink()
         };
         let tw = fonts.measure_text(*slot, lbl, 11.2 * s);
         surface.draw_text(
@@ -646,9 +694,9 @@ pub fn paint_canvas_scrollbar(
         thumb,
         3.5,
         if hov {
-            DaylightTheme::INK_SUB
+            StudioTheme::ink_sub()
         } else {
-            DaylightTheme::BORDER_STRONG
+            StudioTheme::border_strong()
         },
     );
     hit_regions.push(HitRegion::button(
@@ -728,6 +776,7 @@ fn fnv_mix_bytes(mut h: u64, bytes: &[u8]) -> u64 {
 fn mix_single_block(mut h: u64, blk: &Block) -> u64 {
     match blk {
         Block::PageBreak => fnv_mix_u64(h, 0xA1),
+        Block::SectionBreak(k) => fnv_mix_u64(h, 0xA6 + (*k as u64)),
         Block::HorizontalRule => fnv_mix_u64(h, 0xA2),
         Block::Image(img) => {
             h = fnv_mix_u64(h, 0xA3);
@@ -777,7 +826,10 @@ fn mix_single_block(mut h: u64, blk: &Block) -> u64 {
                         | ((sp.style.italic as u64) << 1)
                         | ((sp.style.underline as u64) << 2)
                         | ((sp.style.strikethrough as u64) << 3)
-                        | ((sp.style.font_family as u64) << 4),
+                        | ((sp.style.font_family as u64) << 4)
+                        | ((sp.style.hidden as u64) << 8)
+                        | ((sp.style.superscript as u64) << 9)
+                        | ((sp.style.subscript as u64) << 10),
                 );
                 h = fnv_mix_u64(h, sp.style.font_size_pt.to_bits() as u64);
                 if let Some(rev) = &sp.revision {
@@ -856,6 +908,7 @@ fn ensure_cached_layout(
     usable_page_h: f32,
 ) -> std::rc::Rc<Vec<Vec<LaidOutBlock>>> {
     let mut key = content_key;
+    key = fnv_mix_u64(key, rustpad_render::active_theme_mode() as u64);
     key = fnv_mix_u64(key, scale.to_bits() as u64);
     key = fnv_mix_u64(key, content_w.to_bits() as u64);
     key = fnv_mix_u64(key, usable_page_h.to_bits() as u64);
@@ -967,6 +1020,29 @@ fn layout_document_pages(
             Block::PageBreak => {
                 pages.push(Vec::new());
                 cur_y = 0.0;
+            }
+            Block::SectionBreak(kind) => {
+                if *kind == doc_model::SectionBreakKind::Continuous {
+                    let h = 20.0 * scale;
+                    if cur_y + h > usable_page_h && !pages.last().unwrap().is_empty() {
+                        pages.push(Vec::new());
+                        cur_y = 0.0;
+                    }
+                    pages.last_mut().unwrap().push(LaidOutBlock {
+                        block_idx: b_idx,
+                        rel_y: cur_y,
+                        height: h,
+                        lines: Vec::new(),
+                        table_row_start: 0,
+                        table_is_last_slice: true,
+                        table_row_heights: Vec::new(),
+                        table_wrapped_cells: Vec::new(),
+                    });
+                    cur_y += h;
+                } else {
+                    pages.push(Vec::new());
+                    cur_y = 0.0;
+                }
             }
             Block::HorizontalRule => {
                 let h = 18.0 * scale;
@@ -1255,8 +1331,8 @@ fn wrap_paragraph_lines(
         (FontFamily::Sans, false) => FontSlot::SansRegular,
     };
     let col = first_span
-        .map(|s| Color::rgb(s.style.color.r, s.style.color.g, s.style.color.b))
-        .unwrap_or(DaylightTheme::INK);
+        .map(|s| StudioTheme::adapt_doc_ink(s.style.color, s.style.highlight.is_some()))
+        .unwrap_or_else(StudioTheme::sheet_ink);
     let hl = first_span
         .and_then(|s| s.style.highlight)
         .map(|h| Color::rgb(h.r, h.g, h.b));
@@ -1351,10 +1427,27 @@ fn paint_laid_out_block(
 
     match block {
         Block::PageBreak => {}
+        Block::SectionBreak(kind) => {
+            if *kind == doc_model::SectionBreakKind::Continuous {
+                surface.fill_rect(
+                    Rect::new(x, y + item.height * 0.50, content_w, 1.0),
+                    StudioTheme::sheet_border(),
+                );
+                surface.draw_text(
+                    fonts,
+                    FontSlot::SansRegular,
+                    (8.8 * scale).clamp(8.0, 11.5),
+                    x + content_w * 0.38,
+                    y + item.height * 0.42,
+                    StudioTheme::sheet_ink_muted(),
+                    "··· SECTION BREAK ···",
+                );
+            }
+        }
         Block::HorizontalRule => {
             surface.fill_rect(
                 Rect::new(x, y + item.height * 0.45, content_w, 1.5),
-                DaylightTheme::BORDER_STRONG,
+                StudioTheme::sheet_border(),
             );
         }
         Block::Image(img) => {
@@ -1373,17 +1466,17 @@ fn paint_laid_out_block(
             let is_hov = r.contains(mouse_x, mouse_y);
 
             surface.draw_paper_shadow(r, 4.0, 8.0, 14);
-            surface.fill_rounded_rect(r, 4.0, DaylightTheme::PAPER);
+            surface.fill_rounded_rect(r, 4.0, StudioTheme::paper());
             surface.stroke_rounded_rect(
                 r,
                 4.0,
                 if is_selected { 2.0 } else { 1.0 },
                 if is_selected {
-                    DaylightTheme::WORD_ACCENT
+                    StudioTheme::word_accent()
                 } else if is_hov {
-                    DaylightTheme::RUST_ORANGE
+                    StudioTheme::rust_orange()
                 } else {
-                    DaylightTheme::BORDER_STRONG
+                    StudioTheme::border_strong()
                 },
             );
 
@@ -1408,13 +1501,13 @@ fn paint_laid_out_block(
                     } else {
                         format!("Streaming HiDPI Figure · {}", img.name)
                     };
-                    surface.fill_rounded_rect(inner, 3.0, DaylightTheme::SIDEBAR);
+                    surface.fill_rounded_rect(inner, 3.0, StudioTheme::sidebar());
                     surface.draw_icon(
                         UiIcon::Image,
                         r.x + 22.0 * scale,
                         r.y + r.h * 0.5,
                         18.0 * scale,
-                        DaylightTheme::INK_MUTED,
+                        StudioTheme::ink_muted(),
                     );
                     surface.draw_text_clipped(
                         fonts,
@@ -1423,7 +1516,7 @@ fn paint_laid_out_block(
                         r.x + 38.0 * scale,
                         r.y + r.h * 0.5 + 4.0 * scale,
                         (r.w - 46.0 * scale).max(24.0),
-                        DaylightTheme::INK_SUB,
+                        StudioTheme::ink_sub(),
                         &status_lbl,
                     );
                 }
@@ -1455,7 +1548,7 @@ fn paint_laid_out_block(
                     cap_x,
                     r.y + r.h + 14.0 * scale,
                     r.w,
-                    DaylightTheme::INK_SUB,
+                    StudioTheme::ink_sub(),
                     cap_txt,
                 );
                 hit_regions.push(HitRegion::button(
@@ -1474,12 +1567,12 @@ fn paint_laid_out_block(
                     pill_r,
                     3.5,
                     if phov {
-                        DaylightTheme::WORD_SOFT
+                        StudioTheme::word_soft()
                     } else {
-                        DaylightTheme::SIDEBAR
+                        StudioTheme::sidebar()
                     },
                 );
-                surface.stroke_rounded_rect(pill_r, 3.5, 1.0, DaylightTheme::BORDER);
+                surface.stroke_rounded_rect(pill_r, 3.5, 1.0, StudioTheme::border());
                 surface.draw_text(
                     fonts,
                     FontSlot::SansRegular,
@@ -1487,9 +1580,9 @@ fn paint_laid_out_block(
                     pill_r.x + (pw - ptw) * 0.5,
                     pill_r.y + pill_r.h * 0.72,
                     if phov {
-                        DaylightTheme::WORD_ACCENT
+                        StudioTheme::word_accent()
                     } else {
-                        DaylightTheme::INK_MUTED
+                        StudioTheme::ink_muted()
                     },
                     pill_lbl,
                 );
@@ -1519,7 +1612,7 @@ fn paint_laid_out_block(
                         bpx,
                         badge_r.x + 6.0 * scale,
                         badge_r.y + bh * 0.73,
-                        DaylightTheme::PAPER,
+                        StudioTheme::paper(),
                         &badge_txt,
                     );
                 }
@@ -1549,8 +1642,8 @@ fn paint_laid_out_block(
                         hs + hit_pad * 2.0,
                         hs + hit_pad * 2.0,
                     );
-                    surface.fill_rounded_rect(vis_h, 2.0, DaylightTheme::PAPER);
-                    surface.stroke_rounded_rect(vis_h, 2.0, 1.8, DaylightTheme::WORD_ACCENT);
+                    surface.fill_rounded_rect(vis_h, 2.0, StudioTheme::paper());
+                    surface.stroke_rounded_rect(vis_h, 2.0, 1.8, StudioTheme::word_accent());
                     hit_regions.push(HitRegion::splitter(
                         hit_h,
                         UiAction::BeginDrag(DragInteraction::ImageResize {
@@ -1573,7 +1666,7 @@ fn paint_laid_out_block(
             let line_h = (txt_px * 1.36).max(14.0);
             let cell_pad_x = 9.0 * scale;
             let cell_pad_y = 7.5 * scale;
-            let border_col = Color::rgb(t.border_color.r, t.border_color.g, t.border_color.b);
+            let border_col = StudioTheme::adapt_table_border(t.border_color);
 
             let table_body_h: f32 = item.table_row_heights.iter().sum();
             let table_outer = Rect::new(x - 4.0, y - 4.0, content_w + 28.0 * scale, table_body_h + 26.0 * scale);
@@ -1596,7 +1689,7 @@ fn paint_laid_out_block(
                     let cell_r = Rect::new(cx, cur_row_y, cw, rh);
                     let cell_opt = row.get(c_idx);
                     if let Some(bg) = cell_opt.and_then(|c| c.bg_color) {
-                        surface.fill_rect(cell_r, Color::rgb(bg.r, bg.g, bg.b));
+                        surface.fill_rect(cell_r, StudioTheme::adapt_table_cell_bg(bg));
                     }
 
                     let is_active_cell = is_focused
@@ -1607,7 +1700,7 @@ fn paint_laid_out_block(
                         0.0,
                         if is_active_cell { 1.8 } else { 1.0 },
                         if is_active_cell {
-                            DaylightTheme::WORD_ACCENT
+                            StudioTheme::word_accent()
                         } else {
                             border_col
                         },
@@ -1650,9 +1743,9 @@ fn paint_laid_out_block(
                                     tx,
                                     baseline,
                                     if is_untouched_header_placeholder {
-                                        DaylightTheme::INK_MUTED
+                                        StudioTheme::sheet_ink_muted()
                                     } else {
-                                        DaylightTheme::INK
+                                        StudioTheme::sheet_ink()
                                     },
                                     ln,
                                 );
@@ -1688,7 +1781,7 @@ fn paint_laid_out_block(
                                             2.0,
                                             txt_px * 1.15,
                                         ),
-                                        DaylightTheme::WORD_ACCENT,
+                                        StudioTheme::word_accent(),
                                     );
                                     caret_drawn = true;
                                 }
@@ -1727,7 +1820,7 @@ fn paint_laid_out_block(
                 if grip.contains(mouse_x, mouse_y) {
                     surface.fill_rect(
                         Rect::new(div_x - 1.0, y, 2.0, table_body_h),
-                        DaylightTheme::RUST_ORANGE,
+                        StudioTheme::rust_orange(),
                     );
                 }
                 hit_regions.push(HitRegion::splitter(
@@ -1751,9 +1844,9 @@ fn paint_laid_out_block(
                     row_btn,
                     3.0,
                     if row_hov {
-                        DaylightTheme::WORD_SOFT
+                        StudioTheme::word_soft()
                     } else {
-                        DaylightTheme::SIDEBAR
+                        StudioTheme::sidebar()
                     },
                 );
                 surface.stroke_rounded_rect(
@@ -1761,9 +1854,9 @@ fn paint_laid_out_block(
                     3.0,
                     1.0,
                     if row_hov {
-                        DaylightTheme::WORD_ACCENT
+                        StudioTheme::word_accent()
                     } else {
-                        DaylightTheme::BORDER
+                        StudioTheme::border()
                     },
                 );
                 let r_lbl = "+ Add Row";
@@ -1776,9 +1869,9 @@ fn paint_laid_out_block(
                     row_btn.x + (row_btn.w - rw) * 0.5,
                     row_btn.y + row_btn.h * 0.72,
                     if row_hov {
-                        DaylightTheme::WORD_ACCENT
+                        StudioTheme::word_accent()
                     } else {
-                        DaylightTheme::INK_SUB
+                        StudioTheme::ink_sub()
                     },
                     r_lbl,
                 );
@@ -1802,9 +1895,9 @@ fn paint_laid_out_block(
                     col_btn,
                     3.0,
                     if col_hov {
-                        DaylightTheme::WORD_SOFT
+                        StudioTheme::word_soft()
                     } else {
-                        DaylightTheme::SIDEBAR
+                        StudioTheme::sidebar()
                     },
                 );
                 surface.stroke_rounded_rect(
@@ -1812,9 +1905,9 @@ fn paint_laid_out_block(
                     3.0,
                     1.0,
                     if col_hov {
-                        DaylightTheme::WORD_ACCENT
+                        StudioTheme::word_accent()
                     } else {
-                        DaylightTheme::BORDER
+                        StudioTheme::border()
                     },
                 );
                 surface.draw_icon(
@@ -1823,9 +1916,9 @@ fn paint_laid_out_block(
                     col_btn.y + col_btn.h * 0.5,
                     (11.0 * scale).clamp(9.0, 14.0),
                     if col_hov {
-                        DaylightTheme::WORD_ACCENT
+                        StudioTheme::word_accent()
                     } else {
-                        DaylightTheme::INK_SUB
+                        StudioTheme::ink_sub()
                     },
                 );
                 hit_regions.push(HitRegion::button(
@@ -1934,7 +2027,7 @@ fn paint_paragraph_block(
                 (item.height - 6.0 * scale).max(15.0),
             ),
             1.2,
-            DaylightTheme::PDF_ACCENT,
+            StudioTheme::pdf_accent(),
         );
     }
 
@@ -1947,7 +2040,7 @@ fn paint_paragraph_block(
                 (item.height - 8.0 * scale).max(16.0),
             ),
             1.5,
-            DaylightTheme::RUST_ORANGE,
+            StudioTheme::rust_orange(),
         );
         text_x += 14.0 * scale;
     }
@@ -1966,7 +2059,7 @@ fn paint_paragraph_block(
                     dot_r * 2.0,
                 ),
                 dot_r,
-                DaylightTheme::INK_SUB,
+                StudioTheme::sheet_ink_sub(),
             );
             text_x += 20.0 * scale;
         }
@@ -1977,7 +2070,7 @@ fn paint_paragraph_block(
                 first_px,
                 text_x,
                 y + first_px * 0.88,
-                DaylightTheme::INK_SUB,
+                StudioTheme::sheet_ink_sub(),
                 &format!("{n}."),
             );
             text_x += 22.0 * scale;
@@ -1986,14 +2079,14 @@ fn paint_paragraph_block(
             let box_sz = (14.5 * scale).clamp(12.0, 21.0);
             let cb = Rect::new(text_x, y + (first_line_h - box_sz) * 0.36, box_sz, box_sz);
             if done {
-                surface.fill_rounded_rect(cb, 3.0, DaylightTheme::SUCCESS);
+                surface.fill_rounded_rect(cb, 3.0, StudioTheme::success());
                 surface.draw_line(
                     cb.x + box_sz * 0.22,
                     cb.y + box_sz * 0.52,
                     cb.x + box_sz * 0.44,
                     cb.y + box_sz * 0.76,
                     1.8,
-                    DaylightTheme::PAPER,
+                    Color::rgb(255, 255, 255),
                 );
                 surface.draw_line(
                     cb.x + box_sz * 0.44,
@@ -2001,11 +2094,11 @@ fn paint_paragraph_block(
                     cb.x + box_sz * 0.80,
                     cb.y + box_sz * 0.26,
                     1.8,
-                    DaylightTheme::PAPER,
+                    Color::rgb(255, 255, 255),
                 );
             } else {
-                surface.fill_rounded_rect(cb, 3.0, DaylightTheme::PAPER);
-                surface.stroke_rounded_rect(cb, 3.0, 1.4, DaylightTheme::BORDER_STRONG);
+                surface.fill_rounded_rect(cb, 3.0, StudioTheme::sheet_paper());
+                surface.stroke_rounded_rect(cb, 3.0, 1.4, StudioTheme::sheet_border());
             }
             hit_regions.push(HitRegion::button(
                 Rect::new(cb.x - 3.0, cb.y - 3.0, cb.w + 6.0, cb.h + 6.0),
@@ -2096,7 +2189,7 @@ fn paint_paragraph_block(
             }
 
             let eff_color = if is_checked_done {
-                DaylightTheme::INK_MUTED
+                StudioTheme::sheet_ink_muted()
             } else {
                 ln.color
             };
@@ -2118,7 +2211,7 @@ fn paint_paragraph_block(
                     ln.px_size,
                     draw_x,
                     baseline_y,
-                    DaylightTheme::INK_MUTED,
+                    StudioTheme::sheet_ink_muted(),
                     "Start writing on this A4 sheet, double-click/drag to style words, or press Ctrl+J for AI…",
                 );
             }
@@ -2148,7 +2241,7 @@ fn paint_paragraph_block(
                 let wx1 = char_xs.get(c1).copied().unwrap_or(wx);
                 surface.fill_rect(
                     Rect::new(wx, baseline_y + 2.5, (wx1 - wx).max(2.0), 1.5),
-                    DaylightTheme::PDF_ACCENT,
+                    StudioTheme::pdf_accent(),
                 );
             }
         }
@@ -2168,7 +2261,7 @@ fn paint_paragraph_block(
                 let cx = char_xs.get(offset).copied().unwrap_or(draw_x);
                 surface.fill_rect(
                     Rect::new(cx, cur_y + 1.0, 2.0, ln.line_h - 2.0),
-                    DaylightTheme::WORD_ACCENT,
+                    StudioTheme::word_accent(),
                 );
             }
         }
@@ -2213,7 +2306,7 @@ fn paint_paragraph_block(
                 draw_x + 8.0,
                 baseline_y,
                 (content_w - 168.0).max(80.0),
-                DaylightTheme::INK_MUTED,
+                StudioTheme::ink_muted(),
                 "Type prose, /table 4x3, /image, or | Col A | Col B |…",
             );
 
@@ -2258,9 +2351,9 @@ fn paint_paragraph_block(
                     cr,
                     4.0,
                     if chov {
-                        DaylightTheme::WORD_SOFT
+                        StudioTheme::word_soft()
                     } else {
-                        DaylightTheme::SIDEBAR
+                        StudioTheme::sidebar()
                     },
                 );
                 surface.stroke_rounded_rect(
@@ -2268,9 +2361,9 @@ fn paint_paragraph_block(
                     4.0,
                     1.0,
                     if chov {
-                        DaylightTheme::WORD_ACCENT
+                        StudioTheme::word_accent()
                     } else {
-                        DaylightTheme::BORDER
+                        StudioTheme::border()
                     },
                 );
                 surface.draw_text(
@@ -2280,9 +2373,9 @@ fn paint_paragraph_block(
                     cr.x + (cr.w - ctw) * 0.5,
                     cr.y + chip_h * 0.72,
                     if chov {
-                        DaylightTheme::WORD_ACCENT
+                        StudioTheme::word_accent()
                     } else {
-                        DaylightTheme::INK_SUB
+                        StudioTheme::ink_sub()
                     },
                     clbl,
                 );
@@ -2435,20 +2528,39 @@ fn paint_rich_spans_line(
                 );
             }
             None => {
-                if let Some(hl) = sp.style.highlight {
+                if sp.style.hidden && !p.has_revisions() {
+                    // Render subtle dotted inspector underline when hidden text is present
+                    surface.fill_rounded_rect(
+                        Rect::new(seg_x - 1.0, cur_y + 2.0, sw + 2.0, ln.line_h - 4.0),
+                        2.0,
+                        Color::rgba(148, 163, 184, 34),
+                    );
+                } else if let Some(hl) = sp.style.highlight {
                     surface.fill_rounded_rect(
                         Rect::new(seg_x - 1.5, cur_y + 1.0, sw + 3.0, ln.line_h - 2.0),
                         2.5,
                         Color::rgb(hl.r, hl.g, hl.b),
                     );
                 }
-                let col = if is_checked_done {
-                    DaylightTheme::INK_MUTED
+                let col = if is_checked_done || sp.style.hidden {
+                    StudioTheme::sheet_ink_muted()
                 } else {
-                    Color::rgb(sp.style.color.r, sp.style.color.g, sp.style.color.b)
+                    StudioTheme::adapt_doc_ink(sp.style.color, sp.style.highlight.is_some())
                 };
-                surface.draw_text(fonts, sp_slot, sp_px, seg_x, baseline_y, col, &slice_str);
-                if sp.style.underline {
+                let adj_y = if sp.style.superscript {
+                    baseline_y - sp_px * 0.24
+                } else if sp.style.subscript {
+                    baseline_y + sp_px * 0.16
+                } else {
+                    baseline_y
+                };
+                let adj_px = if sp.style.superscript || sp.style.subscript {
+                    (sp_px * 0.78).max(8.0)
+                } else {
+                    sp_px
+                };
+                surface.draw_text(fonts, sp_slot, adj_px, seg_x, adj_y, col, &slice_str);
+                if sp.style.underline || sp.style.hyperlink.is_some() {
                     surface.fill_rect(
                         Rect::new(seg_x, baseline_y + 2.0, sw, (1.1 * scale).max(1.0)),
                         col,
@@ -2570,8 +2682,8 @@ fn paint_word_ribbon(
     if bx + style_w < max_x {
         let r = Rect::new(bx, by, style_w, bh);
         let hov = r.contains(mouse_x, mouse_y);
-        surface.fill_rounded_rect(r, 5.0, if hov { DaylightTheme::HOVER } else { DaylightTheme::PAPER });
-        surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::BORDER);
+        surface.fill_rounded_rect(r, 5.0, if hov { StudioTheme::hover() } else { StudioTheme::paper() });
+        surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::border());
         surface.draw_text_clipped(
             fonts,
             FontSlot::SansBold,
@@ -2579,7 +2691,7 @@ fn paint_word_ribbon(
             r.x + 8.0 * s,
             r.y + bh * 0.66,
             style_w - 22.0 * s,
-            DaylightTheme::INK,
+            StudioTheme::ink(),
             style_lbl,
         );
         surface.draw_icon(
@@ -2587,7 +2699,7 @@ fn paint_word_ribbon(
             r.x + r.w - 11.0 * s,
             r.y + bh * 0.52,
             9.0 * s,
-            DaylightTheme::INK_MUTED,
+            StudioTheme::ink_muted(),
         );
         hit_regions.push(HitRegion::button(
             r,
@@ -2603,15 +2715,15 @@ fn paint_word_ribbon(
     if bx + font_w < max_x {
         let r = Rect::new(bx, by, font_w, bh);
         let hov = r.contains(mouse_x, mouse_y);
-        surface.fill_rounded_rect(r, 5.0, if hov { DaylightTheme::HOVER } else { DaylightTheme::PAPER });
-        surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::BORDER);
+        surface.fill_rounded_rect(r, 5.0, if hov { StudioTheme::hover() } else { StudioTheme::paper() });
+        surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::border());
         surface.draw_text(
             fonts,
             FontSlot::SansRegular,
             11.8 * s,
             r.x + 8.0 * s,
             r.y + bh * 0.66,
-            DaylightTheme::INK,
+            StudioTheme::ink(),
             fam_lbl,
         );
         surface.draw_icon(
@@ -2619,7 +2731,7 @@ fn paint_word_ribbon(
             r.x + r.w - 11.0 * s,
             r.y + bh * 0.52,
             9.0 * s,
-            DaylightTheme::INK_MUTED,
+            StudioTheme::ink_muted(),
         );
         hit_regions.push(HitRegion::button(
             r,
@@ -2635,13 +2747,13 @@ fn paint_word_ribbon(
     let step_w = (82.0 * s).round();
     if bx + step_w < max_x {
         let r = Rect::new(bx, by, step_w, bh);
-        surface.fill_rounded_rect(r, 5.0, DaylightTheme::PAPER);
-        surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::BORDER);
+        surface.fill_rounded_rect(r, 5.0, StudioTheme::paper());
+        surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::border());
         let btn_seg = (22.0 * s).round();
         let down_r = Rect::new(r.x, r.y, btn_seg, bh);
         let up_r = Rect::new(r.x + r.w - btn_seg, r.y, btn_seg, bh);
-        surface.draw_icon(UiIcon::Minus, down_r.x + btn_seg * 0.5, r.y + bh * 0.5, 9.0 * s, DaylightTheme::INK_SUB);
-        surface.draw_icon(UiIcon::Plus, up_r.x + btn_seg * 0.5, r.y + bh * 0.5, 9.0 * s, DaylightTheme::INK_SUB);
+        surface.draw_icon(UiIcon::Minus, down_r.x + btn_seg * 0.5, r.y + bh * 0.5, 9.0 * s, StudioTheme::ink_sub());
+        surface.draw_icon(UiIcon::Plus, up_r.x + btn_seg * 0.5, r.y + bh * 0.5, 9.0 * s, StudioTheme::ink_sub());
         let sz_txt = if (cur_pt.fract()).abs() < 0.1 {
             format!("{:.0}", cur_pt)
         } else {
@@ -2654,7 +2766,7 @@ fn paint_word_ribbon(
             11.2 * s,
             r.x + (r.w - tw) * 0.5,
             r.y + bh * 0.66,
-            DaylightTheme::INK,
+            StudioTheme::ink(),
             &sz_txt,
         );
         hit_regions.push(HitRegion::button(down_r, UiAction::ExecCommand(CommandId::FontSizeDown)));
@@ -2715,19 +2827,19 @@ fn paint_word_ribbon(
                     r,
                     5.0,
                     if active {
-                        DaylightTheme::WORD_SOFT
+                        StudioTheme::word_soft()
                     } else {
-                        DaylightTheme::HOVER
+                        StudioTheme::hover()
                     },
                 );
             }
             if active {
-                surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::WORD_ACCENT);
+                surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::word_accent());
             }
             let fg = if active {
-                DaylightTheme::WORD_ACCENT
+                StudioTheme::word_accent()
             } else {
-                DaylightTheme::INK
+                StudioTheme::ink()
             };
             surface.draw_icon(UiIcon::Table, r.x + 11.0 * s, r.y + bh * 0.5, 13.0 * s, fg);
             surface.draw_text(
@@ -2744,7 +2856,7 @@ fn paint_word_ribbon(
                 r.x + bw - 9.5 * s,
                 r.y + bh * 0.52,
                 8.5 * s,
-                DaylightTheme::INK_SUB,
+                StudioTheme::ink_sub(),
             );
             hit_regions.push(HitRegion::button(
                 r,
@@ -2772,19 +2884,19 @@ fn paint_word_ribbon(
                     r,
                     5.0,
                     if active {
-                        DaylightTheme::WORD_SOFT
+                        StudioTheme::word_soft()
                     } else {
-                        DaylightTheme::HOVER
+                        StudioTheme::hover()
                     },
                 );
             }
             if active {
-                surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::WORD_ACCENT);
+                surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::word_accent());
             }
             let fg = if active {
-                DaylightTheme::WORD_ACCENT
+                StudioTheme::word_accent()
             } else {
-                DaylightTheme::INK
+                StudioTheme::ink()
             };
             surface.draw_icon(UiIcon::Image, r.x + 11.0 * s, r.y + bh * 0.5, 13.0 * s, fg);
             surface.draw_text(
@@ -2827,7 +2939,7 @@ fn paint_contextual_review_bar(
     surface.fill_rect(bar, Color::rgb(245, 242, 234));
     surface.fill_rect(
         Rect::new(bar.x, bar.y + bar.h - 1.0, bar.w, 1.0),
-        DaylightTheme::BORDER,
+        StudioTheme::border(),
     );
 
     let summary = format!(
@@ -2843,7 +2955,7 @@ fn paint_contextual_review_bar(
         10.8 * s,
         bar.x + 14.0 * s,
         bar.y + bar.h * 0.64,
-        DaylightTheme::PDF_ACCENT,
+        StudioTheme::pdf_accent(),
         &summary,
     );
 
@@ -2895,18 +3007,18 @@ fn paint_contextual_review_bar(
                         } else {
                             Color::rgba(26, 127, 75, 22)
                         },
-                        DaylightTheme::SUCCESS,
-                        DaylightTheme::SUCCESS,
+                        StudioTheme::success(),
+                        StudioTheme::success(),
                     )
                 } else {
                     (
                         if hov {
-                            DaylightTheme::PDF_SOFT
+                            StudioTheme::pdf_soft()
                         } else {
                             Color::rgba(185, 48, 42, 18)
                         },
-                        DaylightTheme::PDF_ACCENT,
-                        DaylightTheme::PDF_ACCENT,
+                        StudioTheme::pdf_accent(),
+                        StudioTheme::pdf_accent(),
                     )
                 };
                 surface.fill_rounded_rect(r, 4.0, bg);
@@ -2952,11 +3064,11 @@ fn paint_contextual_review_bar(
             r,
             4.0,
             if active {
-                DaylightTheme::WORD_SOFT
+                StudioTheme::word_soft()
             } else if hov {
-                DaylightTheme::HOVER
+                StudioTheme::hover()
             } else {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             },
         );
         surface.stroke_rounded_rect(
@@ -2964,9 +3076,9 @@ fn paint_contextual_review_bar(
             4.0,
             1.0,
             if active {
-                DaylightTheme::WORD_ACCENT
+                StudioTheme::word_accent()
             } else {
-                DaylightTheme::BORDER_STRONG
+                StudioTheme::border_strong()
             },
         );
         surface.draw_text(
@@ -2976,9 +3088,9 @@ fn paint_contextual_review_bar(
             r.x + 8.0 * s,
             r.y + bh * 0.68,
             if active {
-                DaylightTheme::WORD_ACCENT
+                StudioTheme::word_accent()
             } else {
-                DaylightTheme::INK
+                StudioTheme::ink()
             },
             lbl,
         );
@@ -2998,10 +3110,10 @@ fn paint_contextual_image_bar(
     bar: Rect,
     w: &WordTabState,
 ) {
-    surface.fill_rect(bar, DaylightTheme::WORD_SOFT);
+    surface.fill_rect(bar, StudioTheme::word_soft());
     surface.fill_rect(
         Rect::new(bar.x, bar.y + bar.h - 1.0, bar.w, 1.0),
-        DaylightTheme::BORDER,
+        StudioTheme::border(),
     );
 
     let (img_info, cur_align) = w
@@ -3021,7 +3133,7 @@ fn paint_contextual_image_bar(
         10.8 * s,
         bar.x + 12.0 * s,
         bar.y + bar.h * 0.64,
-        DaylightTheme::WORD_ACCENT,
+        StudioTheme::word_accent(),
         &img_info,
     );
 
@@ -3056,9 +3168,9 @@ fn paint_contextual_image_bar(
             r,
             4.0,
             if *danger && hov {
-                DaylightTheme::PDF_SOFT
+                StudioTheme::pdf_soft()
             } else if *active || hov {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             } else {
                 Color::rgba(255, 255, 255, 210)
             },
@@ -3068,11 +3180,11 @@ fn paint_contextual_image_bar(
             4.0,
             1.0,
             if *danger && hov {
-                DaylightTheme::PDF_ACCENT
+                StudioTheme::pdf_accent()
             } else if *active {
-                DaylightTheme::WORD_ACCENT
+                StudioTheme::word_accent()
             } else {
-                DaylightTheme::BORDER_STRONG
+                StudioTheme::border_strong()
             },
         );
         surface.draw_text(
@@ -3082,11 +3194,11 @@ fn paint_contextual_image_bar(
             r.x + 8.0 * s,
             r.y + bh * 0.68,
             if *danger {
-                DaylightTheme::PDF_ACCENT
+                StudioTheme::pdf_accent()
             } else if *active {
-                DaylightTheme::WORD_ACCENT
+                StudioTheme::word_accent()
             } else {
-                DaylightTheme::INK
+                StudioTheme::ink()
             },
             lbl,
         );
@@ -3106,10 +3218,10 @@ fn paint_contextual_table_bar(
     bar: Rect,
     w: &WordTabState,
 ) {
-    surface.fill_rect(bar, DaylightTheme::RUST_SOFT);
+    surface.fill_rect(bar, StudioTheme::rust_soft());
     surface.fill_rect(
         Rect::new(bar.x, bar.y + bar.h - 1.0, bar.w, 1.0),
-        DaylightTheme::BORDER,
+        StudioTheme::border(),
     );
 
     let cell_info = w
@@ -3122,7 +3234,7 @@ fn paint_contextual_table_bar(
         10.8 * s,
         bar.x + 12.0 * s,
         bar.y + bar.h * 0.64,
-        DaylightTheme::RUST_ORANGE,
+        StudioTheme::rust_orange(),
         &cell_info,
     );
 
@@ -3158,9 +3270,9 @@ fn paint_contextual_table_bar(
             4.0,
             if hov {
                 if *danger {
-                    DaylightTheme::PDF_SOFT
+                    StudioTheme::pdf_soft()
                 } else {
-                    DaylightTheme::PAPER
+                    StudioTheme::paper()
                 }
             } else {
                 Color::rgba(255, 255, 255, 210)
@@ -3171,9 +3283,9 @@ fn paint_contextual_table_bar(
             4.0,
             1.0,
             if *danger && hov {
-                DaylightTheme::PDF_ACCENT
+                StudioTheme::pdf_accent()
             } else {
-                DaylightTheme::BORDER_STRONG
+                StudioTheme::border_strong()
             },
         );
         surface.draw_text(
@@ -3183,9 +3295,9 @@ fn paint_contextual_table_bar(
             r.x + 8.0 * s,
             r.y + bh * 0.68,
             if *danger {
-                DaylightTheme::PDF_ACCENT
+                StudioTheme::pdf_accent()
             } else {
-                DaylightTheme::INK
+                StudioTheme::ink()
             },
             lbl,
         );
@@ -3216,14 +3328,14 @@ fn draw_icon_btn(
             r,
             5.0,
             if active {
-                DaylightTheme::WORD_SOFT
+                StudioTheme::word_soft()
             } else {
-                DaylightTheme::HOVER
+                StudioTheme::hover()
             },
         );
     }
     if active {
-        surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::WORD_ACCENT);
+        surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::word_accent());
     }
     surface.draw_icon(
         icon,
@@ -3231,9 +3343,9 @@ fn draw_icon_btn(
         r.y + bh * 0.5,
         13.5 * s,
         if active {
-            DaylightTheme::WORD_ACCENT
+            StudioTheme::word_accent()
         } else {
-            DaylightTheme::INK_SUB
+            StudioTheme::ink_sub()
         },
     );
     hit_regions.push(HitRegion::button(r, action));
@@ -3270,11 +3382,11 @@ fn draw_label_btn(
             r,
             5.0,
             if pdf_accent {
-                DaylightTheme::PDF_SOFT
+                StudioTheme::pdf_soft()
             } else if active {
-                DaylightTheme::WORD_SOFT
+                StudioTheme::word_soft()
             } else {
-                DaylightTheme::HOVER
+                StudioTheme::hover()
             },
         );
     }
@@ -3284,18 +3396,18 @@ fn draw_label_btn(
             5.0,
             1.0,
             if pdf_accent {
-                DaylightTheme::PDF_ACCENT
+                StudioTheme::pdf_accent()
             } else {
-                DaylightTheme::WORD_ACCENT
+                StudioTheme::word_accent()
             },
         );
     }
     let fg = if pdf_accent {
-        DaylightTheme::PDF_ACCENT
+        StudioTheme::pdf_accent()
     } else if active {
-        DaylightTheme::WORD_ACCENT
+        StudioTheme::word_accent()
     } else {
-        DaylightTheme::INK
+        StudioTheme::ink()
     };
     surface.draw_text(
         fonts,
@@ -3313,7 +3425,7 @@ fn draw_label_btn(
 fn draw_divider(surface: &mut Surface, bx: f32, bar_y: f32, bar_h: f32, s: f32) -> f32 {
     surface.fill_rect(
         Rect::new((bx + 3.0 * s).round(), bar_y + 10.0 * s, 1.0, bar_h - 20.0 * s),
-        DaylightTheme::BORDER,
+        StudioTheme::border(),
     );
     bx + 8.0 * s
 }
@@ -3331,10 +3443,10 @@ fn paint_outline_sidebar(
     block_canvas_y: &[f32],
     w: &WordTabState,
 ) {
-    surface.fill_rect(sb, DaylightTheme::SIDEBAR);
+    surface.fill_rect(sb, StudioTheme::sidebar());
     surface.fill_rect(
         Rect::new(sb.x + sb.w - 1.0, sb.y, 1.0, sb.h),
-        DaylightTheme::BORDER,
+        StudioTheme::border(),
     );
 
     surface.draw_text(
@@ -3343,7 +3455,7 @@ fn paint_outline_sidebar(
         10.5 * s,
         sb.x + 14.0 * s,
         sb.y + 24.0 * s,
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
         "OUTLINE",
     );
 
@@ -3359,7 +3471,7 @@ fn paint_outline_sidebar(
             sb.x + 14.0 * s,
             y + 16.0 * s,
             sb.w - 28.0 * s,
-            DaylightTheme::INK_MUTED,
+            StudioTheme::ink_muted(),
             "Apply Heading 1–3 to build a live outline.",
         );
     } else {
@@ -3376,16 +3488,16 @@ fn paint_outline_sidebar(
                     row,
                     4.0,
                     if active {
-                        DaylightTheme::WORD_SOFT
+                        StudioTheme::word_soft()
                     } else {
-                        DaylightTheme::HOVER
+                        StudioTheme::hover()
                     },
                 );
             }
             if active {
                 surface.fill_rect(
                     Rect::new(row.x, row.y + 5.0 * s, 2.5, row.h - 10.0 * s),
-                    DaylightTheme::WORD_ACCENT,
+                    StudioTheme::word_accent(),
                 );
             }
             let indent = (item.level as f32) * 9.0 * s;
@@ -3401,9 +3513,9 @@ fn paint_outline_sidebar(
                 row.y + row_h * 0.67,
                 (row.w - 16.0 * s - indent).max(32.0),
                 if active {
-                    DaylightTheme::WORD_ACCENT
+                    StudioTheme::word_accent()
                 } else {
-                    DaylightTheme::INK_SUB
+                    StudioTheme::ink_sub()
                 },
                 &item.title,
             );
@@ -3425,7 +3537,7 @@ fn paint_outline_sidebar(
         y += 10.0 * s;
         surface.fill_rect(
             Rect::new(sb.x + 14.0 * s, y, sb.w - 28.0 * s, 1.0),
-            DaylightTheme::BORDER,
+            StudioTheme::border(),
         );
         y += 16.0 * s;
         surface.draw_text(
@@ -3434,7 +3546,7 @@ fn paint_outline_sidebar(
             10.2 * s,
             sb.x + 14.0 * s,
             y,
-            DaylightTheme::INK_MUTED,
+            StudioTheme::ink_muted(),
             &format!("REVIEW COMMENTS ({})", w.doc.comments.len()),
         );
         y += 8.0 * s;
@@ -3450,12 +3562,12 @@ fn paint_outline_sidebar(
                 crow,
                 4.0,
                 if hov {
-                    DaylightTheme::HOVER
+                    StudioTheme::hover()
                 } else {
-                    DaylightTheme::PAPER
+                    StudioTheme::paper()
                 },
             );
-            surface.stroke_rounded_rect(crow, 4.0, 1.0, DaylightTheme::BORDER);
+            surface.stroke_rounded_rect(crow, 4.0, 1.0, StudioTheme::border());
             surface.draw_text_clipped(
                 fonts,
                 FontSlot::SansBold,
@@ -3463,7 +3575,7 @@ fn paint_outline_sidebar(
                 crow.x + 8.0 * s,
                 crow.y + 15.0 * s,
                 crow.w - 16.0 * s,
-                DaylightTheme::WORD_ACCENT,
+                StudioTheme::word_accent(),
                 &format!("{} · ¶{}", cmt.author, cmt.block_index + 1),
             );
             surface.draw_text_clipped(
@@ -3473,7 +3585,7 @@ fn paint_outline_sidebar(
                 crow.x + 8.0 * s,
                 crow.y + 31.0 * s,
                 crow.w - 16.0 * s,
-                DaylightTheme::INK_SUB,
+                StudioTheme::ink_sub(),
                 &cmt.text,
             );
             let target_y = block_canvas_y.get(cmt.block_index).copied().unwrap_or(0.0);
@@ -3495,7 +3607,7 @@ fn paint_outline_sidebar(
     if m_top + 96.0 * s <= sb.y + sb.h {
         surface.fill_rect(
             Rect::new(sb.x + 14.0 * s, m_top, sb.w - 28.0 * s, 1.0),
-            DaylightTheme::BORDER,
+            StudioTheme::border(),
         );
         surface.draw_text(
             fonts,
@@ -3503,7 +3615,7 @@ fn paint_outline_sidebar(
             10.2 * s,
             sb.x + 14.0 * s,
             m_top + 18.0 * s,
-            DaylightTheme::INK_MUTED,
+            StudioTheme::ink_muted(),
             "DOCUMENT METRICS",
         );
         let rows = [
@@ -3520,7 +3632,7 @@ fn paint_outline_sidebar(
                 11.4 * s,
                 sb.x + 14.0 * s,
                 ry,
-                DaylightTheme::INK_MUTED,
+                StudioTheme::ink_muted(),
                 k,
             );
             let vw = fonts.measure_text(FontSlot::MonoRegular, val, 11.2 * s);
@@ -3531,7 +3643,7 @@ fn paint_outline_sidebar(
                 (sb.x + sb.w - 14.0 * s - vw).max(sb.x + 76.0 * s),
                 ry,
                 sb.w - 86.0 * s,
-                DaylightTheme::INK,
+                StudioTheme::ink(),
                 val,
             );
         }
