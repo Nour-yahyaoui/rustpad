@@ -653,6 +653,31 @@ impl Surface {
                 let body = Rect::new(cx - h * 0.50, cy - h * 0.44, size * 0.50, size * 0.60);
                 self.stroke_rounded_rect(body, 1.8, sw, color);
             }
+            UiIcon::Moon => {
+                // Crisp crescent moon for Dark Mode toggle
+                let outer = Rect::new(cx - h * 0.64, cy - h * 0.64, size * 0.64, size * 0.64);
+                self.stroke_rounded_rect(outer, size * 0.32, sw, color);
+                self.draw_line(cx + h * 0.05, cy - h * 0.52, cx - h * 0.14, cy, sw, color);
+                self.draw_line(cx - h * 0.14, cy, cx + h * 0.12, cy + h * 0.52, sw, color);
+            }
+            UiIcon::Sun => {
+                // Crisp solar circle + cardinal rays for Daylight Mode toggle
+                let core = Rect::new(cx - h * 0.38, cy - h * 0.38, size * 0.38, size * 0.38);
+                self.stroke_rounded_rect(core, size * 0.19, sw, color);
+                self.draw_line(cx, cy - h * 0.80, cx, cy - h * 0.54, sw, color);
+                self.draw_line(cx, cy + h * 0.54, cx, cy + h * 0.80, sw, color);
+                self.draw_line(cx - h * 0.80, cy, cx - h * 0.54, cy, sw, color);
+                self.draw_line(cx + h * 0.54, cy, cx + h * 0.80, cy, sw, color);
+            }
+            UiIcon::Shield => {
+                // Security / Document Intelligence Inspector shield
+                self.draw_line(cx, cy - h * 0.76, cx + h * 0.64, cy - h * 0.46, sw, color);
+                self.draw_line(cx, cy - h * 0.76, cx - h * 0.64, cy - h * 0.46, sw, color);
+                self.draw_line(cx - h * 0.64, cy - h * 0.46, cx - h * 0.52, cy + h * 0.22, sw, color);
+                self.draw_line(cx + h * 0.64, cy - h * 0.46, cx + h * 0.52, cy + h * 0.22, sw, color);
+                self.draw_line(cx - h * 0.52, cy + h * 0.22, cx, cy + h * 0.76, sw, color);
+                self.draw_line(cx + h * 0.52, cy + h * 0.22, cx, cy + h * 0.76, sw, color);
+            }
         }
     }
 }
@@ -679,4 +704,7 @@ pub enum UiIcon {
     ChevronRight,
     Close,
     Trash,
+    Moon,
+    Sun,
+    Shield,
 }

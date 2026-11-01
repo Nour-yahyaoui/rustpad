@@ -10,14 +10,22 @@ use crate::state::{
 };
 use crate::word_view::paint_word_tab;
 use doc_model::{FontFamily, ParagraphStyle, TablePreset, TemplateKind};
-use power_tools::{AiProviderPreset, AiTask};
-use rustpad_render::{Color, DaylightTheme, FontBook, FontSlot, Rect, Surface, UiIcon};
+use docx_io::{
+    inspect_formatting_consistency, inspect_security_and_hidden, save_docx_bytes,
+    validate_docx_bytes,
+};
+use power_tools::{
+    detect_broken_links, detect_duplicate_paragraphs, AiProviderPreset, AiTask,
+};
+use rustpad_render::{
+    active_theme_mode, Color, FontBook, FontSlot, Rect, StudioTheme, Surface, UiIcon,
+};
 
 pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
     app.hit_regions.clear();
     app.word_line_boxes.clear();
     surface.reset_clip();
-    surface.clear(DaylightTheme::DESK_BG);
+    surface.clear(StudioTheme::desk_bg());
 
     let s = app.ui_scale.clamp(0.85, 1.6);
     let win_w = surface.width as f32;
@@ -72,9 +80,9 @@ pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
         surface.fill_rect(
             div_vis,
             if hov {
-                DaylightTheme::RUST_ORANGE
+                StudioTheme::rust_orange()
             } else {
-                DaylightTheme::BORDER_STRONG
+                StudioTheme::border_strong()
             },
         );
         app.hit_regions.push(HitRegion::splitter(
@@ -97,7 +105,7 @@ pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
         if split_hit.contains(app.mouse_x, app.mouse_y) {
             surface.fill_rect(
                 Rect::new(dock_rect.x - 1.5, dock_rect.y, 3.0, dock_rect.h),
-                DaylightTheme::AI_ACCENT,
+                StudioTheme::ai_accent(),
             );
         }
         app.hit_regions.push(HitRegion::splitter(
@@ -159,8 +167,8 @@ fn paint_pending_doc_load_banner(app: &mut RustPadApp, surface: &mut Surface, s:
     let card = Rect::new(card_x, card_y, card_w, card_h);
 
     surface.draw_paper_shadow(card, 8.0, 14.0, 26);
-    surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
-    surface.stroke_rounded_rect(card, 8.0, 1.4, DaylightTheme::RUST_ORANGE);
+    surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
+    surface.stroke_rounded_rect(card, 8.0, 1.4, StudioTheme::rust_orange());
 
     let title = format!("Streaming '{fname}' ({mb:.1} MB) · {pct}% · {secs:.1}s");
     surface.draw_text_clipped(
@@ -170,7 +178,7 @@ fn paint_pending_doc_load_banner(app: &mut RustPadApp, surface: &mut Surface, s:
         card.x + 14.0 * s,
         card.y + 22.0 * s,
         (card.w - 98.0 * s).max(80.0),
-        DaylightTheme::INK,
+        StudioTheme::ink(),
         &title,
     );
 
@@ -182,7 +190,7 @@ fn paint_pending_doc_load_banner(app: &mut RustPadApp, surface: &mut Surface, s:
         card.x + 14.0 * s,
         card.y + 39.0 * s,
         (card.w - 28.0 * s).max(80.0),
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
         sub,
     );
 
@@ -193,12 +201,12 @@ fn paint_pending_doc_load_banner(app: &mut RustPadApp, surface: &mut Surface, s:
         (card.w - 28.0 * s).max(40.0),
         (7.0 * s).max(5.0),
     );
-    surface.fill_rounded_rect(track, 3.5, DaylightTheme::SIDEBAR);
+    surface.fill_rounded_rect(track, 3.5, StudioTheme::sidebar());
     let fill_w = (track.w * (permille as f32 / 1000.0)).clamp(6.0, track.w);
     surface.fill_rounded_rect(
         Rect::new(track.x, track.y, fill_w, track.h),
         3.5,
-        DaylightTheme::RUST_ORANGE,
+        StudioTheme::rust_orange(),
     );
 
     // Cancel (Esc) button
@@ -215,12 +223,12 @@ fn paint_pending_doc_load_banner(app: &mut RustPadApp, surface: &mut Surface, s:
         btn,
         4.0,
         if hov {
-            DaylightTheme::PDF_SOFT
+            StudioTheme::pdf_soft()
         } else {
-            DaylightTheme::SIDEBAR
+            StudioTheme::sidebar()
         },
     );
-    surface.stroke_rounded_rect(btn, 4.0, 1.0, DaylightTheme::BORDER_STRONG);
+    surface.stroke_rounded_rect(btn, 4.0, 1.0, StudioTheme::border_strong());
     let lbl = "Cancel";
     let lw = app.fonts.measure_text(FontSlot::SansBold, lbl, 10.4 * s);
     surface.draw_text(
@@ -230,9 +238,9 @@ fn paint_pending_doc_load_banner(app: &mut RustPadApp, surface: &mut Surface, s:
         btn.x + (btn.w - lw) * 0.5,
         btn.y + btn.h * 0.68,
         if hov {
-            DaylightTheme::PDF_ACCENT
+            StudioTheme::pdf_accent()
         } else {
-            DaylightTheme::INK_SUB
+            StudioTheme::ink_sub()
         },
         lbl,
     );
@@ -319,10 +327,10 @@ fn paint_tab_pane(
 }
 
 fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Rect) {
-    surface.fill_rect(bar, DaylightTheme::PAPER);
+    surface.fill_rect(bar, StudioTheme::paper());
     surface.fill_rect(
         Rect::new(bar.x, bar.y + bar.h - 1.0, bar.w, 1.0),
-        DaylightTheme::BORDER,
+        StudioTheme::border(),
     );
 
     let logo_y = ((bar.h - 36.0) * 0.5).max(4.0) as i32;
@@ -333,7 +341,7 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         14.5 * s,
         54.0,
         bar.h * 0.62,
-        DaylightTheme::INK,
+        StudioTheme::ink(),
         "RustPad",
     );
     app.hit_regions.push(HitRegion::button(
@@ -341,7 +349,7 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         UiAction::OpenHomeTab,
     ));
 
-    let right_reserve = 436.0 * s;
+    let right_reserve = 536.0 * s;
     let tabs_max_x = (bar.w - right_reserve).max(160.0);
 
     let tab_h = (32.0 * s).round();
@@ -371,11 +379,11 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
             tab_r,
             6.0,
             if active {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             } else if hov {
-                DaylightTheme::HOVER
+                StudioTheme::hover()
             } else {
-                DaylightTheme::SIDEBAR
+                StudioTheme::sidebar()
             },
         );
         surface.stroke_rounded_rect(
@@ -384,12 +392,12 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
             if active { 1.4 } else { 1.0 },
             if active {
                 if is_pdf {
-                    DaylightTheme::PDF_ACCENT
+                    StudioTheme::pdf_accent()
                 } else {
-                    DaylightTheme::WORD_ACCENT
+                    StudioTheme::word_accent()
                 }
             } else {
-                DaylightTheme::BORDER
+                StudioTheme::border()
             },
         );
 
@@ -402,9 +410,9 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
                 tab_r.x + (tab_w - hw) * 0.5,
                 tab_r.y + tab_h * 0.65,
                 if active {
-                    DaylightTheme::RUST_ORANGE
+                    StudioTheme::rust_orange()
                 } else {
-                    DaylightTheme::INK_SUB
+                    StudioTheme::ink_sub()
                 },
                 "Home",
             );
@@ -416,9 +424,9 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
                 pill,
                 3.0,
                 if is_pdf {
-                    DaylightTheme::PDF_ACCENT
+                    StudioTheme::pdf_accent()
                 } else {
-                    DaylightTheme::WORD_ACCENT
+                    StudioTheme::word_accent()
                 },
             );
             surface.draw_text(
@@ -427,7 +435,7 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
                 9.2 * s,
                 pill.x + 5.0 * s,
                 pill.y + 11.5 * s,
-                DaylightTheme::PAPER,
+                StudioTheme::paper(),
                 badge,
             );
             surface.draw_text_clipped(
@@ -437,7 +445,7 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
                 pill.x + pill.w + 6.0 * s,
                 tab_r.y + tab_h * 0.65,
                 tab_r.w - 68.0 * s,
-                DaylightTheme::INK,
+                StudioTheme::ink(),
                 &title,
             );
             let close_r = Rect::new(
@@ -451,7 +459,7 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
                 close_r.x + close_r.w * 0.5,
                 close_r.y + close_r.h * 0.5,
                 8.5 * s,
-                DaylightTheme::INK_MUTED,
+                StudioTheme::ink_muted(),
             );
             app.hit_regions
                 .push(HitRegion::button(tab_r, UiAction::SwitchTab(idx)));
@@ -469,18 +477,18 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
             plus_r,
             6.0,
             if hov {
-                DaylightTheme::HOVER
+                StudioTheme::hover()
             } else {
-                DaylightTheme::SIDEBAR
+                StudioTheme::sidebar()
             },
         );
-        surface.stroke_rounded_rect(plus_r, 6.0, 1.0, DaylightTheme::BORDER);
+        surface.stroke_rounded_rect(plus_r, 6.0, 1.0, StudioTheme::border());
         surface.draw_icon(
             UiIcon::Plus,
             plus_r.x + plus_r.w * 0.5,
             plus_r.y + plus_r.h * 0.5,
             11.0 * s,
-            DaylightTheme::INK_SUB,
+            StudioTheme::ink_sub(),
         );
         app.hit_regions.push(HitRegion::button(
             plus_r,
@@ -488,8 +496,95 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         ));
     }
 
-    // Right Studio Action Cluster (`AI Studio`, `Ctrl+K`, `Split`, `Open`, `Save`)
-    let mut rx = (bar.w - 424.0 * s).max(tx + 8.0 * s);
+    // Right Studio Action Cluster (`Theme`, `Inspector`, `AI Studio`, `Ctrl+K`, `Split`, `Open`, `Save`)
+    let mut rx = (bar.w - 524.0 * s).max(tx + 8.0 * s);
+
+    // 0a. Dark Mode / Theme Switcher Pill (`Ctrl+Shift+D`)
+    let cur_theme = active_theme_mode();
+    let theme_w = (64.0 * s).round();
+    let theme_r = Rect::new(rx, tab_y, theme_w, tab_h);
+    let theme_hov = theme_r.contains(app.mouse_x, app.mouse_y);
+    surface.fill_rounded_rect(
+        theme_r,
+        6.0,
+        if cur_theme.is_dark_chrome() {
+            StudioTheme::word_soft()
+        } else if theme_hov {
+            StudioTheme::hover()
+        } else {
+            StudioTheme::sidebar()
+        },
+    );
+    surface.stroke_rounded_rect(
+        theme_r,
+        6.0,
+        1.0,
+        if cur_theme.is_dark_chrome() || theme_hov {
+            StudioTheme::word_accent()
+        } else {
+            StudioTheme::border_strong()
+        },
+    );
+    surface.draw_icon(
+        if cur_theme.is_dark_chrome() {
+            UiIcon::Moon
+        } else {
+            UiIcon::Sun
+        },
+        theme_r.x + 13.0 * s,
+        theme_r.y + tab_h * 0.5,
+        12.0 * s,
+        if cur_theme.is_dark_chrome() {
+            StudioTheme::word_accent()
+        } else {
+            StudioTheme::rust_orange()
+        },
+    );
+    surface.draw_text(
+        &mut app.fonts,
+        FontSlot::SansBold,
+        10.8 * s,
+        theme_r.x + 24.0 * s,
+        theme_r.y + tab_h * 0.65,
+        StudioTheme::ink(),
+        cur_theme.short_badge(),
+    );
+    app.hit_regions.push(HitRegion::button(
+        theme_r,
+        UiAction::ExecCommand(CommandId::CycleThemeMode),
+    ));
+    rx += theme_w + 5.0 * s;
+
+    // 0b. Document Intelligence & Security Inspector Button (`Ctrl+Shift+J`)
+    let insp_w = (30.0 * s).round();
+    let insp_r = Rect::new(rx, tab_y, insp_w, tab_h);
+    let insp_hov = insp_r.contains(app.mouse_x, app.mouse_y);
+    surface.fill_rounded_rect(
+        insp_r,
+        6.0,
+        if insp_hov {
+            StudioTheme::hover()
+        } else {
+            StudioTheme::sidebar()
+        },
+    );
+    surface.stroke_rounded_rect(insp_r, 6.0, 1.0, StudioTheme::border_strong());
+    surface.draw_icon(
+        UiIcon::Shield,
+        insp_r.x + insp_w * 0.5,
+        insp_r.y + tab_h * 0.5,
+        12.5 * s,
+        if insp_hov {
+            StudioTheme::word_accent()
+        } else {
+            StudioTheme::ink_sub()
+        },
+    );
+    app.hit_regions.push(HitRegion::button(
+        insp_r,
+        UiAction::ExecCommand(CommandId::OpenDocumentInspector),
+    ));
+    rx += insp_w + 6.0 * s;
 
     // 1. Pluggable AI Studio Dock Toggle (`Ctrl+J`)
     let ai_w = (94.0 * s).round();
@@ -500,11 +595,11 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         ai_r,
         6.0,
         if ai_on {
-            DaylightTheme::AI_ACCENT
+            StudioTheme::ai_accent()
         } else if ai_hov {
-            DaylightTheme::AI_SOFT
+            StudioTheme::ai_soft()
         } else {
-            DaylightTheme::SIDEBAR
+            StudioTheme::sidebar()
         },
     );
     surface.stroke_rounded_rect(
@@ -512,15 +607,15 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         6.0,
         1.0,
         if ai_on || ai_hov {
-            DaylightTheme::AI_ACCENT
+            StudioTheme::ai_accent()
         } else {
-            DaylightTheme::BORDER_STRONG
+            StudioTheme::border_strong()
         },
     );
     let ai_fg = if ai_on {
-        DaylightTheme::PAPER
+        StudioTheme::paper()
     } else {
-        DaylightTheme::AI_ACCENT
+        StudioTheme::ai_accent()
     };
     surface.draw_icon(
         UiIcon::Sparkles,
@@ -552,18 +647,18 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         pal_r,
         6.0,
         if pal_hov {
-            DaylightTheme::HOVER
+            StudioTheme::hover()
         } else {
-            DaylightTheme::SIDEBAR
+            StudioTheme::sidebar()
         },
     );
-    surface.stroke_rounded_rect(pal_r, 6.0, 1.0, DaylightTheme::BORDER);
+    surface.stroke_rounded_rect(pal_r, 6.0, 1.0, StudioTheme::border());
     surface.draw_icon(
         UiIcon::Search,
         pal_r.x + 13.0 * s,
         pal_r.y + tab_h * 0.5,
         11.5 * s,
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
     );
     surface.draw_text(
         &mut app.fonts,
@@ -571,7 +666,7 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         11.2 * s,
         pal_r.x + 24.0 * s,
         pal_r.y + tab_h * 0.65,
-        DaylightTheme::INK_SUB,
+        StudioTheme::ink_sub(),
         "Tools  Ctrl+K",
     );
     app.hit_regions
@@ -592,9 +687,9 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
                 br,
                 6.0,
                 if hov {
-                    DaylightTheme::RUST_ORANGE
+                    StudioTheme::rust_orange()
                 } else {
-                    DaylightTheme::WORD_ACCENT
+                    StudioTheme::word_accent()
                 },
             );
             let lw = app.fonts.measure_text(FontSlot::SansBold, lbl, 11.8 * s);
@@ -604,7 +699,7 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
                 11.8 * s,
                 br.x + (bw - lw) * 0.5,
                 br.y + tab_h * 0.65,
-                DaylightTheme::PAPER,
+                StudioTheme::paper(),
                 lbl,
             );
         } else {
@@ -612,14 +707,14 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
                 br,
                 6.0,
                 if active {
-                    DaylightTheme::WORD_SOFT
+                    StudioTheme::word_soft()
                 } else if hov {
-                    DaylightTheme::HOVER
+                    StudioTheme::hover()
                 } else {
-                    DaylightTheme::PAPER
+                    StudioTheme::paper()
                 },
             );
-            surface.stroke_rounded_rect(br, 6.0, 1.0, DaylightTheme::BORDER);
+            surface.stroke_rounded_rect(br, 6.0, 1.0, StudioTheme::border());
             let lw = app.fonts.measure_text(FontSlot::SansBold, lbl, 11.8 * s);
             surface.draw_text(
                 &mut app.fonts,
@@ -628,9 +723,9 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
                 br.x + (bw - lw) * 0.5,
                 br.y + tab_h * 0.65,
                 if active {
-                    DaylightTheme::WORD_ACCENT
+                    StudioTheme::word_accent()
                 } else {
-                    DaylightTheme::INK
+                    StudioTheme::ink()
                 },
                 lbl,
             );
@@ -644,8 +739,8 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
 /// Resizable Right-Side Pluggable AI Agent Studio Dock (`Ollama`, `nour-code`, `LM Studio`, `OpenAI`, `Claude`).
 fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect) {
     surface.set_clip(dock);
-    surface.fill_rect(dock, DaylightTheme::SIDEBAR);
-    surface.fill_rect(Rect::new(dock.x, dock.y, 1.0, dock.h), DaylightTheme::BORDER);
+    surface.fill_rect(dock, StudioTheme::sidebar());
+    surface.fill_rect(Rect::new(dock.x, dock.y, 1.0, dock.h), StudioTheme::border());
 
     let pad = 14.0 * s;
     let inner_w = (dock.w - pad * 2.0).max(160.0);
@@ -657,7 +752,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
         dock.x + pad + 7.0 * s,
         y + 6.0 * s,
         13.0 * s,
-        DaylightTheme::AI_ACCENT,
+        StudioTheme::ai_accent(),
     );
     surface.draw_text(
         &mut app.fonts,
@@ -665,7 +760,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
         12.5 * s,
         dock.x + pad + 20.0 * s,
         y + 11.0 * s,
-        DaylightTheme::INK,
+        StudioTheme::ink(),
         "AI Agent Studio",
     );
     let close_r = Rect::new(dock.x + dock.w - pad - 22.0 * s, y - 3.0 * s, 22.0 * s, 22.0 * s);
@@ -674,7 +769,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
         close_r.x + close_r.w * 0.5,
         close_r.y + close_r.h * 0.5,
         10.0 * s,
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
     );
     app.hit_regions.push(HitRegion::button(
         close_r,
@@ -689,7 +784,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
         dock.x + pad,
         y + 8.0 * s,
         inner_w,
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
         "Local HTTP (Ollama, nour-code) or Cloud API · Ctrl+V to paste",
     );
     y += 18.0 * s;
@@ -718,11 +813,11 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
             r,
             4.0,
             if active {
-                DaylightTheme::AI_ACCENT
+                StudioTheme::ai_accent()
             } else if hov {
-                DaylightTheme::HOVER
+                StudioTheme::hover()
             } else {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             },
         );
         surface.stroke_rounded_rect(
@@ -730,9 +825,9 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
             4.0,
             1.0,
             if active {
-                DaylightTheme::AI_ACCENT
+                StudioTheme::ai_accent()
             } else {
-                DaylightTheme::BORDER
+                StudioTheme::border()
             },
         );
         surface.draw_text(
@@ -742,9 +837,9 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
             r.x + 6.5 * s,
             r.y + chip_h * 0.69,
             if active {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             } else {
-                DaylightTheme::INK
+                StudioTheme::ink()
             },
             lbl,
         );
@@ -795,19 +890,19 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
         det_r,
         4.0,
         if det_hov {
-            DaylightTheme::AI_SOFT
+            StudioTheme::ai_soft()
         } else {
-            DaylightTheme::PAPER
+            StudioTheme::paper()
         },
     );
-    surface.stroke_rounded_rect(det_r, 4.0, 1.0, DaylightTheme::BORDER_STRONG);
+    surface.stroke_rounded_rect(det_r, 4.0, 1.0, StudioTheme::border_strong());
     surface.draw_text(
         &mut app.fonts,
         FontSlot::SansBold,
         10.2 * s,
         det_r.x + 8.0 * s,
         det_r.y + det_r.h * 0.67,
-        DaylightTheme::AI_ACCENT,
+        StudioTheme::ai_accent(),
         "Detect Local",
     );
     app.hit_regions
@@ -825,7 +920,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
                 break;
             }
             let mr = Rect::new(mx, y, mw, 20.0 * s);
-            surface.fill_rounded_rect(mr, 3.0, DaylightTheme::AI_SOFT);
+            surface.fill_rounded_rect(mr, 3.0, StudioTheme::ai_soft());
             surface.draw_text_clipped(
                 &mut app.fonts,
                 FontSlot::MonoRegular,
@@ -833,7 +928,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
                 mr.x + 6.0 * s,
                 mr.y + 14.0 * s,
                 mw - 10.0 * s,
-                DaylightTheme::AI_ACCENT,
+                StudioTheme::ai_accent(),
                 m,
             );
             app.hit_regions.push(HitRegion::button(
@@ -881,7 +976,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
         9.8 * s,
         dock.x + pad,
         y + 9.0 * s,
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
         "ACTION ON ACTIVE DOCUMENT",
     );
     y += 14.0 * s;
@@ -902,11 +997,11 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
             r,
             4.0,
             if active {
-                DaylightTheme::AI_SOFT
+                StudioTheme::ai_soft()
             } else if hov {
-                DaylightTheme::HOVER
+                StudioTheme::hover()
             } else {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             },
         );
         surface.stroke_rounded_rect(
@@ -914,9 +1009,9 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
             4.0,
             1.0,
             if active {
-                DaylightTheme::AI_ACCENT
+                StudioTheme::ai_accent()
             } else {
-                DaylightTheme::BORDER
+                StudioTheme::border()
             },
         );
         surface.draw_text(
@@ -926,9 +1021,9 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
             r.x + 7.0 * s,
             r.y + chip_h * 0.69,
             if active {
-                DaylightTheme::AI_ACCENT
+                StudioTheme::ai_accent()
             } else {
-                DaylightTheme::INK
+                StudioTheme::ink()
             },
             lbl,
         );
@@ -960,9 +1055,9 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
         run_r,
         5.0,
         if busy {
-            DaylightTheme::RUST_ORANGE
+            StudioTheme::rust_orange()
         } else {
-            DaylightTheme::AI_ACCENT
+            StudioTheme::ai_accent()
         },
     );
     let run_lbl = if busy {
@@ -977,7 +1072,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
         11.8 * s,
         run_r.x + (run_r.w - rlw) * 0.5,
         run_r.y + run_h * 0.66,
-        DaylightTheme::PAPER,
+        StudioTheme::paper(),
         run_lbl,
     );
     app.hit_regions.push(HitRegion::button(
@@ -992,9 +1087,9 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
 
     // Status line
     let st_col = if app.ai_dock.is_error {
-        DaylightTheme::PDF_ACCENT
+        StudioTheme::pdf_accent()
     } else {
-        DaylightTheme::INK_SUB
+        StudioTheme::ink_sub()
     };
     let st_line = app.ai_dock.status_line.clone();
     surface.draw_text_clipped(
@@ -1013,8 +1108,8 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
     let bottom_btns_h = (34.0 * s).round();
     let out_h = (dock.y + dock.h - y - bottom_btns_h - 14.0 * s).max(56.0);
     let out_r = Rect::new(dock.x + pad, y, inner_w, out_h);
-    surface.fill_rounded_rect(out_r, 5.0, DaylightTheme::PAPER);
-    surface.stroke_rounded_rect(out_r, 5.0, 1.0, DaylightTheme::BORDER);
+    surface.fill_rounded_rect(out_r, 5.0, StudioTheme::paper());
+    surface.stroke_rounded_rect(out_r, 5.0, 1.0, StudioTheme::border());
 
     surface.set_clip(Rect::new(out_r.x + 2.0, out_r.y + 2.0, out_r.w - 4.0, out_r.h - 4.0));
     let out_txt = app.ai_dock.output_text.clone();
@@ -1026,7 +1121,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
             out_r.x + 10.0 * s,
             out_r.y + 22.0 * s,
             out_r.w - 20.0 * s,
-            DaylightTheme::INK_MUTED,
+            StudioTheme::ink_muted(),
             "Agent response will appear here for inspection before touching your document.",
         );
     } else {
@@ -1052,7 +1147,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
                             line_px,
                             out_r.x + 10.0 * s,
                             oy,
-                            DaylightTheme::INK,
+                            StudioTheme::ink(),
                             cur.trim_end(),
                         );
                     }
@@ -1070,7 +1165,7 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
                         line_px,
                         out_r.x + 10.0 * s,
                         oy,
-                        DaylightTheme::INK,
+                        StudioTheme::ink(),
                         cur.trim_end(),
                     );
                 }
@@ -1112,13 +1207,13 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
             br,
             4.0,
             if primary {
-                DaylightTheme::WORD_ACCENT
+                StudioTheme::word_accent()
             } else {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             },
         );
         if !primary {
-            surface.stroke_rounded_rect(br, 4.0, 1.0, DaylightTheme::BORDER_STRONG);
+            surface.stroke_rounded_rect(br, 4.0, 1.0, StudioTheme::border_strong());
         }
         let lw = app.fonts.measure_text(FontSlot::SansBold, lbl, 10.8 * s);
         surface.draw_text(
@@ -1128,9 +1223,9 @@ fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect
             br.x + (br.w - lw) * 0.5,
             br.y + br.h * 0.67,
             if primary {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             } else {
-                DaylightTheme::INK
+                StudioTheme::ink()
             },
             lbl,
         );
@@ -1159,21 +1254,21 @@ fn paint_ai_field(
         9.5 * s,
         x,
         y + 9.0 * s,
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
         label,
     );
     let bh = (28.0 * s).round();
     let box_r = Rect::new(x, y + 13.0 * s, w, bh);
     let focused = app.ai_dock.focused_field == Some(field);
-    surface.fill_rounded_rect(box_r, 4.0, DaylightTheme::PAPER);
+    surface.fill_rounded_rect(box_r, 4.0, StudioTheme::paper());
     surface.stroke_rounded_rect(
         box_r,
         4.0,
         if focused { 1.5 } else { 1.0 },
         if focused {
-            DaylightTheme::AI_ACCENT
+            StudioTheme::ai_accent()
         } else {
-            DaylightTheme::BORDER
+            StudioTheme::border()
         },
     );
     let disp_owned: String;
@@ -1193,9 +1288,9 @@ fn paint_ai_field(
         box_r.y + bh * 0.67,
         w - 16.0 * s,
         if value.is_empty() {
-            DaylightTheme::INK_MUTED
+            StudioTheme::ink_muted()
         } else {
-            DaylightTheme::INK
+            StudioTheme::ink()
         },
         disp,
     );
@@ -1216,7 +1311,7 @@ fn paint_home_hub(
     area: Rect,
     recent_files: &[std::path::PathBuf],
 ) {
-    surface.fill_rect(area, DaylightTheme::CHROME);
+    surface.fill_rect(area, StudioTheme::chrome());
 
     let max_w = (1140.0 * s).min(area.w - 48.0 * s).max(320.0);
     let ox = area.x + (area.w - max_w) * 0.5;
@@ -1229,14 +1324,14 @@ fn paint_home_hub(
         10.8 * s,
         ox,
         y,
-        DaylightTheme::RUST_ORANGE,
+        StudioTheme::rust_orange(),
         &format!(
             "RUSTPAD v{} ENTERPRISE · OFFLINE-FIRST NATIVE SUITE · 0 CRATES.IO DEPS",
             env!("CARGO_PKG_VERSION")
         ),
     );
     y += 12.0 * s;
-    surface.fill_rect(Rect::new(ox, y, max_w, 1.0), DaylightTheme::BORDER_STRONG);
+    surface.fill_rect(Rect::new(ox, y, max_w, 1.0), StudioTheme::border_strong());
     y += 34.0 * s;
 
     let two_col = max_w >= 760.0;
@@ -1263,7 +1358,7 @@ fn paint_home_hub(
         28.0 * s,
         ox,
         y,
-        DaylightTheme::INK,
+        StudioTheme::ink(),
         "Draft, inspect & sign.",
     );
     surface.draw_text_clipped(
@@ -1273,7 +1368,7 @@ fn paint_home_hub(
         ox,
         y + 24.0 * s,
         left_w,
-        DaylightTheme::INK_SUB,
+        StudioTheme::ink_sub(),
         "Author ECMA-376 Word (.docx) documents, edit ISO 32000 PDFs, and run local or cloud AI agents offline.",
     );
     surface.draw_text_clipped(
@@ -1283,7 +1378,7 @@ fn paint_home_hub(
         ox,
         y + 46.0 * s,
         left_w,
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
         "Nour Yahyaoui · github.com/Nour-yahyaoui/rustpad",
     );
 
@@ -1294,26 +1389,26 @@ fn paint_home_hub(
         (
             "+ New Blank Word (.docx)",
             CommandId::NewWordBlank,
-            DaylightTheme::WORD_ACCENT,
-            DaylightTheme::PAPER,
+            StudioTheme::word_accent(),
+            StudioTheme::paper(),
         ),
         (
             "+ New Blank PDF (.pdf)",
             CommandId::NewPdfBlank,
-            DaylightTheme::PDF_ACCENT,
-            DaylightTheme::PAPER,
+            StudioTheme::pdf_accent(),
+            StudioTheme::paper(),
         ),
         (
             "Open File (.docx / .pdf / .md)",
             CommandId::OpenFile,
-            DaylightTheme::PAPER,
-            DaylightTheme::INK,
+            StudioTheme::paper(),
+            StudioTheme::ink(),
         ),
         (
             "Connect AI Agent (Ctrl+J)",
             CommandId::ToggleAiDock,
-            DaylightTheme::AI_SOFT,
-            DaylightTheme::AI_ACCENT,
+            StudioTheme::ai_soft(),
+            StudioTheme::ai_accent(),
         ),
     ]
     .into_iter()
@@ -1328,8 +1423,8 @@ fn paint_home_hub(
             btn_h,
         );
         surface.fill_rounded_rect(r, 5.0, fill);
-        if fill == DaylightTheme::PAPER || fill == DaylightTheme::AI_SOFT {
-            surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::BORDER_STRONG);
+        if fill == StudioTheme::paper() || fill == StudioTheme::ai_soft() {
+            surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::border_strong());
         }
         let lw = fonts.measure_text(FontSlot::SansBold, lbl, 11.6 * s);
         surface.draw_text_clipped(
@@ -1353,11 +1448,11 @@ fn paint_home_hub(
         10.5 * s,
         ox,
         ly,
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
         "RECENT WORKSPACE FILES",
     );
     ly += 10.0 * s;
-    surface.fill_rect(Rect::new(ox, ly, left_w, 1.0), DaylightTheme::BORDER);
+    surface.fill_rect(Rect::new(ox, ly, left_w, 1.0), StudioTheme::border());
     ly += 4.0 * s;
 
     if recent_files.is_empty() {
@@ -1367,7 +1462,7 @@ fn paint_home_hub(
             12.0 * s,
             ox,
             ly + 22.0 * s,
-            DaylightTheme::INK_MUTED,
+            StudioTheme::ink_muted(),
             "No local .docx or .pdf files in current directory yet.",
         );
     } else {
@@ -1378,7 +1473,7 @@ fn paint_home_hub(
             }
             let r = Rect::new(ox, ly, left_w, row_h);
             if r.contains(mouse_x, mouse_y) {
-                surface.fill_rounded_rect(r, 4.0, DaylightTheme::HOVER);
+                surface.fill_rounded_rect(r, 4.0, StudioTheme::hover());
             }
             let is_pdf = rf
                 .extension()
@@ -1390,9 +1485,9 @@ fn paint_home_hub(
                 tag_r,
                 3.0,
                 if is_pdf {
-                    DaylightTheme::PDF_SOFT
+                    StudioTheme::pdf_soft()
                 } else {
-                    DaylightTheme::WORD_SOFT
+                    StudioTheme::word_soft()
                 },
             );
             surface.draw_text(
@@ -1402,9 +1497,9 @@ fn paint_home_hub(
                 tag_r.x + 5.0 * s,
                 tag_r.y + 12.2 * s,
                 if is_pdf {
-                    DaylightTheme::PDF_ACCENT
+                    StudioTheme::pdf_accent()
                 } else {
-                    DaylightTheme::WORD_ACCENT
+                    StudioTheme::word_accent()
                 },
                 if is_pdf { "PDF" } else { "DOCX" },
             );
@@ -1415,12 +1510,12 @@ fn paint_home_hub(
                 tag_r.x + tag_r.w + 10.0 * s,
                 r.y + row_h * 0.66,
                 left_w - 58.0 * s,
-                DaylightTheme::INK,
+                StudioTheme::ink(),
                 &rf.display().to_string(),
             );
             surface.fill_rect(
                 Rect::new(r.x, r.y + row_h - 1.0, left_w, 1.0),
-                DaylightTheme::BORDER,
+                StudioTheme::border(),
             );
             hit_regions.push(HitRegion::button(r, UiAction::OpenRecentPath(rf.clone())));
             ly += row_h;
@@ -1435,7 +1530,7 @@ fn paint_home_hub(
         10.5 * s,
         right_x,
         ry_start,
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
         "PAPER TEMPLATES (.DOCX)",
     );
 
@@ -1458,9 +1553,9 @@ fn paint_home_hub(
             card,
             5.0,
             if hov {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             } else {
-                DaylightTheme::SIDEBAR
+                StudioTheme::sidebar()
             },
         );
         surface.stroke_rounded_rect(
@@ -1468,19 +1563,19 @@ fn paint_home_hub(
             5.0,
             1.0,
             if hov {
-                DaylightTheme::WORD_ACCENT
+                StudioTheme::word_accent()
             } else {
-                DaylightTheme::BORDER
+                StudioTheme::border()
             },
         );
 
         // Crisp A4 miniature sheet preview
         let sheet = Rect::new(card.x + 12.0 * s, card.y + 12.0 * s, 52.0 * s, card.h - 24.0 * s);
-        surface.fill_rect(sheet, DaylightTheme::PAPER);
-        surface.stroke_rounded_rect(sheet, 2.0, 1.0, DaylightTheme::BORDER_STRONG);
+        surface.fill_rect(sheet, StudioTheme::paper());
+        surface.stroke_rounded_rect(sheet, 2.0, 1.0, StudioTheme::border_strong());
         surface.fill_rect(
             Rect::new(sheet.x + 7.0 * s, sheet.y + 9.0 * s, 28.0 * s, 3.0 * s),
-            DaylightTheme::WORD_ACCENT,
+            StudioTheme::word_accent(),
         );
         for ln in 0..4 {
             surface.fill_rect(
@@ -1490,7 +1585,7 @@ fn paint_home_hub(
                     sheet.w - 14.0 * s,
                     2.0,
                 ),
-                DaylightTheme::BORDER,
+                StudioTheme::border(),
             );
         }
 
@@ -1503,7 +1598,7 @@ fn paint_home_hub(
             tx,
             card.y + 32.0 * s,
             tw_avail,
-            DaylightTheme::INK,
+            StudioTheme::ink(),
             tpl.label(),
         );
         // 2-line clean subtitle wrap instead of truncated `...`
@@ -1515,7 +1610,7 @@ fn paint_home_hub(
             tx,
             card.y + 52.0 * s,
             tw_avail,
-            DaylightTheme::INK_SUB,
+            StudioTheme::ink_sub(),
             sub,
         );
         surface.draw_text(
@@ -1525,9 +1620,9 @@ fn paint_home_hub(
             tx,
             card.y + card.h - 16.0 * s,
             if hov {
-                DaylightTheme::RUST_ORANGE
+                StudioTheme::rust_orange()
             } else {
-                DaylightTheme::WORD_ACCENT
+                StudioTheme::word_accent()
             },
             "Create sheet ->",
         );
@@ -1570,13 +1665,13 @@ fn paint_toolbar_dropdown(
             let card = Rect::new(mx, my, mw, mh);
 
             surface.draw_paper_shadow(card, 6.0, 14.0, 24);
-            surface.fill_rounded_rect(card, 6.0, DaylightTheme::PAPER);
-            surface.stroke_rounded_rect(card, 6.0, 1.0, DaylightTheme::BORDER_STRONG);
+            surface.fill_rounded_rect(card, 6.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 6.0, 1.0, StudioTheme::border_strong());
 
             for (i, (st, label, fsz)) in items.iter().enumerate() {
                 let r = Rect::new(card.x + 6.0 * s, card.y + 6.0 * s + (i as f32) * row_h, mw - 12.0 * s, row_h);
                 if r.contains(app.mouse_x, app.mouse_y) {
-                    surface.fill_rounded_rect(r, 4.0, DaylightTheme::HOVER);
+                    surface.fill_rounded_rect(r, 4.0, StudioTheme::hover());
                 }
                 let slot = if st.is_bold_by_default() {
                     FontSlot::SansBold
@@ -1591,7 +1686,7 @@ fn paint_toolbar_dropdown(
                     (*fsz) * s,
                     r.x + 10.0 * s,
                     r.y + row_h * 0.68,
-                    DaylightTheme::INK,
+                    StudioTheme::ink(),
                     label,
                 );
                 app.hit_regions
@@ -1612,13 +1707,13 @@ fn paint_toolbar_dropdown(
             let card = Rect::new(mx, my, mw, mh);
 
             surface.draw_paper_shadow(card, 6.0, 14.0, 24);
-            surface.fill_rounded_rect(card, 6.0, DaylightTheme::PAPER);
-            surface.stroke_rounded_rect(card, 6.0, 1.0, DaylightTheme::BORDER_STRONG);
+            surface.fill_rounded_rect(card, 6.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 6.0, 1.0, StudioTheme::border_strong());
 
             for (i, (fam, label, slot)) in items.iter().enumerate() {
                 let r = Rect::new(card.x + 6.0 * s, card.y + 6.0 * s + (i as f32) * row_h, mw - 12.0 * s, row_h);
                 if r.contains(app.mouse_x, app.mouse_y) {
-                    surface.fill_rounded_rect(r, 4.0, DaylightTheme::HOVER);
+                    surface.fill_rounded_rect(r, 4.0, StudioTheme::hover());
                 }
                 surface.draw_text(
                     &mut app.fonts,
@@ -1626,7 +1721,7 @@ fn paint_toolbar_dropdown(
                     12.5 * s,
                     r.x + 10.0 * s,
                     r.y + row_h * 0.66,
-                    DaylightTheme::INK,
+                    StudioTheme::ink(),
                     label,
                 );
                 app.hit_regions
@@ -1685,8 +1780,8 @@ fn paint_toolbar_dropdown(
             }
 
             surface.draw_paper_shadow(card, 7.0, 16.0, 26);
-            surface.fill_rounded_rect(card, 7.0, DaylightTheme::PAPER);
-            surface.stroke_rounded_rect(card, 7.0, 1.0, DaylightTheme::BORDER_STRONG);
+            surface.fill_rounded_rect(card, 7.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 7.0, 1.0, StudioTheme::border_strong());
 
             // Header bar: title + live `R × C` pill readout
             surface.draw_text(
@@ -1695,7 +1790,7 @@ fn paint_toolbar_dropdown(
                 10.5 * s,
                 card.x + pad_x,
                 card.y + 22.0 * s,
-                DaylightTheme::INK_SUB,
+                StudioTheme::ink_sub(),
                 "INSERT TABLE",
             );
             let dim_lbl = format!("{sel_rows} × {sel_cols} Table");
@@ -1706,15 +1801,15 @@ fn paint_toolbar_dropdown(
                 dim_tw + 14.0 * s,
                 19.0 * s,
             );
-            surface.fill_rounded_rect(pill, 4.0, DaylightTheme::WORD_SOFT);
-            surface.stroke_rounded_rect(pill, 4.0, 1.0, DaylightTheme::WORD_ACCENT);
+            surface.fill_rounded_rect(pill, 4.0, StudioTheme::word_soft());
+            surface.stroke_rounded_rect(pill, 4.0, 1.0, StudioTheme::word_accent());
             surface.draw_text(
                 &mut app.fonts,
                 FontSlot::SansBold,
                 10.6 * s,
                 pill.x + 7.0 * s,
                 pill.y + pill.h * 0.72,
-                DaylightTheme::WORD_ACCENT,
+                StudioTheme::word_accent(),
                 &dim_lbl,
             );
 
@@ -1732,15 +1827,15 @@ fn paint_toolbar_dropdown(
                         if r == 0 {
                             Color::rgb(214, 228, 250)
                         } else {
-                            DaylightTheme::WORD_SOFT
+                            StudioTheme::word_soft()
                         }
                     } else {
-                        DaylightTheme::SIDEBAR
+                        StudioTheme::sidebar()
                     };
                     let stroke = if in_sel {
-                        DaylightTheme::WORD_ACCENT
+                        StudioTheme::word_accent()
                     } else {
-                        DaylightTheme::BORDER_STRONG
+                        StudioTheme::border_strong()
                     };
                     surface.fill_rounded_rect(cr, 3.0, fill);
                     surface.stroke_rounded_rect(cr, 3.0, if in_sel { 1.3 } else { 1.0 }, stroke);
@@ -1758,7 +1853,7 @@ fn paint_toolbar_dropdown(
             let sec_y = gy0 + grid_span + 10.0 * s;
             surface.fill_rect(
                 Rect::new(card.x + pad_x, sec_y, mw - pad_x * 2.0, 1.0),
-                DaylightTheme::BORDER,
+                StudioTheme::border(),
             );
             surface.draw_text(
                 &mut app.fonts,
@@ -1766,7 +1861,7 @@ fn paint_toolbar_dropdown(
                 9.6 * s,
                 card.x + pad_x,
                 sec_y + 15.0 * s,
-                DaylightTheme::INK_MUTED,
+                StudioTheme::ink_muted(),
                 "1-CLICK STYLED PRESETS",
             );
 
@@ -1780,8 +1875,8 @@ fn paint_toolbar_dropdown(
                 );
                 let hov = pr.contains(app.mouse_x, app.mouse_y);
                 if hov {
-                    surface.fill_rounded_rect(pr, 4.0, DaylightTheme::WORD_SOFT);
-                    surface.stroke_rounded_rect(pr, 4.0, 1.0, DaylightTheme::WORD_ACCENT);
+                    surface.fill_rounded_rect(pr, 4.0, StudioTheme::word_soft());
+                    surface.stroke_rounded_rect(pr, 4.0, 1.0, StudioTheme::word_accent());
                 }
                 surface.draw_text(
                     &mut app.fonts,
@@ -1790,9 +1885,9 @@ fn paint_toolbar_dropdown(
                     pr.x + 8.0 * s,
                     pr.y + pr.h * 0.68,
                     if hov {
-                        DaylightTheme::WORD_ACCENT
+                        StudioTheme::word_accent()
                     } else {
-                        DaylightTheme::INK
+                        StudioTheme::ink()
                     },
                     preset.label(),
                 );
@@ -1804,7 +1899,7 @@ fn paint_toolbar_dropdown(
                     10.0 * s,
                     pr.x + pr.w - bw - 8.0 * s,
                     pr.y + pr.h * 0.68,
-                    DaylightTheme::INK_SUB,
+                    StudioTheme::ink_sub(),
                     badge,
                 );
                 app.hit_regions
@@ -1820,7 +1915,7 @@ fn paint_toolbar_dropdown(
                 card.x + pad_x,
                 foot_y,
                 mw - pad_x * 2.0,
-                DaylightTheme::INK_MUTED,
+                StudioTheme::ink_muted(),
                 "Shortcuts: /table 4x5 · | A | B | · Ctrl+V TSV",
             );
         }
@@ -1828,16 +1923,16 @@ fn paint_toolbar_dropdown(
 }
 
 fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Rect) {
-    surface.fill_rect(bar, DaylightTheme::CHROME);
-    surface.fill_rect(Rect::new(bar.x, bar.y, bar.w, 1.0), DaylightTheme::BORDER);
+    surface.fill_rect(bar, StudioTheme::chrome());
+    surface.fill_rect(Rect::new(bar.x, bar.y, bar.w, 1.0), StudioTheme::border());
 
     surface.fill_rounded_rect(
         Rect::new(12.0, bar.y + bar.h * 0.5 - 3.5, 7.0, 7.0),
         3.5,
         if app.ai_dock.is_busy() || app.pending_doc_load.is_some() {
-            DaylightTheme::RUST_ORANGE
+            StudioTheme::rust_orange()
         } else {
-            DaylightTheme::SUCCESS
+            StudioTheme::success()
         },
     );
 
@@ -1849,7 +1944,7 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         26.0,
         bar.y + bar.h * 0.65,
         (bar.w - controls_w - 40.0).max(80.0),
-        DaylightTheme::INK_SUB,
+        StudioTheme::ink_sub(),
         &app.status_toast,
     );
 
@@ -1880,9 +1975,9 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         pill_r,
         4.0,
         if app.policy.air_gapped_mode {
-            DaylightTheme::PDF_SOFT
+            StudioTheme::pdf_soft()
         } else {
-            DaylightTheme::WORD_SOFT
+            StudioTheme::word_soft()
         },
     );
     surface.stroke_rounded_rect(
@@ -1890,9 +1985,9 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         4.0,
         1.0,
         if app.policy.air_gapped_mode {
-            DaylightTheme::PDF_ACCENT
+            StudioTheme::pdf_accent()
         } else {
-            DaylightTheme::WORD_ACCENT
+            StudioTheme::word_accent()
         },
     );
     let ptw = app.fonts.measure_text(FontSlot::MonoRegular, dlp_tag, 9.6 * s);
@@ -1903,9 +1998,9 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         pill_r.x + ((pill_r.w - ptw) * 0.5).max(4.0),
         pill_r.y + bh * 0.68,
         if app.policy.air_gapped_mode {
-            DaylightTheme::PDF_ACCENT
+            StudioTheme::pdf_accent()
         } else {
-            DaylightTheme::WORD_ACCENT
+            StudioTheme::word_accent()
         },
         dlp_tag,
     );
@@ -1925,8 +2020,8 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         ("UI+", 28.0 * s, CommandId::UiScaleUp),
     ] {
         let r = Rect::new(rx, by, w_px.round(), bh);
-        surface.fill_rounded_rect(r, 4.0, DaylightTheme::PAPER);
-        surface.stroke_rounded_rect(r, 4.0, 1.0, DaylightTheme::BORDER);
+        surface.fill_rounded_rect(r, 4.0, StudioTheme::paper());
+        surface.stroke_rounded_rect(r, 4.0, 1.0, StudioTheme::border());
         let tw = app.fonts.measure_text(FontSlot::MonoRegular, lbl, 10.0 * s);
         surface.draw_text(
             &mut app.fonts,
@@ -1934,7 +2029,7 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
             10.0 * s,
             r.x + (r.w - tw) * 0.5,
             r.y + bh * 0.68,
-            DaylightTheme::INK_SUB,
+            StudioTheme::ink_sub(),
             lbl,
         );
         app.hit_regions
@@ -1951,8 +2046,8 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         ("+", 24.0 * s, CommandId::ZoomIn),
     ] {
         let r = Rect::new(rx, by, w_px.round(), bh);
-        surface.fill_rounded_rect(r, 4.0, DaylightTheme::PAPER);
-        surface.stroke_rounded_rect(r, 4.0, 1.0, DaylightTheme::BORDER);
+        surface.fill_rounded_rect(r, 4.0, StudioTheme::paper());
+        surface.stroke_rounded_rect(r, 4.0, 1.0, StudioTheme::border());
         let tw = app.fonts.measure_text(FontSlot::MonoRegular, lbl, 10.4 * s);
         surface.draw_text(
             &mut app.fonts,
@@ -1960,7 +2055,7 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
             10.4 * s,
             r.x + (r.w - tw) * 0.5,
             r.y + bh * 0.68,
-            DaylightTheme::INK,
+            StudioTheme::ink(),
             lbl,
         );
         app.hit_regions
@@ -1975,15 +2070,15 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
     let vw = (app.fonts.measure_text(FontSlot::SansBold, &ver_lbl, 10.6 * s) + 16.0 * s).round();
     if rx + vw <= bar.w - 6.0 {
         let about_r = Rect::new(rx, by, vw, bh);
-        surface.fill_rounded_rect(about_r, 4.0, DaylightTheme::PAPER);
-        surface.stroke_rounded_rect(about_r, 4.0, 1.0, DaylightTheme::BORDER);
+        surface.fill_rounded_rect(about_r, 4.0, StudioTheme::paper());
+        surface.stroke_rounded_rect(about_r, 4.0, 1.0, StudioTheme::border());
         surface.draw_text(
             &mut app.fonts,
             FontSlot::SansBold,
             10.6 * s,
             about_r.x + 8.0 * s,
             about_r.y + bh * 0.68,
-            DaylightTheme::RUST_ORANGE,
+            StudioTheme::rust_orange(),
             &ver_lbl,
         );
         app.hit_regions.push(HitRegion::button(
@@ -1994,7 +2089,7 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
 }
 
 fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, screen: Rect) {
-    surface.fill_rect(screen, DaylightTheme::SCRIM);
+    surface.fill_rect(screen, StudioTheme::scrim());
 
     let Some(modal_snapshot) = app.modal.clone() else {
         return;
@@ -2008,12 +2103,12 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let card = Rect::new((screen.w - mw) * 0.5, (72.0 * s).min(screen.h * 0.12), mw, mh);
 
             surface.draw_paper_shadow(card, 8.0, 18.0, 32);
-            surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
-            surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
+            surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 8.0, 1.0, StudioTheme::border_strong());
 
             let input_r = Rect::new(card.x + 14.0 * s, card.y + 14.0 * s, card.w - 28.0 * s, 38.0 * s);
-            surface.fill_rounded_rect(input_r, 5.0, DaylightTheme::SIDEBAR);
-            surface.stroke_rounded_rect(input_r, 5.0, 1.5, DaylightTheme::WORD_ACCENT);
+            surface.fill_rounded_rect(input_r, 5.0, StudioTheme::sidebar());
+            surface.stroke_rounded_rect(input_r, 5.0, 1.5, StudioTheme::word_accent());
 
             let prompt = if q.is_empty() {
                 "Search 55+ studio commands (table, ai, pdf, split, zoom, convert)…".to_string()
@@ -2028,9 +2123,9 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 input_r.y + 24.0 * s,
                 input_r.w - 24.0 * s,
                 if q.is_empty() {
-                    DaylightTheme::INK_MUTED
+                    StudioTheme::ink_muted()
                 } else {
-                    DaylightTheme::INK
+                    StudioTheme::ink()
                 },
                 &prompt,
             );
@@ -2049,18 +2144,18 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                         row,
                         5.0,
                         if is_sel {
-                            DaylightTheme::WORD_SOFT
+                            StudioTheme::word_soft()
                         } else {
-                            DaylightTheme::HOVER
+                            StudioTheme::hover()
                         },
                     );
                 }
 
                 let cat_col = match cmd.category {
-                    "PDF" => DaylightTheme::PDF_ACCENT,
-                    "AI" => DaylightTheme::AI_ACCENT,
-                    "Table" | "Image" => DaylightTheme::RUST_ORANGE,
-                    _ => DaylightTheme::WORD_ACCENT,
+                    "PDF" => StudioTheme::pdf_accent(),
+                    "AI" => StudioTheme::ai_accent(),
+                    "Table" | "Image" => StudioTheme::rust_orange(),
+                    _ => StudioTheme::word_accent(),
                 };
                 surface.draw_text(
                     &mut app.fonts,
@@ -2078,7 +2173,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     row.x + 76.0 * s,
                     row.y + row.h * 0.66,
                     row.w - 156.0 * s,
-                    DaylightTheme::INK,
+                    StudioTheme::ink(),
                     cmd.title,
                 );
                 if !cmd.shortcut.is_empty() {
@@ -2089,7 +2184,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                         10.5 * s,
                         row.x + row.w - sw - 12.0 * s,
                         row.y + row.h * 0.66,
-                        DaylightTheme::INK_MUTED,
+                        StudioTheme::ink_muted(),
                         cmd.shortcut,
                     );
                 }
@@ -2113,8 +2208,8 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             }
 
             surface.draw_paper_shadow(card, 8.0, 18.0, 32);
-            surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
-            surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
+            surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 8.0, 1.0, StudioTheme::border_strong());
 
             surface.draw_text(
                 &mut app.fonts,
@@ -2122,7 +2217,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 15.0 * s,
                 card.x + 20.0 * s,
                 card.y + 28.0 * s,
-                DaylightTheme::INK,
+                StudioTheme::ink(),
                 "Draw Vector Ink Signature",
             );
             surface.draw_text(
@@ -2131,15 +2226,15 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 11.8 * s,
                 card.x + 20.0 * s,
                 card.y + 48.0 * s,
-                DaylightTheme::INK_SUB,
+                StudioTheme::ink_sub(),
                 &format!("Drag inside pad to sign as {signer}, then click Place Signature:"),
             );
 
-            surface.fill_rounded_rect(pad, 6.0, DaylightTheme::SIDEBAR);
-            surface.stroke_rounded_rect(pad, 6.0, 1.5, DaylightTheme::WORD_ACCENT);
+            surface.fill_rounded_rect(pad, 6.0, StudioTheme::sidebar());
+            surface.stroke_rounded_rect(pad, 6.0, 1.5, StudioTheme::word_accent());
             surface.fill_rect(
                 Rect::new(pad.x + 20.0, pad.y + pad.h - 32.0, pad.w - 40.0, 1.0),
-                DaylightTheme::BORDER_STRONG,
+                StudioTheme::border_strong(),
             );
 
             for stroke in &strokes_clone {
@@ -2150,7 +2245,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                         seg[1].0,
                         seg[1].1,
                         2.4,
-                        DaylightTheme::WORD_ACCENT,
+                        StudioTheme::word_accent(),
                     );
                 }
             }
@@ -2176,8 +2271,8 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
 
             surface.draw_paper_shadow(card, 8.0, 18.0, 32);
-            surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
-            surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
+            surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 8.0, 1.0, StudioTheme::border_strong());
 
             let title = match k {
                 FileModalKind::OpenAny => "Open Document (.docx, .pdf, .md)",
@@ -2193,13 +2288,13 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 15.0 * s,
                 card.x + 20.0 * s,
                 card.y + 30.0 * s,
-                DaylightTheme::INK,
+                StudioTheme::ink(),
                 title,
             );
 
             let box_r = Rect::new(card.x + 20.0 * s, card.y + 52.0 * s, card.w - 40.0 * s, 36.0 * s);
-            surface.fill_rounded_rect(box_r, 5.0, DaylightTheme::SIDEBAR);
-            surface.stroke_rounded_rect(box_r, 5.0, 1.5, DaylightTheme::WORD_ACCENT);
+            surface.fill_rounded_rect(box_r, 5.0, StudioTheme::sidebar());
+            surface.stroke_rounded_rect(box_r, 5.0, 1.5, StudioTheme::word_accent());
             surface.draw_text_clipped(
                 &mut app.fonts,
                 FontSlot::MonoRegular,
@@ -2207,7 +2302,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 box_r.x + 10.0 * s,
                 box_r.y + 23.0 * s,
                 box_r.w - 20.0 * s,
-                DaylightTheme::INK,
+                StudioTheme::ink(),
                 &format!("{inp}|"),
             );
 
@@ -2215,7 +2310,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             for cand in cands.iter().take(5) {
                 let row = Rect::new(card.x + 20.0 * s, cy, card.w - 40.0 * s, 28.0 * s);
                 if row.contains(app.mouse_x, app.mouse_y) {
-                    surface.fill_rounded_rect(row, 4.0, DaylightTheme::HOVER);
+                    surface.fill_rounded_rect(row, 4.0, StudioTheme::hover());
                 }
                 surface.draw_text_clipped(
                     &mut app.fonts,
@@ -2224,7 +2319,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     row.x + 8.0 * s,
                     row.y + 19.0 * s,
                     row.w - 16.0 * s,
-                    DaylightTheme::INK_SUB,
+                    StudioTheme::ink_sub(),
                     &cand.display().to_string(),
                 );
                 app.hit_regions.push(HitRegion::button(
@@ -2256,8 +2351,8 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
 
             surface.draw_paper_shadow(card, 8.0, 18.0, 32);
-            surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
-            surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
+            surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 8.0, 1.0, StudioTheme::border_strong());
 
             surface.draw_text(
                 &mut app.fonts,
@@ -2265,7 +2360,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 15.0 * s,
                 card.x + 20.0 * s,
                 card.y + 30.0 * s,
-                DaylightTheme::INK,
+                StudioTheme::ink(),
                 &format!("Find & Replace ({mc} matches)"),
             );
 
@@ -2275,15 +2370,15 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 (f_box, "Find:", &ft, !repl_focus, false),
                 (r_box, "Replace:", &rt, repl_focus, true),
             ] {
-                surface.fill_rounded_rect(bx, 5.0, DaylightTheme::SIDEBAR);
+                surface.fill_rounded_rect(bx, 5.0, StudioTheme::sidebar());
                 surface.stroke_rounded_rect(
                     bx,
                     5.0,
                     if active { 1.5 } else { 1.0 },
                     if active {
-                        DaylightTheme::WORD_ACCENT
+                        StudioTheme::word_accent()
                     } else {
-                        DaylightTheme::BORDER
+                        StudioTheme::border()
                     },
                 );
                 surface.draw_text(
@@ -2292,7 +2387,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     11.5 * s,
                     bx.x + 10.0 * s,
                     bx.y + 23.0 * s,
-                    DaylightTheme::INK_MUTED,
+                    StudioTheme::ink_muted(),
                     lbl,
                 );
                 let disp = if active { format!("{val}|") } else { val.clone() };
@@ -2303,7 +2398,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     bx.x + 78.0 * s,
                     bx.y + 23.0 * s,
                     bx.w - 88.0 * s,
-                    DaylightTheme::INK,
+                    StudioTheme::ink(),
                     &disp,
                 );
                 app.hit_regions
@@ -2387,8 +2482,8 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
 
             surface.draw_paper_shadow(card, 8.0, 18.0, 32);
-            surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
-            surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
+            surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 8.0, 1.0, StudioTheme::border_strong());
 
             surface.draw_text(
                 &mut app.fonts,
@@ -2396,7 +2491,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 15.2 * s,
                 card.x + 20.0 * s,
                 card.y + 30.0 * s,
-                DaylightTheme::INK,
+                StudioTheme::ink(),
                 "Enterprise DLP Governance & SHA-256 Audit Chain",
             );
 
@@ -2425,7 +2520,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     card.x + 20.0 * s,
                     my,
                     card.w - 40.0 * s,
-                    DaylightTheme::INK,
+                    StudioTheme::ink(),
                     ln,
                 );
                 my += 19.0 * s;
@@ -2433,7 +2528,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
 
             surface.fill_rect(
                 Rect::new(card.x + 20.0 * s, my + 2.0 * s, card.w - 40.0 * s, 1.0),
-                DaylightTheme::BORDER,
+                StudioTheme::border(),
             );
             my += 20.0 * s;
             surface.draw_text(
@@ -2442,7 +2537,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 10.5 * s,
                 card.x + 20.0 * s,
                 my,
-                DaylightTheme::INK_MUTED,
+                StudioTheme::ink_muted(),
                 "RECENT HASH-CHAINED AUDIT TRAIL",
             );
             my += 12.0 * s;
@@ -2465,7 +2560,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
 
             for (seq, act, subj, short_hash) in recent_events {
                 let row = Rect::new(card.x + 20.0 * s, my, card.w - 40.0 * s, 28.0 * s);
-                surface.fill_rounded_rect(row, 4.0, DaylightTheme::SIDEBAR);
+                surface.fill_rounded_rect(row, 4.0, StudioTheme::sidebar());
                 surface.draw_text_clipped(
                     &mut app.fonts,
                     FontSlot::MonoRegular,
@@ -2473,7 +2568,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     row.x + 10.0 * s,
                     row.y + 18.5 * s,
                     row.w - 20.0 * s,
-                    DaylightTheme::INK_SUB,
+                    StudioTheme::ink_sub(),
                     &format!("#{seq:02} {act} · {subj} [{short_hash}…]"),
                 );
                 my += 32.0 * s;
@@ -2511,8 +2606,8 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
 
             surface.draw_paper_shadow(card, 8.0, 18.0, 32);
-            surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
-            surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
+            surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 8.0, 1.0, StudioTheme::border_strong());
 
             surface.draw_text(
                 &mut app.fonts,
@@ -2520,7 +2615,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 15.0 * s,
                 card.x + 20.0 * s,
                 card.y + 30.0 * s,
-                DaylightTheme::INK,
+                StudioTheme::ink(),
                 "Local Time-Machine Version History",
             );
 
@@ -2532,14 +2627,14 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     12.5 * s,
                     card.x + 20.0 * s,
                     sy + 20.0 * s,
-                    DaylightTheme::INK_SUB,
+                    StudioTheme::ink_sub(),
                     "Open a Word (.docx) tab to capture & restore snapshots.",
                 );
             } else {
                 for (id, label, wc, bytes) in entries.iter().take(5) {
                     let row = Rect::new(card.x + 20.0 * s, sy, card.w - 40.0 * s, 40.0 * s);
-                    surface.fill_rounded_rect(row, 5.0, DaylightTheme::SIDEBAR);
-                    surface.stroke_rounded_rect(row, 5.0, 1.0, DaylightTheme::BORDER);
+                    surface.fill_rounded_rect(row, 5.0, StudioTheme::sidebar());
+                    surface.stroke_rounded_rect(row, 5.0, 1.0, StudioTheme::border());
                     surface.draw_text_clipped(
                         &mut app.fonts,
                         FontSlot::SansBold,
@@ -2547,7 +2642,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                         row.x + 12.0 * s,
                         row.y + 18.0 * s,
                         row.w - 120.0 * s,
-                        DaylightTheme::INK,
+                        StudioTheme::ink(),
                         &format!("#{id} · {label} ({wc} words, {bytes} B)"),
                     );
                     surface.draw_text(
@@ -2556,7 +2651,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                         11.0 * s,
                         row.x + row.w - 86.0 * s,
                         row.y + 23.0 * s,
-                        DaylightTheme::WORD_ACCENT,
+                        StudioTheme::word_accent(),
                         "Restore ->",
                     );
                     app.hit_regions
@@ -2579,14 +2674,187 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             );
         }
 
+        ActiveModal::DocumentInspector => {
+            let mw = (590.0 * s).min(screen.w - 32.0);
+            let mh = (420.0 * s).min(screen.h - 36.0);
+            let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
+
+            surface.draw_paper_shadow(card, 8.0, 18.0, 32);
+            surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 8.0, 1.0, StudioTheme::border_strong());
+
+            surface.draw_icon(
+                UiIcon::Shield,
+                card.x + 28.0 * s,
+                card.y + 30.0 * s,
+                16.0 * s,
+                StudioTheme::word_accent(),
+            );
+            surface.draw_text(
+                &mut app.fonts,
+                FontSlot::SansBold,
+                15.5 * s,
+                card.x + 44.0 * s,
+                card.y + 35.0 * s,
+                StudioTheme::ink(),
+                "Document Intelligence, Security & Quality Inspector (v3.0)",
+            );
+            surface.draw_text(
+                &mut app.fonts,
+                FontSlot::SansRegular,
+                11.5 * s,
+                card.x + 22.0 * s,
+                card.y + 56.0 * s,
+                StudioTheme::ink_sub(),
+                "100% Offline ECMA-376 Structural Validation · Hidden Layer Detection · Consistency & Link Audit",
+            );
+
+            let mut report_lines: Vec<(String, Color)> = Vec::new();
+            if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+                let compact_bytes = if w.doc.estimated_media_bytes() <= 8 * 1024 * 1024 {
+                    Some(save_docx_bytes(&w.doc))
+                } else {
+                    None
+                };
+                if let Some(raw) = &compact_bytes {
+                    let val = validate_docx_bytes(raw);
+                    report_lines.push((
+                        format!(
+                            "OOXML Package Validation: {} ({} archive entries, {} errors, {} warnings)",
+                            if val.is_valid { "PASS" } else { "ISSUES FOUND" },
+                            val.archive_entries,
+                            val.error_count(),
+                            val.warning_count()
+                        ),
+                        if val.is_valid {
+                            StudioTheme::success()
+                        } else {
+                            StudioTheme::pdf_accent()
+                        },
+                    ));
+                } else {
+                    report_lines.push((
+                        "OOXML Package Mode: Large Media Streaming (>8 MB — zero-copy passthrough active)".into(),
+                        StudioTheme::word_accent(),
+                    ));
+                }
+
+                let sec = inspect_security_and_hidden(&w.doc, compact_bytes.as_deref());
+                let cons = inspect_formatting_consistency(&w.doc);
+                let dups = detect_duplicate_paragraphs(&w.doc, 24);
+                let broken = detect_broken_links(&w.doc, w.path.as_deref().and_then(|p| p.parent()));
+
+                report_lines.push((
+                    format!(
+                        "Hidden & Privacy Surface: {} hidden runs · {} stealth white runs · {} customXml · {} external rels",
+                        sec.hidden_runs_count,
+                        sec.white_on_white_runs_count,
+                        sec.custom_xml_parts,
+                        w.doc.extra_relationships.len()
+                    ),
+                    if sec.findings.is_empty() {
+                        StudioTheme::ink()
+                    } else {
+                        StudioTheme::rust_orange()
+                    },
+                ));
+                report_lines.push((
+                    format!(
+                        "Notes & Revisions: {} footnotes · {} endnotes · {} comments · Track Changes: {}",
+                        w.doc.footnotes.len(),
+                        w.doc.endnotes.len(),
+                        w.doc.comments.len(),
+                        if w.doc.track_changes { "ON" } else { "OFF" }
+                    ),
+                    StudioTheme::ink(),
+                ));
+                report_lines.push((
+                    format!(
+                        "Formatting Consistency: {} style/heading/spacing finding(s)",
+                        cons.len()
+                    ),
+                    StudioTheme::ink(),
+                ));
+                report_lines.push((
+                    format!(
+                        "Quality Diagnostics: {} duplicate paragraph group(s) · {} broken hyperlink(s)",
+                        dups.len(),
+                        broken.len()
+                    ),
+                    if broken.is_empty() {
+                        StudioTheme::ink()
+                    } else {
+                        StudioTheme::pdf_accent()
+                    },
+                ));
+                for f in sec.findings.iter().take(3) {
+                    report_lines.push((
+                        format!("  ! [{}] {}", f.category, f.detail),
+                        StudioTheme::rust_orange(),
+                    ));
+                }
+                for bl in broken.iter().take(2) {
+                    report_lines.push((
+                        format!("  ! Broken Link '{}': {}", bl.link_target, bl.reason),
+                        StudioTheme::pdf_accent(),
+                    ));
+                }
+            } else {
+                report_lines.push((
+                    "Switch to an open Word (.docx) tab to run full OOXML intelligence & privacy inspection.".into(),
+                    StudioTheme::ink_sub(),
+                ));
+            }
+
+            let box_r = Rect::new(
+                card.x + 20.0 * s,
+                card.y + 72.0 * s,
+                card.w - 40.0 * s,
+                card.h - 134.0 * s,
+            );
+            surface.fill_rounded_rect(box_r, 6.0, StudioTheme::sidebar());
+            surface.stroke_rounded_rect(box_r, 6.0, 1.0, StudioTheme::border());
+
+            let mut ly = box_r.y + 22.0 * s;
+            for (txt, col) in report_lines {
+                if ly > box_r.y + box_r.h - 10.0 * s {
+                    break;
+                }
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::MonoRegular,
+                    10.8 * s,
+                    box_r.x + 12.0 * s,
+                    ly,
+                    box_r.w - 24.0 * s,
+                    col,
+                    &txt,
+                );
+                ly += 21.0 * s;
+            }
+
+            draw_modal_footer_buttons(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                s,
+                card,
+                Some((
+                    "Scrub Metadata & Strip Hidden",
+                    UiAction::ExecCommand(CommandId::CleanDocumentPrivacy),
+                )),
+                ("Done", UiAction::ModalClose),
+            );
+        }
+
         ActiveModal::About => {
             let mw = (480.0 * s).min(screen.w - 32.0);
             let mh = 264.0 * s;
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
 
             surface.draw_paper_shadow(card, 8.0, 18.0, 32);
-            surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
-            surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
+            surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 8.0, 1.0, StudioTheme::border_strong());
 
             surface.draw_logo_64((card.x + 22.0 * s) as i32, (card.y + 22.0 * s) as i32);
             surface.draw_text(
@@ -2595,7 +2863,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 17.5 * s,
                 card.x + 98.0 * s,
                 card.y + 44.0 * s,
-                DaylightTheme::INK,
+                StudioTheme::ink(),
                 &format!("RustPad v{}", env!("CARGO_PKG_VERSION")),
             );
             surface.draw_text(
@@ -2604,7 +2872,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 12.2 * s,
                 card.x + 98.0 * s,
                 card.y + 66.0 * s,
-                DaylightTheme::INK_SUB,
+                StudioTheme::ink_sub(),
                 "Ultra-Smooth 60–120Hz Native Word (.docx), PDF & Local AI Studio",
             );
 
@@ -2623,7 +2891,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     card.x + 24.0 * s,
                     ly,
                     card.w - 48.0 * s,
-                    DaylightTheme::INK,
+                    StudioTheme::ink(),
                     ln,
                 );
                 ly += 20.0 * s;
@@ -2659,8 +2927,8 @@ fn paint_single_input_modal(
     let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
 
     surface.draw_paper_shadow(card, 8.0, 18.0, 32);
-    surface.fill_rounded_rect(card, 8.0, DaylightTheme::PAPER);
-    surface.stroke_rounded_rect(card, 8.0, 1.0, DaylightTheme::BORDER_STRONG);
+    surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
+    surface.stroke_rounded_rect(card, 8.0, 1.0, StudioTheme::border_strong());
 
     surface.draw_text(
         fonts,
@@ -2668,7 +2936,7 @@ fn paint_single_input_modal(
         15.0 * s,
         card.x + 20.0 * s,
         card.y + 30.0 * s,
-        DaylightTheme::INK,
+        StudioTheme::ink(),
         title,
     );
     surface.draw_text(
@@ -2677,13 +2945,13 @@ fn paint_single_input_modal(
         12.0 * s,
         card.x + 20.0 * s,
         card.y + 52.0 * s,
-        DaylightTheme::INK_SUB,
+        StudioTheme::ink_sub(),
         subtitle,
     );
 
     let box_r = Rect::new(card.x + 20.0 * s, card.y + 72.0 * s, card.w - 40.0 * s, 38.0 * s);
-    surface.fill_rounded_rect(box_r, 5.0, DaylightTheme::SIDEBAR);
-    surface.stroke_rounded_rect(box_r, 5.0, 1.5, DaylightTheme::WORD_ACCENT);
+    surface.fill_rounded_rect(box_r, 5.0, StudioTheme::sidebar());
+    surface.stroke_rounded_rect(box_r, 5.0, 1.5, StudioTheme::word_accent());
     surface.draw_text_clipped(
         fonts,
         FontSlot::MonoRegular,
@@ -2691,7 +2959,7 @@ fn paint_single_input_modal(
         box_r.x + 10.0 * s,
         box_r.y + 24.0 * s,
         box_r.w - 20.0 * s,
-        DaylightTheme::INK,
+        StudioTheme::ink(),
         &format!("{val}|"),
     );
 
@@ -2721,15 +2989,15 @@ fn draw_modal_footer_buttons(
     if let Some((lbl, act)) = extra_left {
         let lw = fonts.measure_text(FontSlot::SansBold, lbl, 11.8 * s) + 22.0 * s;
         let er = Rect::new(card.x + 20.0 * s, by, lw, bh);
-        surface.fill_rounded_rect(er, 5.0, DaylightTheme::SIDEBAR);
-        surface.stroke_rounded_rect(er, 5.0, 1.0, DaylightTheme::BORDER);
+        surface.fill_rounded_rect(er, 5.0, StudioTheme::sidebar());
+        surface.stroke_rounded_rect(er, 5.0, 1.0, StudioTheme::border());
         surface.draw_text(
             fonts,
             FontSlot::SansBold,
             11.8 * s,
             er.x + 11.0 * s,
             er.y + bh * 0.66,
-            DaylightTheme::INK,
+            StudioTheme::ink(),
             lbl,
         );
         hit_regions.push(HitRegion::button(er, act));
@@ -2739,27 +3007,27 @@ fn draw_modal_footer_buttons(
     let confirm_r = Rect::new(card.x + card.w - cw - 20.0 * s, by, cw, bh);
     let cancel_r = Rect::new(confirm_r.x - 86.0 * s, by, 78.0 * s, bh);
 
-    surface.fill_rounded_rect(cancel_r, 5.0, DaylightTheme::PAPER);
-    surface.stroke_rounded_rect(cancel_r, 5.0, 1.0, DaylightTheme::BORDER);
+    surface.fill_rounded_rect(cancel_r, 5.0, StudioTheme::paper());
+    surface.stroke_rounded_rect(cancel_r, 5.0, 1.0, StudioTheme::border());
     surface.draw_text(
         fonts,
         FontSlot::SansBold,
         11.8 * s,
         cancel_r.x + 16.0 * s,
         cancel_r.y + bh * 0.66,
-        DaylightTheme::INK_SUB,
+        StudioTheme::ink_sub(),
         "Cancel",
     );
     hit_regions.push(HitRegion::button(cancel_r, UiAction::ModalClose));
 
-    surface.fill_rounded_rect(confirm_r, 5.0, DaylightTheme::WORD_ACCENT);
+    surface.fill_rounded_rect(confirm_r, 5.0, StudioTheme::word_accent());
     surface.draw_text(
         fonts,
         FontSlot::SansBold,
         11.8 * s,
         confirm_r.x + 12.0 * s,
         confirm_r.y + bh * 0.66,
-        DaylightTheme::PAPER,
+        StudioTheme::paper(),
         confirm.0,
     );
     hit_regions.push(HitRegion::button(confirm_r, confirm.1));

@@ -13,7 +13,9 @@ pub use deflate::{deflate_compress, zlib_compress};
 pub use inflate::{
     deflate_decompress, deflate_decompress_bounded, zlib_decompress, zlib_decompress_bounded,
 };
-pub use zip_archive::{ArchiveSecurityLimits, LazyZipArchive, ZipArchive, ZipWriter};
+pub use zip_archive::{
+    salvage_corrupt_zip_entries, ArchiveSecurityLimits, LazyZipArchive, ZipArchive, ZipWriter,
+};
 
 /// Reference-counted immutable byte slice (`O(1)` clone, `O(1)` zero-copy sub-slicing, `Send + Sync`)
 /// so a 30–200+ MB `.docx` file can be read once into a single `Arc<[u8]>` while every embedded

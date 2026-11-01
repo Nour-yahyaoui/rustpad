@@ -400,6 +400,74 @@ impl LazyZipArchive {
         };
         Ok(Some(decode_xml_text_bytes(&bytes)))
     }
+
+    /// Verifies CRC32 and decompression integrity of every entry in the archive,
+    /// returning human-readable diagnostics for any corrupted streams.
+    pub fn verify_all_entries(&self) -> Vec<String> {
+        let mut issues = Vec::new();
+        for name in &self.order {
+            if let Err(e) = self.get_shared_opts(name, true) {
+                issues.push(format!("{name}: {}", e.0));
+            }
+        }
+        issues
+    }
+}
+
+/// Salvages readable entries directly from Local File Headers (`PK\x03\x04`) when an archive's
+/// Central Directory or EOCD trailer is truncated or corrupted (used by `repair_docx_bytes`).
+pub fn salvage_corrupt_zip_entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let mut recovered: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut i = 0usize;
+    while i + 30 <= bytes.len() {
+        if bytes[i..i + 4] != [0x50, 0x4B, 0x03, 0x04] {
+            i += 1;
+            continue;
+        }
+        let method = u16::from_le_bytes([bytes[i + 8], bytes[i + 9]]);
+        let comp_size = u32::from_le_bytes([
+            bytes[i + 18],
+            bytes[i + 19],
+            bytes[i + 20],
+            bytes[i + 21],
+        ]) as usize;
+        let name_len = u16::from_le_bytes([bytes[i + 26], bytes[i + 27]]) as usize;
+        let extra_len = u16::from_le_bytes([bytes[i + 28], bytes[i + 29]]) as usize;
+        let name_start = i + 30;
+        let Some(data_start) = name_start.checked_add(name_len).and_then(|v| v.checked_add(extra_len)) else {
+            break;
+        };
+        if name_start + name_len > bytes.len() || data_start > bytes.len() {
+            break;
+        }
+        let raw_name = String::from_utf8_lossy(&bytes[name_start..name_start + name_len]).into_owned();
+        if raw_name.is_empty()
+            || raw_name.contains("..")
+            || raw_name.starts_with('/')
+            || raw_name.contains('\\')
+        {
+            i = data_start;
+            continue;
+        }
+        let avail_end = data_start.saturating_add(comp_size).min(bytes.len());
+        let slice = &bytes[data_start..avail_end];
+        let unpacked = match method {
+            0 if !slice.is_empty() || comp_size == 0 => Some(slice.to_vec()),
+            8 => deflate_decompress_bounded(slice, 128 * 1024 * 1024).ok(),
+            _ => None,
+        };
+        if let Some(data) = unpacked {
+            if !raw_name.ends_with('/') {
+                recovered.push((raw_name, data));
+            }
+        }
+        i = if comp_size > 0 && avail_end > i {
+            avail_end
+        } else {
+            data_start.max(i + 4)
+        };
+    }
+    recovered
 }
 
 fn decode_xml_text_bytes(b: &[u8]) -> String {
@@ -507,7 +575,7 @@ impl ZipArchive {
 
 #[derive(Default)]
 pub struct ZipWriter {
-    entries: Vec<(String, Vec<u8>)>,
+    entries: Vec<(String, Vec<u8>, bool)>,
 }
 
 fn is_precompressed_media(name: &str, raw: &[u8]) -> bool {
@@ -535,20 +603,29 @@ impl ZipWriter {
         }
     }
 
-    pub fn add_file(&mut self, name: impl Into<String>, data: Vec<u8>) {
-        self.entries.push((name.into(), data));
+    pub fn add_file(&mut self, name: impl Into<String>, data: impl Into<Vec<u8>>) {
+        self.entries.push((name.into(), data.into(), false));
+    }
+
+    /// Emits an archive entry using `STORED` (`method == 0`) with zero LZ77 compression overhead.
+    pub fn add_stored(&mut self, name: impl Into<String>, data: impl Into<Vec<u8>>) {
+        self.entries.push((name.into(), data.into(), true));
     }
 
     pub fn finish(&self) -> Vec<u8> {
-        let total_hint: usize = self.entries.iter().map(|(n, d)| n.len() + d.len() + 96).sum();
+        let total_hint: usize = self
+            .entries
+            .iter()
+            .map(|(n, d, _)| n.len() + d.len() + 96)
+            .sum();
         let mut buf = Vec::with_capacity(total_hint.min(128 * 1024 * 1024));
         let mut cd = Vec::with_capacity(self.entries.len() * 72);
 
-        for (name, raw) in &self.entries {
+        for (name, raw, force_stored) in &self.entries {
             let local_offset = buf.len() as u32;
             let crc = crc32(raw);
-            // Skip O(N) LZ77 DEFLATE pass on already-compressed PNG/JPEG/WebP media (~500x faster on 30MB+ .docx!)
-            let deflated_opt = if is_precompressed_media(name, raw) {
+            // Skip O(N) LZ77 DEFLATE pass on STORED or already-compressed PNG/JPEG/WebP media (~500x faster on 30MB+ .docx!)
+            let deflated_opt = if *force_stored || is_precompressed_media(name, raw) {
                 None
             } else {
                 let d = deflate_compress(raw);

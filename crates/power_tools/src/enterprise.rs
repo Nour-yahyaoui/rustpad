@@ -344,7 +344,7 @@ impl WalJournal {
         let mut frame = Vec::with_capacity(header.len() + payload.len());
         frame.extend_from_slice(header.as_bytes());
         frame.extend_from_slice(&payload);
-        std::fs::write(journal_path, frame).map_err(|e| e.to_string())?;
+        crate::security::write_bytes_secure_atomic(journal_path, &frame)?;
         Ok(digest)
     }
 
@@ -494,6 +494,14 @@ pub fn build_document_a11y_tree(doc: &Document) -> AccessibilityNode {
                 children.push(AccessibilityNode {
                     role: "Separator",
                     name: "Page Break".into(),
+                    value: String::new(),
+                    children: Vec::new(),
+                });
+            }
+            Block::SectionBreak(kind) => {
+                children.push(AccessibilityNode {
+                    role: "Separator",
+                    name: format!("Section Break ({})", kind.label()),
                     value: String::new(),
                     children: Vec::new(),
                 });

@@ -62,6 +62,26 @@ pub fn export_document_to_pdf_bytes(doc: &Document, opts: &PdfCreateOptions) -> 
             Block::PageBreak => {
                 start_new_page(&mut page_streams, &mut cursor_y);
             }
+            Block::SectionBreak(kind) => {
+                if *kind == doc_model::SectionBreakKind::Continuous {
+                    if cursor_y - 20.0 < m_bot {
+                        start_new_page(&mut page_streams, &mut cursor_y);
+                    }
+                    cursor_y -= 10.0;
+                    let s = page_streams.last_mut().unwrap();
+                    let _ = writeln!(
+                        s,
+                        "q 0.85 0.88 0.92 RG 0.5 w [3 3] 0 d {:.2} {:.2} m {:.2} {:.2} l S Q",
+                        m_left,
+                        cursor_y,
+                        page_w - m_right,
+                        cursor_y
+                    );
+                    cursor_y -= 12.0;
+                } else {
+                    start_new_page(&mut page_streams, &mut cursor_y);
+                }
+            }
             Block::HorizontalRule => {
                 if cursor_y - 18.0 < m_bot {
                     start_new_page(&mut page_streams, &mut cursor_y);
@@ -172,6 +192,60 @@ pub fn export_document_to_pdf_bytes(doc: &Document, opts: &PdfCreateOptions) -> 
                 }
                 cursor_y = y_bot - caption_h - 12.0;
             }
+        }
+    }
+
+    // Render footnotes & endnotes section if present
+    if !doc.footnotes.is_empty() || !doc.endnotes.is_empty() {
+        if cursor_y - 36.0 < m_bot {
+            start_new_page(&mut page_streams, &mut cursor_y);
+        }
+        cursor_y -= 10.0;
+        {
+            let s = page_streams.last_mut().unwrap();
+            let _ = writeln!(
+                s,
+                "q 0.72 0.78 0.85 RG 0.7 w {:.2} {:.2} m {:.2} {:.2} l S Q",
+                m_left,
+                cursor_y,
+                m_left + content_w * 0.35,
+                cursor_y
+            );
+        }
+        cursor_y -= 10.0;
+        for n in &doc.footnotes {
+            let note_para = Paragraph::new(
+                ParagraphStyle::Normal,
+                format!("[{}] {}", n.id, n.text.trim()),
+            );
+            render_paragraph_pdf(
+                &note_para,
+                false,
+                m_left,
+                content_w,
+                page_h,
+                m_top,
+                m_bot,
+                &mut cursor_y,
+                &mut page_streams,
+            );
+        }
+        for n in &doc.endnotes {
+            let note_para = Paragraph::new(
+                ParagraphStyle::Normal,
+                format!("[e{}] {}", n.id, n.text.trim()),
+            );
+            render_paragraph_pdf(
+                &note_para,
+                false,
+                m_left,
+                content_w,
+                page_h,
+                m_top,
+                m_bot,
+                &mut cursor_y,
+                &mut page_streams,
+            );
         }
     }
 
@@ -313,6 +387,9 @@ fn render_paragraph_pdf(
     // Tokenize into words preserving SpanStyle (and redline markup if enabled)
     let mut tokens: Vec<WordToken> = Vec::new();
     for span in &p.spans {
+        if span.style.hidden {
+            continue;
+        }
         let mut span_style = span.style.clone();
         if let Some(rev) = &span.revision {
             match rev.kind {

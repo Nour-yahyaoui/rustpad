@@ -1,5 +1,5 @@
-//! RustPad v2.0 Enterprise (`rustpad`) — Offline-First Pure-Rust Native Word (`.docx`),
-//! Forensic Vector PDF (`.pdf`), DLP-Governed Local AI Desktop Suite & Enterprise CLI.
+//! RustPad v3.0 Enterprise (`rustpad`) — Offline-First Pure-Rust Native Word (`.docx`),
+//! Native Dark Mode, OOXML Intelligence, Forensic PDF (`.pdf`), DLP Local AI & CLI Suite.
 //! Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
 
 pub mod commands;
@@ -9,20 +9,30 @@ pub mod ui_paint;
 pub mod word_view;
 
 use crate::commands::CommandId;
-use crate::state::{ActiveModal, PdfTabState, RustPadApp, StudioTab, WordTabState};
+use crate::state::{PdfTabState, RustPadApp, StudioTab, WordTabState};
 use crate::ui_paint::render_app;
-use doc_model::{Document, RgbColor, TemplateKind};
-use docx_io::{load_docx_file, save_docx_file};
+use doc_model::{
+    compare_documents, diff_redline_char_level, merge_two_documents, smart_merge_documents,
+    Document, MergeStrategy, RgbColor, TemplateKind,
+};
+use docx_io::{
+    inspect_formatting_consistency, inspect_security_and_hidden, load_docx_file, repair_docx_file,
+    save_docx_file, validate_docx_file,
+};
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
 use pdf_engine::{
     load_pdf_file, save_pdf_file, seal_pdf_bytes, verify_pdf_seal_bytes, PdfAnnotation, PdfDocument,
 };
 use power_tools::{
-    build_document_a11y_tree, convert_file, extract_text_ocr_or_pdf, generate_cyclonedx_sbom_json,
-    parse_ai_output_to_blocks, run_ai_task, word_to_markdown, word_to_pdf_document, AiAgentConfig,
-    AiProviderPreset, AiTask, EnterprisePolicy,
+    build_document_a11y_tree, clean_docx_file_metadata, convert_file, detect_broken_links,
+    detect_duplicate_paragraphs, extract_text_ocr_or_pdf, generate_cyclonedx_sbom_json,
+    parse_ai_output_to_blocks, redact_docx_file, run_ai_task, run_batch_docx_job, word_to_html,
+    word_to_markdown, word_to_pdf_document, AiAgentConfig, AiProviderPreset, AiTask,
+    BatchOperation, EnterprisePolicy, MetadataCleanOptions, RedactionOptions,
 };
-use rustpad_render::{encode_surface_png, DaylightTheme, Surface};
+use rustpad_render::{
+    encode_surface_png, set_active_theme_mode, StudioTheme, Surface, ThemeMode,
+};
 use rustpad_window::{
     run_native_window, AppControl, CursorShape, DesktopAppHandler, WindowEvent,
 };
@@ -37,7 +47,7 @@ impl DesktopAppHandler for NativeAppRunner {
     fn on_event(&mut self, event: WindowEvent, surface: &mut Surface) -> AppControl {
         match event {
             WindowEvent::Resize { width, height } => {
-                surface.resize(width, height, DaylightTheme::DESK_BG);
+                surface.resize(width, height, StudioTheme::desk_bg());
                 AppControl::Redraw
             }
             WindowEvent::MouseMove { x, y, .. } => {
@@ -102,29 +112,37 @@ impl DesktopAppHandler for NativeAppRunner {
 fn print_help() {
     println!(
         "\
-RustPad v{ver} Enterprise — Offline-First Native Word (.docx), Forensic PDF & Local AI Suite
+RustPad v{ver} — Native Dark Mode, OOXML Intelligence, Forensic PDF & Local AI Suite
 Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
 
 USAGE:
-  rustpad [FILE]                              Launch native desktop studio (0 crates.io deps)
-  rustpad redline <BASE.docx> <NEW.docx> -o <OUT.docx> [--author NAME]
+  rustpad [FILE]                              Launch native desktop studio (Ctrl+Shift+D Dark Mode)
+  rustpad validate <FILE.docx>                Validate PKZIP CRC32, ECMA-376 XML & relationships
+  rustpad repair <CORRUPT.docx> -o <OUT.docx> Salvage & rebuild a truncated or corrupt .docx package
+  rustpad compare <BASE.docx> <NEW.docx>      Char-level, paragraph, formatting & structural diff
+  rustpad redline <BASE.docx> <NEW.docx> -o <OUT.docx> [--author NAME] [--char-level]
                                               Generate ECMA-376 legal redline (<w:ins>/<w:del>)
+  rustpad merge <OUT.docx> <BASE.docx> <THEIRS.docx> [<OURS.docx>] [--strategy annotate|ours|theirs]
+  rustpad merge <OUT.pdf> <IN1.pdf> <IN2.pdf>...
+                                              Smart 2/3-way .docx merge OR multi-PDF vector merge
+  rustpad redact <IN.docx|.pdf> -o <OUT> [--term TEXT]... [--pii]
+                                              Permanent .docx PII/text redaction or PDF sanitize
+  rustpad clean-meta <IN.docx> -o <OUT.docx>  Scrub metadata, hidden text, comments & remote links
   rustpad sanitize <IN.pdf> -o <OUT.pdf>      Forensically purge redacted PDF text & metadata
   rustpad sign <IN.pdf> -o <OUT.pdf> [--signer NAME] [--pdfa]
                                               Embed SHA-256 tamper-evident seal & PDF/A-2b XMP
   rustpad verify <FILE.pdf>                   Verify cryptographic SHA-256 PDF seal integrity
+  rustpad convert <INPUT> <OUTPUT>            Convert between .docx, .pdf, .html, .md, and .txt
+  rustpad inspect [--a11y|--security|--quality] <FILE>
+                                              Inspect metrics, security/hidden layers, quality, or a11y
+  rustpad ocr <FILE>                          Offline text extraction (PDF / Tesseract / Pure-Rust OCR)
+  rustpad batch <validate|clean-meta|pdf|md|html> <IN_DIR> [-o <OUT_DIR>]
+                                              Offline batch .docx processor across a directory
   rustpad sbom [-o sbom.cdx.json]             Emit CycloneDX 1.5 JSON Software Bill of Materials
   rustpad policy [--init-airgapped <OUT.json>] Inspect MDM DLP policy or generate air-gap profile
   rustpad ai <FILE> [OPTIONS]                 Run DLP-governed local (Ollama/nour-code) or cloud AI
-      --task <grammar|summarize|description|sections|ask>
-      --provider <ollama|nour-code|lm-studio|openai|claude>
-      --url <ENDPOINT_URL>  --model <NAME>  --prompt <TEXT>  -o <OUTPUT.docx|.md>
-  rustpad convert <INPUT> <OUTPUT>            Convert between .docx, .pdf, and .md offline
-  rustpad inspect [--a11y] <FILE>             Inspect metrics, revisions, or UIA/AT-SPI a11y JSON
-  rustpad ocr <FILE>                          Extract searchable text from a PDF or scanned image
-  rustpad merge <OUT.pdf> <IN1.pdf>...        Merge multiple PDFs into a single vector PDF
-  rustpad demo-files <OUT_DIR>                Generate enterprise .docx, .pdf, and .md samples
-  rustpad --render-preview <OUT_DIR>          Render 1440x900 PNG studio screenshots & OG card
+  rustpad demo-files <OUT_DIR>                Generate enterprise .docx, .pdf, .html & .md samples
+  rustpad --render-preview <OUT_DIR>          Render 1440x900 Daylight & Midnight PNG screenshots
   rustpad --version | --help",
         ver = env!("CARGO_PKG_VERSION")
     );
@@ -133,7 +151,7 @@ USAGE:
 fn run_cli_redline(args: &[String]) -> Result<(), String> {
     if args.len() < 4 {
         return Err(
-            "Usage: rustpad redline <BASE.docx> <REVISED.docx> -o <OUT.docx> [--author NAME]"
+            "Usage: rustpad redline <BASE.docx> <REVISED.docx> -o <OUT.docx> [--author NAME] [--char-level]"
                 .into(),
         );
     }
@@ -141,6 +159,7 @@ fn run_cli_redline(args: &[String]) -> Result<(), String> {
     let rev_path = PathBuf::from(&args[1]);
     let mut out_path: Option<PathBuf> = None;
     let mut author = String::from("Legal Review");
+    let mut char_level = false;
 
     let mut i = 2;
     while i < args.len() {
@@ -155,6 +174,7 @@ fn run_cli_redline(args: &[String]) -> Result<(), String> {
                 i += 1;
                 author = args.get(i).ok_or("Missing name after --author")?.clone();
             }
+            "--char-level" => char_level = true,
             other => return Err(format!("Unrecognized flag '{other}' for `rustpad redline`")),
         }
         i += 1;
@@ -162,13 +182,240 @@ fn run_cli_redline(args: &[String]) -> Result<(), String> {
     let out = out_path.ok_or("Missing required `-o <OUT.docx>` for `rustpad redline`")?;
     let base_doc = load_docx_file(&base_path).map_err(|e| e.0)?;
     let rev_doc = load_docx_file(&rev_path).map_err(|e| e.0)?;
-    let redlined = Document::diff_redline(&base_doc, &rev_doc, &author, "2026-10-27T12:00:00Z");
+    let redlined = if char_level {
+        diff_redline_char_level(&base_doc, &rev_doc, &author, "2026-11-01T12:00:00Z")
+    } else {
+        Document::diff_redline(&base_doc, &rev_doc, &author, "2026-11-01T12:00:00Z")
+    };
     let (ins, del) = redlined.revision_counts();
     save_docx_file(&out, &redlined).map_err(|e| e.0)?;
     println!(
         "Generated ECMA-376 redline (+{ins} insertions, -{del} deletions) -> '{}'",
         out.display()
     );
+    Ok(())
+}
+
+fn run_cli_validate(args: &[String]) -> Result<(), String> {
+    let path = args
+        .first()
+        .ok_or("Usage: rustpad validate <FILE.docx>")?;
+    let rep = validate_docx_file(path).map_err(|e| e.0)?;
+    println!(
+        "STATUS:   {}",
+        if rep.is_valid { "VALID" } else { "INVALID" }
+    );
+    println!("Entries:  {}", rep.archive_entries);
+    println!("Size:     {} bytes", rep.total_packed_bytes);
+    println!("Errors:   {}", rep.error_count());
+    println!("Warnings: {}", rep.warning_count());
+    for f in &rep.findings {
+        println!("  [{}] {}: {}", f.severity.label(), f.code, f.message);
+    }
+    if !rep.is_valid {
+        return Err(format!("Validation failed with {} error(s)", rep.error_count()));
+    }
+    Ok(())
+}
+
+fn run_cli_repair(args: &[String]) -> Result<(), String> {
+    if args.len() < 3 {
+        return Err("Usage: rustpad repair <CORRUPT.docx> -o <REPAIRED.docx>".into());
+    }
+    let in_p = PathBuf::from(&args[0]);
+    let mut out_p: Option<PathBuf> = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--out" => {
+                i += 1;
+                out_p = Some(PathBuf::from(args.get(i).ok_or("Missing path after -o")?));
+            }
+            other => return Err(format!("Unknown flag '{other}' for `rustpad repair`")),
+        }
+        i += 1;
+    }
+    let out = out_p.ok_or("Missing `-o <REPAIRED.docx>`")?;
+    let (bytes, rep) = repair_docx_file(&in_p).map_err(|e| e.0)?;
+    std::fs::write(&out, bytes).map_err(|e| e.to_string())?;
+    println!(
+        "Repaired .docx (salvaged {} entries, {} paragraphs, {} images) -> '{}'",
+        rep.salvaged_entries,
+        rep.recovered_paragraphs,
+        rep.recovered_images,
+        out.display()
+    );
+    Ok(())
+}
+
+fn run_cli_compare(args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err("Usage: rustpad compare <BASE.docx> <REVISED.docx>".into());
+    }
+    let base = load_docx_file(&args[0]).map_err(|e| e.0)?;
+    let rev = load_docx_file(&args[1]).map_err(|e| e.0)?;
+    let rep = compare_documents(&base, &rev);
+    println!("Similarity:          {:.1}%", rep.similarity_score() * 100.0);
+    println!("Unchanged Paras:     {}", rep.unchanged_paragraphs);
+    println!("Modified Paras:      {}", rep.modified_paragraphs);
+    println!("Inserted Paras:      {}", rep.inserted_paragraphs);
+    println!("Deleted Paras:       {}", rep.deleted_paragraphs);
+    println!(
+        "Char Diff:           +{} inserted / -{} deleted ({} unchanged)",
+        rep.inserted_chars, rep.deleted_chars, rep.unchanged_chars
+    );
+    println!("Formatting Changes:  {}", rep.formatting_changes.len());
+    println!("Structural Changes:  {}", rep.structural_changes.len());
+    for fc in rep.formatting_changes.iter().take(10) {
+        println!(
+            "  [Format #{}] {}: {} -> {}",
+            fc.revised_block + 1,
+            fc.aspect,
+            fc.before,
+            fc.after
+        );
+    }
+    for sc in rep.structural_changes.iter().take(10) {
+        println!("  [Struct] {}: {}", sc.category, sc.summary);
+    }
+    Ok(())
+}
+
+fn run_cli_redact(args: &[String]) -> Result<(), String> {
+    if args.len() < 3 {
+        return Err(
+            "Usage: rustpad redact <INPUT.docx|.pdf> -o <OUT> [--term WORD]... [--pii]".into(),
+        );
+    }
+    let in_p = PathBuf::from(&args[0]);
+    let mut out_p: Option<PathBuf> = None;
+    let mut opts = RedactionOptions {
+        purge_track_changes_history: true,
+        strip_hidden_runs: true,
+        ..RedactionOptions::default()
+    };
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--out" => {
+                i += 1;
+                out_p = Some(PathBuf::from(args.get(i).ok_or("Missing path after -o")?));
+            }
+            "--term" | "-t" => {
+                i += 1;
+                opts.terms
+                    .push(args.get(i).ok_or("Missing text after --term")?.clone());
+            }
+            "--pii" => {
+                opts.redact_emails = true;
+                opts.redact_api_secrets = true;
+                opts.redact_phone_and_id_numbers = true;
+            }
+            other => return Err(format!("Unknown flag '{other}' for `rustpad redact`")),
+        }
+        i += 1;
+    }
+    let out = out_p.ok_or("Missing `-o <OUTPUT>`")?;
+    let ext = in_p
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if ext == "pdf" {
+        let mut pdf = load_pdf_file(&in_p)?;
+        let r = pdf.sanitize_redactions(true);
+        save_pdf_file(&out, &pdf, true)?;
+        println!(
+            "Forensic PDF redaction complete ({} text runs purged) -> '{}'",
+            r.purged_text_runs,
+            out.display()
+        );
+    } else {
+        let r = redact_docx_file(&in_p, &out, &opts)?;
+        println!(
+            "Permanent .docx redaction complete ({} total replacements/purges) -> '{}'",
+            r.total_hits(),
+            out.display()
+        );
+    }
+    Ok(())
+}
+
+fn run_cli_clean_meta(args: &[String]) -> Result<(), String> {
+    if args.len() < 3 {
+        return Err("Usage: rustpad clean-meta <INPUT.docx> -o <CLEANED.docx>".into());
+    }
+    let in_p = PathBuf::from(&args[0]);
+    let mut out_p: Option<PathBuf> = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--out" => {
+                i += 1;
+                out_p = Some(PathBuf::from(args.get(i).ok_or("Missing path after -o")?));
+            }
+            other => return Err(format!("Unknown flag '{other}' for `rustpad clean-meta`")),
+        }
+        i += 1;
+    }
+    let out = out_p.ok_or("Missing `-o <CLEANED.docx>`")?;
+    let rep = clean_docx_file_metadata(&in_p, &out, &MetadataCleanOptions::strict_privacy())?;
+    println!(
+        "Cleaned metadata ({} fields, {} hidden runs, {} comments, {} external rels) -> '{}'",
+        rep.cleared_metadata_fields,
+        rep.removed_hidden_runs,
+        rep.removed_comments,
+        rep.removed_external_rels,
+        out.display()
+    );
+    Ok(())
+}
+
+fn run_cli_batch(args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err(
+            "Usage: rustpad batch <validate|clean-meta|pdf|md|html> <IN_DIR> [-o <OUT_DIR>]".into(),
+        );
+    }
+    let mode = args[0].as_str();
+    let in_dir = PathBuf::from(&args[1]);
+    let mut out_dir: Option<PathBuf> = None;
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--out" => {
+                i += 1;
+                out_dir = Some(PathBuf::from(
+                    args.get(i).ok_or("Missing directory after -o")?,
+                ));
+            }
+            other => return Err(format!("Unknown flag '{other}' for `rustpad batch`")),
+        }
+        i += 1;
+    }
+    let op = match mode {
+        "validate" => BatchOperation::ValidateAndInspect,
+        "clean-meta" => BatchOperation::CleanMetadata(MetadataCleanOptions::strict_privacy()),
+        "pdf" => BatchOperation::ConvertToPdf,
+        "md" => BatchOperation::ConvertToMarkdown,
+        "html" => BatchOperation::ConvertToHtml { dark_mode: false },
+        other => {
+            return Err(format!(
+                "Unknown batch mode '{other}' (expected validate, clean-meta, pdf, md, html)"
+            ))
+        }
+    };
+    let summary = run_batch_docx_job(&in_dir, out_dir.as_deref(), &op)?;
+    for line in &summary.item_logs {
+        println!("  {line}");
+    }
+    println!(
+        "Batch '{}' complete: {} scanned, {} succeeded, {} failed",
+        mode, summary.scanned_files, summary.succeeded, summary.failed
+    );
+    if summary.failed > 0 {
+        return Err(format!("{} batch file(s) failed", summary.failed));
+    }
     Ok(())
 }
 
@@ -424,9 +671,14 @@ fn generate_demo_files(out_dir: &Path) -> Result<(), String> {
         word_to_markdown(&welcome),
     )
     .map_err(|e| e.to_string())?;
+    std::fs::write(
+        out_dir.join("RustPad_Welcome_Guide_Dark.html"),
+        word_to_html(&welcome, true),
+    )
+    .map_err(|e| e.to_string())?;
 
     println!(
-        "Generated 7 enterprise sample documents (.docx, PDF/A-2b .pdf, .md) in '{}'",
+        "Generated 8 enterprise sample documents (.docx, PDF/A-2b .pdf, Dark HTML5 .html, .md) in '{}'",
         out_dir.display()
     );
     Ok(())
@@ -434,8 +686,9 @@ fn generate_demo_files(out_dir: &Path) -> Result<(), String> {
 
 fn render_studio_previews(out_dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
+    set_active_theme_mode(ThemeMode::Daylight);
     let mut app = RustPadApp::new();
-    let mut surface = Surface::new(1440, 900, DaylightTheme::DESK_BG);
+    let mut surface = Surface::new(1440, 900, StudioTheme::desk_bg());
 
     // 1. Word Studio: Enterprise MSA Legal Redline + Review Comments + Local AI Agent Dock
     let msa_doc = TemplateKind::EnterpriseContract.build();
@@ -513,19 +766,32 @@ fn render_studio_previews(out_dir: &Path) -> Result<(), String> {
 
     // 5. Crisp 1200x630 Open Graph Preview Image (clean Split Redline + PDF Studio)
     app.modal = None;
-    let mut og_surface = Surface::new(1200, 630, DaylightTheme::DESK_BG);
+    let mut og_surface = Surface::new(1200, 630, StudioTheme::desk_bg());
     render_app(&mut app, &mut og_surface);
     std::fs::write(out_dir.join("og.png"), encode_surface_png(&og_surface))
         .map_err(|e| e.to_string())?;
 
+    // 6. Native Midnight Dark Mode Studio Preview (`word-studio-dark.png`)
+    set_active_theme_mode(ThemeMode::Midnight);
+    app.split_secondary_tab = None;
+    app.active_tab = msa_tab_idx;
+    app.ai_dock.open = true;
+    render_app(&mut app, &mut surface);
+    std::fs::write(
+        out_dir.join("word-studio-dark.png"),
+        encode_surface_png(&surface),
+    )
+    .map_err(|e| e.to_string())?;
+    set_active_theme_mode(ThemeMode::Daylight);
+
     println!(
-        "Rendered 5 enterprise studio PNG screenshots in '{}'",
+        "Rendered 6 studio PNG screenshots (Daylight + Midnight Dark Mode) in '{}'",
         out_dir.display()
     );
     Ok(())
 }
 
-fn inspect_file(path: &Path, emit_a11y_json: bool) -> Result<(), String> {
+fn inspect_file(path: &Path, mode_flag: Option<&str>) -> Result<(), String> {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
@@ -533,9 +799,38 @@ fn inspect_file(path: &Path, emit_a11y_json: bool) -> Result<(), String> {
         .to_ascii_lowercase();
     match ext.as_str() {
         "docx" => {
-            let doc = load_docx_file(path).map_err(|e| e.0)?;
-            if emit_a11y_json {
+            let raw = std::fs::read(path).map_err(|e| e.to_string())?;
+            let doc = docx_io::load_docx_bytes(&raw).map_err(|e| e.0)?;
+            if mode_flag == Some("--a11y") {
                 println!("{}", build_document_a11y_tree(&doc).to_json());
+                return Ok(());
+            }
+            if mode_flag == Some("--security") {
+                let sec = inspect_security_and_hidden(&doc, Some(&raw));
+                println!("Hidden Runs:        {}", sec.hidden_runs_count);
+                println!("White Stealth Runs: {}", sec.white_on_white_runs_count);
+                println!("Micro-Text Runs:    {}", sec.micro_text_runs_count);
+                println!("VBA Macros:         {}", sec.has_vba_macros);
+                println!("Embedded OLE:       {}", sec.has_embedded_ole);
+                println!("Remote Template:    {}", sec.has_external_template_injection);
+                for f in &sec.findings {
+                    println!("  [{}] {}: {}", f.severity.label(), f.category, f.detail);
+                }
+                return Ok(());
+            }
+            if mode_flag == Some("--quality") {
+                let cons = inspect_formatting_consistency(&doc);
+                let dups = detect_duplicate_paragraphs(&doc, 24);
+                let broken = detect_broken_links(&doc, path.parent());
+                println!("Consistency Findings: {}", cons.len());
+                println!("Duplicate Groups:     {}", dups.len());
+                println!("Broken Links:         {}", broken.len());
+                for c in &cons {
+                    println!("  [Block #{}] {}: {}", c.block_index + 1, c.category, c.detail);
+                }
+                for bl in &broken {
+                    println!("  [Link #{}] '{}': {}", bl.block_index + 1, bl.link_target, bl.reason);
+                }
                 return Ok(());
             }
             let st = doc.stats();
@@ -546,7 +841,13 @@ fn inspect_file(path: &Path, emit_a11y_json: bool) -> Result<(), String> {
             println!("Classification:  {}", doc.classification.label());
             println!("Track Changes:   {} (+{ins} ins / -{del} del)", doc.track_changes);
             println!("Comments:        {}", doc.comments.len());
-            println!("Passthrough XML: {} preserved part(s)", doc.passthrough_parts.len());
+            println!("Footnotes:       {}", doc.footnotes.len());
+            println!("Endnotes:        {}", doc.endnotes.len());
+            println!(
+                "Passthrough:     {} XML + {} binary/shared part(s)",
+                doc.passthrough_parts.len(),
+                doc.passthrough_shared.len()
+            );
             println!("Paper Size:      {}", doc.page_setup.paper_size.label());
             println!("Words:           {}", st.words);
             println!("Characters:      {}", st.chars);
@@ -590,6 +891,12 @@ fn run_cli() -> Result<(), String> {
                 println!("rustpad {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
+            "validate" => return run_cli_validate(&args[1..]),
+            "repair" => return run_cli_repair(&args[1..]),
+            "compare" => return run_cli_compare(&args[1..]),
+            "redact" => return run_cli_redact(&args[1..]),
+            "clean-meta" => return run_cli_clean_meta(&args[1..]),
+            "batch" => return run_cli_batch(&args[1..]),
             "redline" => return run_cli_redline(&args[1..]),
             "sanitize" => return run_cli_sanitize(&args[1..]),
             "sign" => return run_cli_sign(&args[1..]),
@@ -607,13 +914,15 @@ fn run_cli() -> Result<(), String> {
             }
             "inspect" => {
                 if args.len() < 2 {
-                    return Err("Usage: rustpad inspect [--a11y] <FILE>".into());
+                    return Err(
+                        "Usage: rustpad inspect [--a11y|--security|--quality] <FILE>".into(),
+                    );
                 }
-                if args[1] == "--a11y" {
-                    let f = args.get(2).ok_or("Missing <FILE> after --a11y")?;
-                    return inspect_file(Path::new(f), true);
+                if args[1].starts_with("--") {
+                    let f = args.get(2).ok_or("Missing <FILE> after flag")?;
+                    return inspect_file(Path::new(f), Some(&args[1]));
                 }
-                return inspect_file(Path::new(&args[1]), false);
+                return inspect_file(Path::new(&args[1]), None);
             }
             "ocr" => {
                 if args.len() < 2 {
@@ -625,7 +934,54 @@ fn run_cli() -> Result<(), String> {
             }
             "merge" => {
                 if args.len() < 4 {
-                    return Err("Usage: rustpad merge <OUT.pdf> <IN1.pdf> <IN2.pdf> [...]".into());
+                    return Err(
+                        "Usage: rustpad merge <OUT.docx|.pdf> <IN1> <IN2> [<IN3>] [--strategy annotate|ours|theirs]"
+                            .into(),
+                    );
+                }
+                let out_ext = Path::new(&args[1])
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if out_ext == "docx" {
+                    let mut strategy = MergeStrategy::AnnotateConflicts;
+                    let mut doc_paths: Vec<PathBuf> = Vec::new();
+                    let mut idx = 2;
+                    while idx < args.len() {
+                        if args[idx] == "--strategy" {
+                            idx += 1;
+                            strategy = match args.get(idx).map(|s| s.as_str()) {
+                                Some("ours") | Some("prefer-ours") => MergeStrategy::PreferOurs,
+                                Some("theirs") | Some("prefer-theirs") => {
+                                    MergeStrategy::PreferTheirs
+                                }
+                                _ => MergeStrategy::AnnotateConflicts,
+                            };
+                        } else {
+                            doc_paths.push(PathBuf::from(&args[idx]));
+                        }
+                        idx += 1;
+                    }
+                    if doc_paths.len() < 2 {
+                        return Err(
+                            "Expected at least 2 input .docx files for smart document merge".into(),
+                        );
+                    }
+                    let d0 = load_docx_file(&doc_paths[0]).map_err(|e| e.0)?;
+                    let d1 = load_docx_file(&doc_paths[1]).map_err(|e| e.0)?;
+                    let outcome = if doc_paths.len() >= 3 {
+                        let d2 = load_docx_file(&doc_paths[2]).map_err(|e| e.0)?;
+                        smart_merge_documents(&d0, &d2, &d1, strategy)
+                    } else {
+                        merge_two_documents(&d0, &d1, strategy)
+                    };
+                    save_docx_file(&args[1], &outcome.document).map_err(|e| e.0)?;
+                    println!(
+                        "Smart .docx merge complete ({} clean merges, {} conflict(s)) -> '{}'",
+                        outcome.clean_merges, outcome.conflict_count, args[1]
+                    );
+                    return Ok(());
                 }
                 let inputs: Vec<PathBuf> = args[2..].iter().map(PathBuf::from).collect();
                 let merged = PdfDocument::merge_files(&inputs, "Merged_Document")?;
@@ -665,7 +1021,7 @@ fn run_cli() -> Result<(), String> {
         tick_counter: 0,
     };
     run_native_window(
-        "RustPad v2.4 — Async Streaming 100+ MB .docx Engine · 60–120Hz Native Word, PDF & AI Suite",
+        "RustPad v3.0 — Native Dark Mode · OOXML Intelligence · 60–120Hz Pure-Rust Word, PDF & AI Suite",
         1380,
         880,
         &mut runner,
@@ -684,15 +1040,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_enterprise_v2_render_redline_governance_and_pdf_forensics() {
+    fn test_v30_dark_mode_inspector_notes_merge_and_pdf_forensics() {
         std::env::set_var("RUSTPAD_HEADLESS_PRINT", "1");
+        set_active_theme_mode(ThemeMode::Daylight);
         let mut app = RustPadApp::new();
-        let mut surface = Surface::new(1360, 860, DaylightTheme::DESK_BG);
+        let mut surface = Surface::new(1360, 860, StudioTheme::desk_bg());
         render_app(&mut app, &mut surface);
         assert!(!app.hit_regions.is_empty());
 
         app.execute_command(CommandId::NewWordEnterpriseMsa);
+        app.execute_command(CommandId::AddFootnote);
+        app.execute_command(CommandId::AddEndnote);
+        app.execute_command(CommandId::InsertSectionBreak);
+        app.execute_command(CommandId::ToggleSuperscript);
+        app.execute_command(CommandId::ToggleSubscript);
         render_app(&mut app, &mut surface);
+
+        // Toggle into Midnight Dark Mode and render full studio + Document Inspector modal!
+        app.execute_command(CommandId::CycleThemeMode);
+        app.execute_command(CommandId::OpenDocumentInspector);
+        render_app(&mut app, &mut surface);
+        let dark_png = encode_surface_png(&surface);
+        assert!(dark_png.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert!(dark_png.len() > 8_000);
+
+        // Run Privacy Cleaner + HybridDarkDesk + Daylight cycle
+        app.execute_command(CommandId::CleanDocumentPrivacy);
+        app.execute_command(CommandId::CycleThemeMode);
+        render_app(&mut app, &mut surface);
+        app.execute_command(CommandId::CycleThemeMode);
 
         app.execute_command(CommandId::CycleClassification);
         app.execute_command(CommandId::PrintDocument);

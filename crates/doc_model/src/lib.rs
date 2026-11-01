@@ -2,8 +2,14 @@
 //! `SpanStyle`, `RevisionMeta` Track Changes, `DocComment`, `SecurityClassification`,
 //! Lossless OOXML `passthrough_parts`, Word-Level Legal Redline Diffing, and Undo/Redo).
 
+pub mod compare;
 pub mod templates;
 
+pub use compare::{
+    compare_documents, diff_chars, diff_redline_char_level, merge_two_documents,
+    smart_merge_documents, CharDiffOp, DocumentComparisonReport, FormattingChange, MergeOutcome,
+    MergeStrategy, StructuralChange,
+};
 use std::collections::BTreeMap;
 pub use templates::TemplateKind;
 
@@ -202,6 +208,16 @@ pub struct SpanStyle {
     pub strikethrough: bool,
     pub color: RgbColor,
     pub highlight: Option<RgbColor>,
+    /// ECMA-376 `<w:vanish/>` hidden run flag.
+    pub hidden: bool,
+    pub superscript: bool,
+    pub subscript: bool,
+    /// External URL (`https://...`, `mailto:...`) or internal bookmark (`#anchor`).
+    pub hyperlink: Option<String>,
+    /// Inline footnote reference ID (`word/footnotes.xml`).
+    pub footnote_ref: Option<u32>,
+    /// Inline endnote reference ID (`word/endnotes.xml`).
+    pub endnote_ref: Option<u32>,
 }
 
 impl Default for SpanStyle {
@@ -215,6 +231,12 @@ impl Default for SpanStyle {
             strikethrough: false,
             color: RgbColor::INK_SLATE,
             highlight: None,
+            hidden: false,
+            superscript: false,
+            subscript: false,
+            hyperlink: None,
+            footnote_ref: None,
+            endnote_ref: None,
         }
     }
 }
@@ -1736,6 +1758,43 @@ impl ImageBlock {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SectionBreakKind {
+    NextPage,
+    Continuous,
+    EvenPage,
+    OddPage,
+}
+
+impl SectionBreakKind {
+    pub fn docx_val(self) -> &'static str {
+        match self {
+            Self::NextPage => "nextPage",
+            Self::Continuous => "continuous",
+            Self::EvenPage => "evenPage",
+            Self::OddPage => "oddPage",
+        }
+    }
+
+    pub fn from_docx_val(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "continuous" => Self::Continuous,
+            "evenpage" => Self::EvenPage,
+            "oddpage" => Self::OddPage,
+            _ => Self::NextPage,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NextPage => "Section Break (Next Page)",
+            Self::Continuous => "Section Break (Continuous)",
+            Self::EvenPage => "Section Break (Even Page)",
+            Self::OddPage => "Section Break (Odd Page)",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Paragraph(Paragraph),
@@ -1743,6 +1802,7 @@ pub enum Block {
     Image(ImageBlock),
     HorizontalRule,
     PageBreak,
+    SectionBreak(SectionBreakKind),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1786,6 +1846,9 @@ pub struct PageSetup {
     pub margin_right_pt: f32,
     pub header_text: String,
     pub footer_text: String,
+    pub different_first_page: bool,
+    pub first_page_header: String,
+    pub first_page_footer: String,
     pub show_page_numbers: bool,
     pub watermark: Option<String>,
 }
@@ -1801,6 +1864,9 @@ impl Default for PageSetup {
             margin_right_pt: 64.0,
             header_text: String::new(),
             footer_text: String::new(),
+            different_first_page: false,
+            first_page_header: String::new(),
+            first_page_footer: String::new(),
             show_page_numbers: true,
             watermark: None,
         }
@@ -1817,7 +1883,36 @@ pub struct DocComment {
     pub resolved: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocNote {
+    pub id: u32,
+    pub text: String,
+    pub author: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DocMetadata {
+    pub subject: String,
+    pub keywords: String,
+    pub description: String,
+    pub category: String,
+    pub company: String,
+    pub last_modified_by: String,
+    pub created_iso: String,
+    pub modified_iso: String,
+    pub revision_number: u32,
+    pub custom_properties: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawRelationship {
+    pub id: String,
+    pub rel_type: String,
+    pub target: String,
+    pub target_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DocumentStats {
     pub words: usize,
     pub chars: usize,
@@ -1846,8 +1941,15 @@ pub struct Document {
     pub page_setup: PageSetup,
     pub blocks: Vec<Block>,
     pub comments: Vec<DocComment>,
-    /// Unmodeled OOXML ZIP entries preserved verbatim for lossless enterprise round-trip saving.
+    pub footnotes: Vec<DocNote>,
+    pub endnotes: Vec<DocNote>,
+    pub metadata: DocMetadata,
+    /// Unmodeled `word/_rels/document.xml.rels` entries preserved verbatim for lossless round-trip.
+    pub extra_relationships: Vec<RawRelationship>,
+    /// Unmodeled OOXML ZIP entries preserved verbatim (`Vec<u8>` map).
     pub passthrough_parts: BTreeMap<String, Vec<u8>>,
+    /// Zero-copy `SharedBytes` (`Arc<[u8]>`) passthrough archive parts for embedded OLE/VBA/charts/media.
+    pub passthrough_shared: BTreeMap<String, SharedBytes>,
 }
 
 impl Default for Document {
@@ -1866,7 +1968,12 @@ impl Document {
             page_setup: PageSetup::default(),
             blocks: vec![Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, ""))],
             comments: Vec::new(),
+            footnotes: Vec::new(),
+            endnotes: Vec::new(),
+            metadata: DocMetadata::default(),
+            extra_relationships: Vec::new(),
             passthrough_parts: BTreeMap::new(),
+            passthrough_shared: BTreeMap::new(),
         }
     }
 
@@ -1887,6 +1994,9 @@ impl Document {
             }
         }
         for v in self.passthrough_parts.values() {
+            sum = sum.saturating_add(v.len());
+        }
+        for v in self.passthrough_shared.values() {
             sum = sum.saturating_add(v.len());
         }
         sum
@@ -1914,7 +2024,12 @@ impl Document {
             page_setup: self.page_setup.clone(),
             blocks,
             comments: self.comments.clone(),
+            footnotes: self.footnotes.clone(),
+            endnotes: self.endnotes.clone(),
+            metadata: self.metadata.clone(),
+            extra_relationships: Vec::new(),
             passthrough_parts: BTreeMap::new(),
+            passthrough_shared: BTreeMap::new(),
         }
     }
 
@@ -2339,10 +2454,76 @@ impl Document {
                 }
                 Block::HorizontalRule => out.push_str("---\n"),
                 Block::PageBreak => out.push_str("\n=== PAGE BREAK ===\n"),
+                Block::SectionBreak(kind) => out.push_str(&format!("\n=== {} ===\n", kind.label())),
                 Block::Image(img) => out.push_str(&format!("[Image: {}]\n", img.name)),
             }
         }
+        for note in &self.footnotes {
+            out.push_str(&format!("[Footnote {}]: {}\n", note.id, note.text));
+        }
+        for note in &self.endnotes {
+            out.push_str(&format!("[Endnote {}]: {}\n", note.id, note.text));
+        }
         out
+    }
+
+    pub fn add_footnote(
+        &mut self,
+        block_idx: usize,
+        note_text: impl Into<String>,
+        author: impl Into<String>,
+    ) -> u32 {
+        let next_id = self
+            .footnotes
+            .iter()
+            .map(|n| n.id)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        self.footnotes.push(DocNote {
+            id: next_id,
+            text: note_text.into(),
+            author: author.into(),
+        });
+        if let Some(Block::Paragraph(p)) = self.blocks.get_mut(block_idx) {
+            let mut ref_style = p.spans.last().map(|s| s.style.clone()).unwrap_or_default();
+            ref_style.superscript = true;
+            ref_style.color = RgbColor::COBALT;
+            ref_style.footnote_ref = Some(next_id);
+            p.spans.push(TextSpan::styled(format!("[{next_id}]"), ref_style));
+            p.normalize_spans();
+        }
+        next_id
+    }
+
+    pub fn add_endnote(
+        &mut self,
+        block_idx: usize,
+        note_text: impl Into<String>,
+        author: impl Into<String>,
+    ) -> u32 {
+        let next_id = self
+            .endnotes
+            .iter()
+            .map(|n| n.id)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        self.endnotes.push(DocNote {
+            id: next_id,
+            text: note_text.into(),
+            author: author.into(),
+        });
+        if let Some(Block::Paragraph(p)) = self.blocks.get_mut(block_idx) {
+            let mut ref_style = p.spans.last().map(|s| s.style.clone()).unwrap_or_default();
+            ref_style.superscript = true;
+            ref_style.color = RgbColor::EMERALD;
+            ref_style.endnote_ref = Some(next_id);
+            p.spans
+                .push(TextSpan::styled(format!("[e{next_id}]"), ref_style));
+            p.normalize_spans();
+        }
+        next_id
     }
 }
 

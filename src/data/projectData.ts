@@ -61,7 +61,7 @@ export interface TourStep {
   body: string;
 }
 
-export const RELEASE_VERSION = 'v2.4.0';
+export const RELEASE_VERSION = 'v3.0.0';
 export const REPO_URL = 'https://github.com/Nour-yahyaoui/rustpad';
 export const RELEASE_TAG_URL = `${REPO_URL}/releases/tag/${RELEASE_VERSION}`;
 
@@ -86,34 +86,41 @@ export const AUTHOR = {
 
 export const HERO_METRICS = [
   {
+    value: '3 Modes',
+    label: 'Native Dark Mode',
+    detail: 'Midnight · Hybrid Dark · Daylight + OS DWM',
+  },
+  {
     value: '60–120 Hz',
     label: 'Ultra-Smooth Native UX',
     detail: 'VSync coalesced · Spring scroll · Floating bar',
   },
   {
-    value: '100% Offline',
-    label: 'Air-Gapped Sovereign',
-    detail: 'Zero cloud lock-in · MDM DLP policy.json',
-  },
-  {
     value: '100+ MB',
-    label: 'Async .docx Streaming',
-    detail: 'LazyZip64 · Pull XML · 32 MiB Worker',
+    label: 'Async .docx Intelligence',
+    detail: 'LazyZip64 · Repair · Diff/Merge · Redact',
   },
   {
-    value: '~4.1 MB',
-    label: '< 90 ms Cold Boot',
-    detail: 'Win32 GDI, X11 & 0 crates.io deps',
+    value: '0 Deps',
+    label: '< 90 ms Offline Studio',
+    detail: 'Win32 GDI, X11, Pure-Rust OCR & 19 CLI ops',
   },
 ];
 
 export const ENTERPRISE_BENCHMARKS: EnterpriseBenchmarkRow[] = [
   {
-    capability: 'UI Smoothness, Latency & Human UX',
-    rustpad: '60–120Hz VSync · Floating Selection Bar · Focus Mode',
-    cloudSaas: 'Browser DOM Reflow & Network Jitter',
-    electronApps: 'Multi-Process IPC & GPU Compositor Lag',
-    legacySuites: '300+ Ribbon Icons & Modal Stutter',
+    capability: 'Native Dark Mode & Print Fidelity',
+    rustpad: 'Midnight + Hybrid Dark Desk + Daylight (Win32 DWM & X11 Titlebar)',
+    cloudSaas: 'CSS Filter Inversion Artifacts',
+    electronApps: 'Theme Flicker & Mutated Saved Colors',
+    legacySuites: 'Inconsistent Legacy Dialog Chrome',
+  },
+  {
+    capability: 'OOXML Validation, Repair & Privacy',
+    rustpad: 'CRC32/XML Validator · Corrupt ZIP Salvage · Permanent .docx/.pdf Redact',
+    cloudSaas: 'Refuses Corrupt Uploads · Cloud Indexing',
+    electronApps: 'Lossy Markdown Import Drops XML/Notes',
+    legacySuites: 'Opaque Binary Recovery & Hidden Metadata Leaks',
   },
   {
     capability: '30–100+ MB Multi-Screenshot .docx',
@@ -170,26 +177,26 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
   {
     id: 'word-ai',
     index: '01',
-    label: 'Smooth Word + Redline',
-    shortLabel: 'Smooth Word',
-    badge: '60–120HZ + REDLINE',
-    windowTitle: 'RustPad v2.4.0 — Enterprise_MSA_Redline.docx · Async Large-Doc & Table Studio',
+    label: 'v3.0 Word + Dark Mode',
+    shortLabel: 'Word v3.0',
+    badge: 'DARK MODE + REDLINE',
+    windowTitle: 'RustPad v3.0.0 — Enterprise_MSA_Redline.docx · Dark Mode, OOXML Intelligence & Table Studio',
     image: '/screenshots/word-studio.png',
-    alt: 'RustPad v2.4.0 Word Studio showing 60–120Hz smooth sheet rendering, async streaming 100+ MB large-doc engine, effortless interactive tables, ECMA-376 Track Changes legal redlines, and DLP-governed local AI dock.',
+    alt: 'RustPad v3.0.0 Word Studio showing Native Dark Mode, 60–120Hz smooth sheet rendering, async streaming 100+ MB large-doc engine, footnotes/endnotes, ECMA-376 Track Changes legal redlines, and DLP-governed local AI dock.',
     summary:
-      'Highlight any phrase with mouse-drag, double-click, or Shift+Arrow for a Warm Ivory floating selection bar (B/I/U/Highlight/AI Polish), glide with 60Hz spring scrolling, and review legal redlines clause-by-clause.',
+      'Switch seamlessly between Daylight, Midnight Dark Mode, and Hybrid Dark Desk (Ctrl+Shift+D) with zero-mutation render-time ink adaptation, inspect OOXML security & hidden text (Ctrl+Shift+J), and review legal redlines in 1 click.',
     highlights: [
       {
-        tag: 'Floating Selection Bar',
-        detail: 'Zero-lag mouse drag, double-click word & Ctrl+Arrow jumps + substring TextSpan styling',
+        tag: '3-Mode Dark Studio',
+        detail: 'Daylight, Midnight & Hybrid Dark Desk + native Win11 DWMWA_USE_IMMERSIVE_DARK_MODE titlebars',
       },
       {
-        tag: '1-Click Clause Review',
-        detail: 'Accept #N / Reject #N per revision clause alongside ECMA-376 <w:ins> & <w:del>',
+        tag: 'OOXML Intelligence',
+        detail: 'Footnotes, endnotes, hyperlinks, section breaks, corruption repair & hidden-text inspector',
       },
       {
-        tag: 'Focus Mode + AI',
-        detail: 'Ctrl+Shift+F hides chrome into calm Linen & Paper; AI Polish rewrites just your selection',
+        tag: 'Diff, Merge & Redact',
+        detail: 'Char-level redlines, 3-way conflict-aware smart .docx merge & permanent PII/metadata scrubbing',
       },
     ],
   },
@@ -199,9 +206,9 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
     label: 'Forensic PDF & Seal',
     shortLabel: 'Forensic PDF',
     badge: 'PDF/A-2B + SHA-256',
-    windowTitle: 'RustPad v2.4.0 — Technical_Report.pdf · SHA-256 Sealed',
+    windowTitle: 'RustPad v3.0.0 — Technical_Report.pdf · SHA-256 Sealed',
     image: '/screenshots/pdf-studio.png',
-    alt: 'RustPad v2.4.0 Forensic PDF Studio with Sanitize Redactions, SHA-256 Tamper Seal, Bezier ink signature, stamp, and PDF 1.5+ ObjStm parser.',
+    alt: 'RustPad v3.0.0 Forensic PDF Studio with Sanitize Redactions, SHA-256 Tamper Seal, Bezier ink signature, stamp, and PDF 1.5+ ObjStm parser.',
     summary:
       'Glide through multi-page PDFs with 60Hz kinetic spring scrolling, physically purge redacted underlying glyph runs, export archival PDF/A-2b XMP packets, and embed verifiable SHA-256 tamper seals.',
     highlights: [
@@ -222,26 +229,26 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
   {
     id: 'split-palette',
     index: '03',
-    label: 'DLP & Audit Chain',
+    label: 'Inspector & DLP Audit',
     shortLabel: 'Governance',
-    badge: 'DLP + AUDIT',
-    windowTitle: 'RustPad v2.4.0 — Dual Split Workspace + SHA-256 Governance Ledger',
+    badge: 'INSPECTOR + DLP',
+    windowTitle: 'RustPad v3.0.0 — Dual Split Workspace + Document Intelligence & DLP Ledger',
     image: '/screenshots/split-command-palette.png',
-    alt: 'RustPad v2.4.0 Split Workspace with Enterprise DLP Policy and Tamper-Evident SHA-256 Hash-Chained Audit Trail Inspector.',
+    alt: 'RustPad v3.0.0 Split Workspace with Document Security Inspector, Enterprise DLP Policy, and SHA-256 Hash-Chained Audit Trail.',
     summary:
-      'Drag-resize side-by-side Word & PDF panes at 60–120Hz with WM_PAINT/X11 motion coalescing while inspecting MDM DLP policy state and the tamper-evident SHA-256 audit chain.',
+      'Drag-resize side-by-side Word & PDF panes at 60–120Hz while auditing hidden <w:vanish/> runs, embedded macros/OLE, broken hyperlinks, duplicate paragraphs, and SHA-256 DLP events.',
     highlights: [
       {
-        tag: 'Zero-Lag Splitters',
-        detail: 'Coalesced Win32 WM_PAINT & X11 MotionNotify keep splitter & table resize buttery smooth',
+        tag: 'Security Inspector',
+        detail: 'Flags hidden runs, white-on-white stealth text, remote template injection, VBA & OLE',
       },
       {
         tag: 'MDM policy.json',
         detail: '1-click Strict Air-Gapped mode blocks external cloud AI before DNS resolution',
       },
       {
-        tag: '74 Studio Actions',
-        detail: 'Ctrl+A Select All, Ctrl+Shift+F Focus Mode, Ctrl+F Live Match Jump, Ctrl+K Palette',
+        tag: '103 Studio Actions',
+        detail: 'Ctrl+Shift+D Dark Mode, Ctrl+Shift+J Inspector, Ctrl+F Search, Ctrl+K Command Palette',
       },
     ],
   },
@@ -251,9 +258,9 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
     label: 'Editorial Hub',
     shortLabel: 'Launchpad',
     badge: '7 TEMPLATES',
-    windowTitle: 'RustPad v2.4.0 — Warm Architectural Paper Launchpad & Starter Sheets',
+    windowTitle: 'RustPad v3.0.0 — Architectural Studio Launchpad & Starter Sheets',
     image: '/screenshots/home-hub.png',
-    alt: 'RustPad v2.4.0 Editorial Home Launchpad with 7 starter templates including Enterprise MSA Legal Redline.',
+    alt: 'RustPad v3.0.0 Editorial Home Launchpad with 7 starter templates including Enterprise MSA Legal Redline.',
     summary:
       'Cold-boots in under 90 ms into a calm Warm Architectural Paper & Linen launchpad with 7 offline templates, pure-Rust PNG figure decoding, WAL crash recovery, and SMB lockfile protection.',
     highlights: [
@@ -464,50 +471,50 @@ export const CRATE_LEDGER: CrateSpec[] = [
 
 export const CLI_RECIPES: CliRecipe[] = [
   {
-    label: 'Offline Legal Contract Redline (ECMA-376 <w:ins> / <w:del>)',
-    badge: 'REDLINE',
+    label: 'Validate, Repair Corrupt .docx & Inspect Security / Hidden Layers',
+    badge: 'OOXML v3.0',
     command:
-      'rustpad redline Base_MSA_v1.docx Counterparty_v2.docx -o MSA_Redline.docx --author "General Counsel"',
+      'rustpad validate Contract.docx && rustpad inspect --security Contract.docx && rustpad repair Truncated.docx -o Recovered.docx',
     detail:
-      'Computes word-level LCS revisions offline and emits a standards-compliant OpenXML .docx with tracked insertions and deletions.',
+      'Verifies PKZIP CRC32 & ECMA-376 relationships, audits hidden <w:vanish/> / remote template risks, and salvages truncated .docx archives.',
   },
   {
-    label: 'Forensic PDF Redaction Sanitize + PDF/A-2b SHA-256 Seal',
-    badge: 'FORENSICS',
+    label: 'Character-Level Legal Redline, Structural Diff & 3-Way Smart Merge',
+    badge: 'DIFF / MERGE',
     command:
-      'rustpad sanitize Exhibit.pdf -o Clean.pdf && rustpad sign Clean.pdf -o Sealed.pdf --pdfa && rustpad verify Sealed.pdf',
+      'rustpad compare Base.docx Rev.docx && rustpad redline Base.docx Rev.docx -o Redline.docx --char-level && rustpad merge Out.docx Base.docx CounselA.docx CounselB.docx',
     detail:
-      'Physically purges underlying glyph runs inside redaction boxes, embeds PDF/A-2b XMP metadata, and seals content with RFC 6234 SHA-256.',
+      'Computes char-level & formatting diffs, emits ECMA-376 <w:ins>/<w:del> redlines, and runs 3-way conflict-aware smart .docx merges.',
   },
   {
-    label: 'CycloneDX 1.5 SBOM & Strict Air-Gapped MDM Policy',
-    badge: 'CISO / DLP',
+    label: 'Permanent .docx & .pdf Redaction + Strict Metadata & Hidden Scrubbing',
+    badge: 'PRIVACY',
     command:
-      'rustpad sbom -o rustpad-v2.4.0.cdx.json && rustpad policy --init-airgapped .rustpad-policy.json',
+      'rustpad redact Deal.docx -o Deal_Redacted.docx --pii --term "Project Falcon" && rustpad clean-meta Deal_Redacted.docx -o Deal_Clean.docx',
     detail:
-      'Generates a machine-readable CycloneDX 1.5 bill of materials proving 0 crates.io deps and locks AI sockets strictly to 127.0.0.1.',
+      'Permanently scrubs PII/terms across body, tables, headers, comments & Track Changes history via 0600 atomic writes.',
   },
   {
-    label: 'DLP-Governed Local AI & Accessibility Tree Audit',
-    badge: 'AI + A11Y',
+    label: 'Batch Directory Processing, HTML5/PDF/A-2b Export & CycloneDX SBOM',
+    badge: 'BATCH + SBOM',
     command:
-      'rustpad ai MSA_Redline.docx --provider nour-code --task summarize -o brief.md && rustpad inspect --a11y MSA_Redline.docx',
+      'rustpad batch pdf ./contracts -o ./exports && rustpad convert Guide.docx Guide.html && rustpad sbom -o rustpad-v3.0.0.cdx.json',
     detail:
-      'Runs air-gapped local inference over pure-Rust HTTP and exports the semantic UIA/AT-SPI accessibility landmark tree as JSON.',
+      'Converts entire .docx folders offline, exports Dark-Mode-ready HTML5 & PDF/A-2b, and emits a 0-dependency CycloneDX 1.5 SBOM.',
   },
 ];
 
 export const SCOPE_MATRIX = {
   builtFor: [
-    'Writers, legal counsel & engineers who demand ultra-smooth 60–120Hz responsiveness, instant range selection & calm Warm Paper UX',
+    'Writers, legal counsel & engineers demanding Native Dark Mode (Midnight / Hybrid / Daylight) & 60–120Hz responsiveness',
     'Air-gapped legal, defense, healthcare & financial teams requiring 100% offline desktop sovereignty with 0 telemetry',
-    'Counterparty .docx contract redlining (1-click per-clause Accept/Reject), lossless corporate archive passthrough & PNG figures',
-    'Forensic PDF stream sanitization, PDF 1.5+ /ObjStm parsing, PDF/A-2b archival export, SHA-256 seals & CycloneDX SBOM',
+    'Lossless OOXML validation, corrupt .docx repair, char-level redlining, 3-way smart merge, footnotes/endnotes & permanent PII redaction',
+    'Forensic PDF stream sanitization, PDF 1.5+ /ObjStm parsing, PDF/A-2b export, SHA-256 seals, pure-Rust OCR & batch CLI',
   ],
   nonGoals: [
-    'Legacy VBA macro execution (`vbaProject.bin` is preserved passively on passthrough, never executed — eliminating macro malware)',
+    'Legacy VBA macro execution (`vbaProject.bin` is preserved passively or scrubbed via Privacy Cleaner, never executed)',
     'Proprietary cloud collaboration accounts, telemetry beacons, or 300 MB Electron/Chromium installers',
-    'Hardware smartcard PKCS#11 X.509 certificate chains (v2.4 uses deterministic zero-dependency SHA-256 `/RustPadSeal` manifests)',
+    'Hardware smartcard PKCS#11 X.509 certificate chains (v3.0 uses deterministic zero-dependency SHA-256 `/RustPadSeal` manifests)',
   ],
 };
 
@@ -515,21 +522,21 @@ export const TOUR_STEPS: TourStep[] = [
   {
     step: '01 / 05',
     targetSelector: '#ux-playground',
-    title: 'UX Is the #1 Feature — Smooth Sheet & Table Creator Sandbox',
-    body: 'Click + Create Table ▾ to test the live visual hover grid & 1-click Invoice/Tracker presets, edit cells with Tab, or style text with the Floating Ivory Bar.',
+    title: 'UX Is the #1 Feature — Smooth Sheet, Dark Mode & Table Studio',
+    body: 'Toggle Dark / Light theme in the top bar, click + Create Table ▾ to test the live visual hover grid, or style text with the Floating Bar.',
   },
   {
     step: '02 / 05',
     targetSelector: '#enterprise-matrix',
-    title: '60–120Hz Native Rust vs. Cloud & Electron Suites',
-    body: 'Compare RustPad v2.4 across async 100+ MB .docx streaming, UI latency, table authoring, offline DLP sovereignty, legal redlining, and PDF sanitization.',
+    title: 'RustPad v3.0 Native Rust vs. Cloud & Electron Suites',
+    body: 'Compare RustPad v3.0 across Native Dark Mode, OOXML validation/repair, 100+ MB .docx streaming, smart merge, and forensic redaction.',
   },
   {
     step: '03 / 05',
     targetSelector: '#studio',
     specimenId: 'word-ai',
-    title: 'Live Redline, Forensic PDF & DLP Switchboard',
-    body: 'Inspect all 4 v2.4 desktop views: Async Streaming Word Studio, Forensic PDF + SHA-256 Seal, Split Governance Audit, and Editorial Hub.',
+    title: 'Live v3.0 Word, Inspector, Forensic PDF & DLP Switchboard',
+    body: 'Inspect all 4 v3.0 desktop views: Dark-Mode-Capable Word Studio, Forensic PDF + SHA-256 Seal, Document Security Inspector, and Editorial Hub.',
   },
   {
     step: '04 / 05',
@@ -540,7 +547,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     step: '05 / 05',
     targetSelector: '#cli',
-    title: 'Headless Legal, Forensic & CISO CLI',
-    body: 'Automate `rustpad redline`, `rustpad sanitize`, `rustpad sign --pdfa`, `rustpad verify`, and `rustpad sbom` directly in CI.',
+    title: '19-Command Headless OOXML, Privacy, Forensic & Batch CLI',
+    body: 'Automate `rustpad validate`, `repair`, `compare`, `merge`, `redact --pii`, `clean-meta`, `batch`, `sign --pdfa`, and `sbom` in CI.',
   },
 ];

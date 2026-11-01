@@ -33,7 +33,7 @@ impl TemplateKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Blank => "Blank Document",
-            Self::WelcomeGuide => "Welcome to RustPad v2.4",
+            Self::WelcomeGuide => "Welcome to RustPad v3.0",
             Self::EnterpriseContract => "Enterprise MSA Redline",
             Self::ModernResume => "Modern Resume / CV",
             Self::AcademicReport => "Technical Architecture Spec",
@@ -81,14 +81,14 @@ fn checklist(text: &str, done: bool) -> Block {
 
 fn build_welcome_guide() -> Document {
     let mut setup = PageSetup::default();
-    setup.header_text = "RustPad v2.4 — Async Streaming 100+ MB .docx Engine, Table Studio & 60–120Hz Suite".into();
+    setup.header_text = "RustPad v3.0 — Lossless OOXML Intelligence, Dark Mode & 60–120Hz Suite".into();
     setup.footer_text = "Open-Source MIT · github.com/Nour-yahyaoui/rustpad".into();
 
     let mut intro = Paragraph::new(ParagraphStyle::Normal, "");
     intro.spans = vec![
         TextSpan::plain("Welcome to "),
         TextSpan::styled(
-            "RustPad v2.4",
+            "RustPad v3.0",
             SpanStyle {
                 bold: true,
                 color: RgbColor::COBALT,
@@ -120,7 +120,7 @@ fn build_welcome_guide() -> Document {
     let mut table = TableBlock::new(5, 3);
     table.rows[0] = vec![
         TableCell::header("Core Pillar"),
-        TableCell::header("v2.4 Async Streaming Engine & Effortless Table Studio"),
+        TableCell::header("v3.0 OOXML Intelligence, Dark Mode & Effortless Studio"),
         TableCell::header("Shortcut / CLI"),
     ];
     table.rows[1] = vec![
@@ -157,7 +157,7 @@ fn build_welcome_guide() -> Document {
             )),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Subtitle,
-                "v2.4 Async Streaming 100+ MB .docx Engine · Zero-Freeze 60–120Hz UX · Zero Dependencies",
+                "v3.0 Lossless OOXML Intelligence · Native Dark Mode · 60–120Hz UX · Zero Dependencies",
             )),
             Block::Paragraph(intro),
             Block::Paragraph(Paragraph::new(
@@ -189,6 +189,7 @@ fn build_welcome_guide() -> Document {
             resolved: false,
         }],
         passthrough_parts: BTreeMap::new(),
+        ..Document::blank()
     }
 }
 
@@ -323,6 +324,7 @@ fn build_enterprise_contract() -> Document {
             },
         ],
         passthrough_parts: BTreeMap::new(),
+        ..Document::blank()
     }
 }
 
@@ -374,6 +376,7 @@ fn build_modern_resume() -> Document {
         ],
         comments: Vec::new(),
         passthrough_parts: BTreeMap::new(),
+        ..Document::blank()
     }
 }
 
@@ -434,6 +437,7 @@ fn build_academic_report() -> Document {
         ],
         comments: Vec::new(),
         passthrough_parts: BTreeMap::new(),
+        ..Document::blank()
     }
 }
 
@@ -495,6 +499,7 @@ fn build_invoice() -> Document {
         ],
         comments: Vec::new(),
         passthrough_parts: BTreeMap::new(),
+        ..Document::blank()
     }
 }
 
@@ -522,5 +527,6 @@ fn build_letter() -> Document {
         ],
         comments: Vec::new(),
         passthrough_parts: BTreeMap::new(),
+        ..Document::blank()
     }
 }

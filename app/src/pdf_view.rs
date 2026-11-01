@@ -5,7 +5,7 @@ use crate::commands::CommandId;
 use crate::state::{DragInteraction, HitRegion, PdfTabState, PdfTool, UiAction};
 use crate::word_view::paint_canvas_scrollbar;
 use pdf_engine::PdfAnnotation;
-use rustpad_render::{Color, DaylightTheme, FontBook, FontSlot, Rect, Surface, UiIcon};
+use rustpad_render::{Color, FontBook, FontSlot, Rect, StudioTheme, Surface, UiIcon};
 
 #[allow(clippy::too_many_arguments)]
 pub fn paint_pdf_tab(
@@ -28,7 +28,7 @@ pub fn paint_pdf_tab(
     let s = ui_scale.clamp(0.85, 1.6);
     let toolbar_h = (44.0 * s).round();
     let toolbar_rect = Rect::new(area.x, area.y, area.w, toolbar_h);
-    surface.fill_rect(toolbar_rect, DaylightTheme::CHROME);
+    surface.fill_rect(toolbar_rect, StudioTheme::chrome());
     surface.fill_rect(
         Rect::new(
             toolbar_rect.x,
@@ -36,7 +36,7 @@ pub fn paint_pdf_tab(
             toolbar_rect.w,
             1.0,
         ),
-        DaylightTheme::BORDER,
+        StudioTheme::border(),
     );
 
     if is_focused {
@@ -66,7 +66,7 @@ pub fn paint_pdf_tab(
             12.0 * s,
             toolbar_rect.x + 16.0 * s,
             toolbar_rect.y + toolbar_h * 0.63,
-            DaylightTheme::PDF_ACCENT,
+            StudioTheme::pdf_accent(),
             &lbl,
         );
         hit_regions.push(HitRegion::button(toolbar_rect, UiAction::SwitchTab(tab_idx)));
@@ -78,7 +78,7 @@ pub fn paint_pdf_tab(
         area.w,
         (area.h - toolbar_h).max(40.0),
     );
-    surface.fill_rect(body, DaylightTheme::DESK_BG);
+    surface.fill_rect(body, StudioTheme::desk_bg());
 
     let show_thumbs = left_open && body.w >= 640.0;
     let thumb_w = if show_thumbs {
@@ -100,7 +100,7 @@ pub fn paint_pdf_tab(
         if split_l.contains(mouse_x, mouse_y) {
             surface.fill_rect(
                 Rect::new(lrect.x + lrect.w - 1.5, lrect.y, 3.0, lrect.h),
-                DaylightTheme::RUST_ORANGE,
+                StudioTheme::rust_orange(),
             );
         }
         hit_regions.push(HitRegion::splitter(
@@ -116,7 +116,7 @@ pub fn paint_pdf_tab(
         if split_r.contains(mouse_x, mouse_y) {
             surface.fill_rect(
                 Rect::new(rrect.x - 1.5, rrect.y, 3.0, rrect.h),
-                DaylightTheme::RUST_ORANGE,
+                StudioTheme::rust_orange(),
             );
         }
         hit_regions.push(HitRegion::splitter(
@@ -153,8 +153,8 @@ pub fn paint_pdf_tab(
         let sheet = Rect::new(sx, sy, sheet_w, sheet_h);
 
         surface.draw_paper_shadow(sheet, 2.0, 12.0, 18);
-        surface.fill_rounded_rect(sheet, 2.0, DaylightTheme::PAPER);
-        surface.stroke_rounded_rect(sheet, 2.0, 1.0, DaylightTheme::BORDER);
+        surface.fill_rounded_rect(sheet, 2.0, Color::rgb(255, 255, 255));
+        surface.stroke_rounded_rect(sheet, 2.0, 1.0, StudioTheme::sheet_border());
 
         // Clip inner page stream strictly inside sheet bounds so wide lines never spill outside!
         let sheet_clip = Rect::new(
@@ -227,10 +227,10 @@ pub fn paint_pdf_tab(
             let hovered = item_box.contains(mouse_x, mouse_y);
 
             if selected {
-                surface.fill_rounded_rect(item_box, 3.0, DaylightTheme::WORD_SOFT);
-                surface.stroke_rounded_rect(item_box, 3.0, 1.4, DaylightTheme::WORD_ACCENT);
+                surface.fill_rounded_rect(item_box, 3.0, StudioTheme::word_soft());
+                surface.stroke_rounded_rect(item_box, 3.0, 1.4, StudioTheme::word_accent());
             } else if hovered && p.tool == PdfTool::SelectEdit {
-                surface.stroke_rounded_rect(item_box, 3.0, 1.0, DaylightTheme::BORDER_STRONG);
+                surface.stroke_rounded_rect(item_box, 3.0, 1.0, StudioTheme::border_strong());
             }
 
             surface.draw_text(
@@ -247,7 +247,7 @@ pub fn paint_pdf_tab(
                 let end_x = tx + fonts.measure_text(slot, &item.text, px_size);
                 surface.fill_rect(
                     Rect::new(end_x + 1.0, item_box.y + 2.0, 2.0, item_box.h - 4.0),
-                    DaylightTheme::WORD_ACCENT,
+                    StudioTheme::word_accent(),
                 );
             }
 
@@ -292,7 +292,7 @@ pub fn paint_pdf_tab(
                         nr.x + 6.0,
                         nr.y + 27.0 * scale,
                         nr.w - 12.0,
-                        DaylightTheme::INK,
+                        Color::rgb(31, 29, 25),
                         note,
                     );
                 }
@@ -332,7 +332,7 @@ pub fn paint_pdf_tab(
                         (8.5 * scale).clamp(7.0, 11.0),
                         rr.x + 6.0,
                         rr.y + rr.h * 0.68,
-                        DaylightTheme::PAPER,
+                        StudioTheme::paper(),
                         "REDACTED",
                     );
                 }
@@ -362,7 +362,7 @@ pub fn paint_pdf_tab(
                             (9.0 * scale).clamp(7.5, 12.5),
                             min_x,
                             max_y + 13.0 * scale,
-                            DaylightTheme::INK_SUB,
+                            StudioTheme::ink_sub(),
                             &format!("Signed by {signer}"),
                         );
                     }
@@ -429,9 +429,9 @@ fn paint_pdf_toolbar(
             sb_r,
             5.0,
             if left_open {
-                DaylightTheme::PDF_SOFT
+                StudioTheme::pdf_soft()
             } else {
-                DaylightTheme::HOVER
+                StudioTheme::hover()
             },
         );
     }
@@ -441,9 +441,9 @@ fn paint_pdf_toolbar(
         sb_r.y + bh * 0.5,
         13.5 * s,
         if left_open {
-            DaylightTheme::PDF_ACCENT
+            StudioTheme::pdf_accent()
         } else {
-            DaylightTheme::INK_SUB
+            StudioTheme::ink_sub()
         },
     );
     hit_regions.push(HitRegion::button(
@@ -474,14 +474,14 @@ fn paint_pdf_toolbar(
                 r,
                 5.0,
                 if active {
-                    DaylightTheme::PDF_SOFT
+                    StudioTheme::pdf_soft()
                 } else {
-                    DaylightTheme::HOVER
+                    StudioTheme::hover()
                 },
             );
         }
         if active {
-            surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::PDF_ACCENT);
+            surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::pdf_accent());
         }
         surface.draw_text(
             fonts,
@@ -490,9 +490,9 @@ fn paint_pdf_toolbar(
             r.x + 8.0 * s,
             r.y + bh * 0.66,
             if active {
-                DaylightTheme::PDF_ACCENT
+                StudioTheme::pdf_accent()
             } else {
-                DaylightTheme::INK
+                StudioTheme::ink()
             },
             label,
         );
@@ -508,7 +508,7 @@ fn paint_pdf_toolbar(
 
     surface.fill_rect(
         Rect::new(bx + 3.0 * s, bar.y + 10.0 * s, 1.0, bar.h - 20.0 * s),
-        DaylightTheme::BORDER,
+        StudioTheme::border(),
     );
     bx += 9.0 * s;
 
@@ -538,14 +538,14 @@ fn paint_pdf_toolbar(
                 r,
                 5.0,
                 if *word_accent {
-                    DaylightTheme::WORD_SOFT
+                    StudioTheme::word_soft()
                 } else {
-                    DaylightTheme::HOVER
+                    StudioTheme::hover()
                 },
             );
         }
         if *word_accent {
-            surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::WORD_ACCENT);
+            surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::word_accent());
         }
         surface.draw_text(
             fonts,
@@ -554,9 +554,9 @@ fn paint_pdf_toolbar(
             r.x + 8.0 * s,
             r.y + bh * 0.66,
             if *word_accent {
-                DaylightTheme::WORD_ACCENT
+                StudioTheme::word_accent()
             } else {
-                DaylightTheme::INK
+                StudioTheme::ink()
             },
             label,
         );
@@ -571,9 +571,9 @@ fn paint_pdf_toolbar(
             insp_btn,
             5.0,
             if right_open {
-                DaylightTheme::WORD_SOFT
+                StudioTheme::word_soft()
             } else {
-                DaylightTheme::HOVER
+                StudioTheme::hover()
             },
         );
     }
@@ -583,9 +583,9 @@ fn paint_pdf_toolbar(
         insp_btn.y + bh * 0.5,
         13.5 * s,
         if right_open {
-            DaylightTheme::WORD_ACCENT
+            StudioTheme::word_accent()
         } else {
-            DaylightTheme::INK_SUB
+            StudioTheme::ink_sub()
         },
     );
     hit_regions.push(HitRegion::button(insp_btn, UiAction::TogglePdfRightInspector));
@@ -603,10 +603,10 @@ fn paint_pdf_thumbnails(
     sb: Rect,
     p: &PdfTabState,
 ) {
-    surface.fill_rect(sb, DaylightTheme::SIDEBAR);
+    surface.fill_rect(sb, StudioTheme::sidebar());
     surface.fill_rect(
         Rect::new(sb.x + sb.w - 1.0, sb.y, 1.0, sb.h),
-        DaylightTheme::BORDER,
+        StudioTheme::border(),
     );
     surface.draw_text(
         fonts,
@@ -614,7 +614,7 @@ fn paint_pdf_thumbnails(
         10.5 * s,
         sb.x + 12.0 * s,
         sb.y + 24.0 * s,
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
         &format!("PAGES ({})", p.pdf.pages.len()),
     );
 
@@ -632,11 +632,11 @@ fn paint_pdf_thumbnails(
             card,
             5.0,
             if active {
-                DaylightTheme::PDF_SOFT
+                StudioTheme::pdf_soft()
             } else if hov {
-                DaylightTheme::HOVER
+                StudioTheme::hover()
             } else {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             },
         );
         surface.stroke_rounded_rect(
@@ -644,15 +644,15 @@ fn paint_pdf_thumbnails(
             5.0,
             if active { 1.5 } else { 1.0 },
             if active {
-                DaylightTheme::PDF_ACCENT
+                StudioTheme::pdf_accent()
             } else {
-                DaylightTheme::BORDER
+                StudioTheme::border()
             },
         );
 
         let mini = Rect::new(card.x + 8.0 * s, card.y + 7.0 * s, 46.0 * s, card.h - 14.0 * s);
-        surface.fill_rect(mini, DaylightTheme::PAPER);
-        surface.stroke_rounded_rect(mini, 2.0, 1.0, DaylightTheme::BORDER_STRONG);
+        surface.fill_rect(mini, StudioTheme::paper());
+        surface.stroke_rounded_rect(mini, 2.0, 1.0, StudioTheme::border_strong());
         for ln in 0..4 {
             surface.fill_rect(
                 Rect::new(
@@ -661,7 +661,7 @@ fn paint_pdf_thumbnails(
                     mini.w - 12.0 * s,
                     2.0,
                 ),
-                DaylightTheme::BORDER,
+                StudioTheme::border(),
             );
         }
 
@@ -672,7 +672,7 @@ fn paint_pdf_thumbnails(
             12.0 * s,
             tx,
             card.y + 24.0 * s,
-            DaylightTheme::INK,
+            StudioTheme::ink(),
             &format!("Page {}", idx + 1),
         );
         surface.draw_text_clipped(
@@ -682,7 +682,7 @@ fn paint_pdf_thumbnails(
             tx,
             card.y + 42.0 * s,
             (card.w - (tx - card.x) - 6.0).max(24.0),
-            DaylightTheme::INK_MUTED,
+            StudioTheme::ink_muted(),
             &format!("{} blocks", pg.text_items.len()),
         );
 
@@ -698,15 +698,15 @@ fn paint_pdf_thumbnails(
         let mut btn_x = tx;
         if idx > 0 {
             let up_r = Rect::new(btn_x, card.y + 54.0 * s, 32.0 * s, 20.0 * s);
-            surface.fill_rounded_rect(up_r, 3.0, DaylightTheme::SIDEBAR);
-            surface.stroke_rounded_rect(up_r, 3.0, 1.0, DaylightTheme::BORDER);
+            surface.fill_rounded_rect(up_r, 3.0, StudioTheme::sidebar());
+            surface.stroke_rounded_rect(up_r, 3.0, 1.0, StudioTheme::border());
             surface.draw_text(
                 fonts,
                 FontSlot::SansBold,
                 9.8 * s,
                 up_r.x + 7.0 * s,
                 up_r.y + 13.5 * s,
-                DaylightTheme::INK_SUB,
+                StudioTheme::ink_sub(),
                 "Up",
             );
             hit_regions.push(HitRegion::button(
@@ -721,15 +721,15 @@ fn paint_pdf_thumbnails(
         }
         if idx + 1 < total {
             let dn_r = Rect::new(btn_x, card.y + 54.0 * s, 36.0 * s, 20.0 * s);
-            surface.fill_rounded_rect(dn_r, 3.0, DaylightTheme::SIDEBAR);
-            surface.stroke_rounded_rect(dn_r, 3.0, 1.0, DaylightTheme::BORDER);
+            surface.fill_rounded_rect(dn_r, 3.0, StudioTheme::sidebar());
+            surface.stroke_rounded_rect(dn_r, 3.0, 1.0, StudioTheme::border());
             surface.draw_text(
                 fonts,
                 FontSlot::SansBold,
                 9.8 * s,
                 dn_r.x + 5.0 * s,
                 dn_r.y + 13.5 * s,
-                DaylightTheme::INK_SUB,
+                StudioTheme::ink_sub(),
                 "Down",
             );
             hit_regions.push(HitRegion::button(
@@ -757,10 +757,10 @@ fn paint_pdf_inspector(
     insp: Rect,
     p: &PdfTabState,
 ) {
-    surface.fill_rect(insp, DaylightTheme::SIDEBAR);
+    surface.fill_rect(insp, StudioTheme::sidebar());
     surface.fill_rect(
         Rect::new(insp.x, insp.y, 1.0, insp.h),
-        DaylightTheme::BORDER,
+        StudioTheme::border(),
     );
 
     surface.draw_text(
@@ -769,7 +769,7 @@ fn paint_pdf_inspector(
         10.5 * s,
         insp.x + 14.0 * s,
         insp.y + 24.0 * s,
-        DaylightTheme::INK_MUTED,
+        StudioTheme::ink_muted(),
         "PDF INSPECTOR",
     );
 
@@ -797,7 +797,7 @@ fn paint_pdf_inspector(
             10.2 * s,
             insp.x + 14.0 * s,
             y,
-            DaylightTheme::INK_MUTED,
+            StudioTheme::ink_muted(),
             k,
         );
         surface.draw_text_clipped(
@@ -807,7 +807,7 @@ fn paint_pdf_inspector(
             insp.x + 14.0 * s,
             y + 16.0 * s,
             insp.w - 28.0 * s,
-            DaylightTheme::INK,
+            StudioTheme::ink(),
             &val,
         );
         y += 38.0 * s;
@@ -835,12 +835,12 @@ fn paint_pdf_inspector(
             r,
             5.0,
             if hov {
-                DaylightTheme::HOVER
+                StudioTheme::hover()
             } else {
-                DaylightTheme::PAPER
+                StudioTheme::paper()
             },
         );
-        surface.stroke_rounded_rect(r, 5.0, 1.0, DaylightTheme::BORDER);
+        surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::border());
         surface.draw_text_clipped(
             fonts,
             FontSlot::SansBold,
@@ -848,7 +848,7 @@ fn paint_pdf_inspector(
             r.x + 10.0 * s,
             r.y + bh * 0.65,
             r.w - 18.0 * s,
-            DaylightTheme::INK,
+            StudioTheme::ink(),
             lbl,
         );
         hit_regions.push(HitRegion::button(r, UiAction::ExecCommand(*cmd)));

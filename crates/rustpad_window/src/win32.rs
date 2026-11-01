@@ -4,7 +4,7 @@
 #![allow(non_snake_case, non_camel_case_types, clippy::upper_case_acronyms)]
 
 use crate::{AppControl, CursorShape, DesktopAppHandler, Key, Modifiers, MouseButton, WindowEvent};
-use rustpad_render::{DaylightTheme, Surface};
+use rustpad_render::{active_theme_mode, StudioTheme, Surface};
 use std::cell::Cell;
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -141,11 +141,41 @@ struct OPENFILENAMEW {
 #[link(name = "kernel32")]
 extern "system" {
     fn GetModuleHandleW(lpModuleName: *const u16) -> HINSTANCE;
+    fn LoadLibraryW(lpLibFileName: *const u16) -> HINSTANCE;
+    fn GetProcAddress(hModule: HINSTANCE, lpProcName: *const u8) -> *const c_void;
     fn GlobalAlloc(uFlags: UINT, dwBytes: usize) -> HGLOBAL;
     fn GlobalLock(hMem: HGLOBAL) -> *mut c_void;
     fn GlobalUnlock(hMem: HGLOBAL) -> BOOL;
     fn GlobalSize(hMem: HGLOBAL) -> usize;
     fn GlobalFree(hMem: HGLOBAL) -> HGLOBAL;
+}
+
+pub fn apply_win32_dark_titlebar(is_dark: bool) {
+    unsafe {
+        let hwnd = ACTIVE_HWND.load(Ordering::Relaxed) as HWND;
+        if hwnd.is_null() {
+            return;
+        }
+        let dll = to_wide("dwmapi.dll");
+        let hmod = LoadLibraryW(dll.as_ptr());
+        if hmod.is_null() {
+            return;
+        }
+        let proc_ptr = GetProcAddress(hmod, b"DwmSetWindowAttribute\0".as_ptr());
+        if proc_ptr.is_null() {
+            return;
+        }
+        type DwmSetWindowAttributeFn =
+            unsafe extern "system" fn(HWND, DWORD, *const c_void, DWORD) -> i32;
+        let dwm_set: DwmSetWindowAttributeFn = std::mem::transmute(proc_ptr);
+        let flag: i32 = if is_dark { 1 } else { 0 };
+        // Attribute 20 = Windows 11 & Win10 20H1+; Attribute 19 = earlier Win10 builds
+        let hr = dwm_set(hwnd, 20, (&flag as *const i32) as *const c_void, 4);
+        if hr != 0 {
+            let _ = dwm_set(hwnd, 19, (&flag as *const i32) as *const c_void, 4);
+        }
+        InvalidateRect(hwnd, std::ptr::null(), 0);
+    }
 }
 
 #[link(name = "user32")]
@@ -495,7 +525,7 @@ unsafe fn wnd_proc_inner(
         0x0005 /* WM_SIZE */ => {
             let w = ((lparam as usize) & 0xFFFF).max(320) as u32;
             let h = (((lparam as usize) >> 16) & 0xFFFF).max(240) as u32;
-            ctx.surface.resize(w, h, DaylightTheme::DESK_BG);
+            ctx.surface.resize(w, h, StudioTheme::desk_bg());
             let _ = ctx
                 .app
                 .on_event(WindowEvent::Resize { width: w, height: h }, &mut ctx.surface);
@@ -674,7 +704,7 @@ pub fn run_win32_window(
 
         let mut ctx = Win32Context {
             app,
-            surface: Surface::new(scaled_w, scaled_h, DaylightTheme::DESK_BG),
+            surface: Surface::new(scaled_w, scaled_h, StudioTheme::desk_bg()),
             needs_render: false,
         };
         ctx.app.render(&mut ctx.surface);
@@ -704,6 +734,7 @@ pub fn run_win32_window(
         }
 
         ACTIVE_HWND.store(hwnd as isize, Ordering::Relaxed);
+        apply_win32_dark_titlebar(active_theme_mode().is_dark_chrome());
         SetWindowLongPtrW(hwnd, -21, (&mut ctx as *mut Win32Context<'_>) as isize);
         DragAcceptFiles(hwnd, 1);
         // 16ms (~60Hz) tick drives smooth kinetic spring scroll, cursor blink & background worker polling

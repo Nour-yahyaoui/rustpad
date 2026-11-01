@@ -494,6 +494,18 @@ pub fn spool_pdf_to_os_printer(pdf_path: & std::path::Path) -> Result<String, St
     }
 }
 
+/// Synchronizes the native OS window frame/titlebar with Dark Mode where supported (Win10/Win11 DWM).
+pub fn sync_native_window_theme(is_dark: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        win32::apply_win32_dark_titlebar(is_dark);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = is_dark;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

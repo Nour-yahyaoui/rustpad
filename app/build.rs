@@ -282,7 +282,7 @@ fn build_app_manifest_xml() -> &'static str {
     r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity
-    version="2.4.0.0"
+    version="3.0.0.0"
     processorArchitecture="amd64"
     name="NourYahyaoui.RustPad.DesktopStudio"
     type="win32"
