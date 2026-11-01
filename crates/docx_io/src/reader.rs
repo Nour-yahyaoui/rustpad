@@ -257,10 +257,11 @@ where
     // `word/vbaProject.bin`, `word/embeddings/*`, charts, SmartArt, unreferenced media)
     // losslessly: compact XML/config parts (< 256 KiB) in `passthrough_parts`, and larger
     // binary/OLE/VBA payloads zero-copy in `passthrough_shared` (`Arc<[u8]>`)!
-    let managed_parts: [&str; 13] = [
+    let managed_parts: [&str; 14] = [
         "[Content_Types].xml",
         "_rels/.rels",
         "docProps/core.xml",
+        "docProps/app.xml",
         "word/_rels/document.xml.rels",
         "word/styles.xml",
         "word/numbering.xml",
@@ -764,21 +765,22 @@ fn parse_run(
                 "footnoteReference" => {
                     if let Some(fid) = el.attr("id").and_then(|v| v.parse::<u32>().ok()) {
                         footnote_ref = Some(fid);
-                        if text.is_empty() {
-                            text.push_str(&format!("[{fid}]"));
-                        }
                     }
                 }
                 "endnoteReference" => {
                     if let Some(eid) = el.attr("id").and_then(|v| v.parse::<u32>().ok()) {
                         endnote_ref = Some(eid);
-                        if text.is_empty() {
-                            text.push_str(&format!("[e{eid}]"));
-                        }
                     }
                 }
                 _ => {}
             }
+        }
+    }
+    if text.is_empty() {
+        if let Some(fid) = footnote_ref {
+            text.push_str(&format!("[{fid}]"));
+        } else if let Some(eid) = endnote_ref {
+            text.push_str(&format!("[e{eid}]"));
         }
     }
     if text.is_empty() {
