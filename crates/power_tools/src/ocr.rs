@@ -334,7 +334,7 @@ fn decode_grayscale_scan(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     if bytes.starts_with(b"P5") {
         return parse_pgm_p5(bytes);
     }
-    let (w, h, rgba) = decode_any_image_rgba(bytes)?;
+    let (w, h, rgba) = decode_any_image_rgba(bytes).ok()?;
     let mut luma = Vec::with_capacity((w * h) as usize);
     for px in rgba.chunks_exact(4) {
         let a = px[3] as u32;
