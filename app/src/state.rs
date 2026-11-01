@@ -10,7 +10,6 @@ use doc_model::{
 };
 use docx_io::{
     load_docx_file, load_docx_shared_with_progress, repair_docx_bytes, save_docx_bytes,
-    save_docx_file,
 };
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
 use pdf_engine::{
@@ -1776,7 +1775,6 @@ impl RustPadApp {
                     }
                     let docx_bytes = save_docx_bytes(&w.doc);
                     write_bytes_secure_atomic(&final_path, &docx_bytes)?;
-                    let _ = &save_docx_file;
                     WalJournal::clear_frame(&WalJournal::journal_path_for(Some(&final_path), self.active_tab));
                     let _ = AdvisoryFileLock::acquire(&final_path, &w.doc.author);
                     w.path = Some(final_path.clone());
@@ -4476,6 +4474,10 @@ impl RustPadApp {
                     self.dispatch_ui_action(UiAction::OpenCommandPalette);
                     return;
                 }
+                Key::Char('j') if mods.shift => {
+                    self.execute_command(CommandId::OpenDocumentInspector);
+                    return;
+                }
                 Key::Char('j') => {
                     self.execute_command(CommandId::ToggleAiDock);
                     return;
@@ -4498,10 +4500,6 @@ impl RustPadApp {
                 }
                 Key::Char('d') if mods.shift => {
                     self.execute_command(CommandId::CycleThemeMode);
-                    return;
-                }
-                Key::Char('j') if mods.shift => {
-                    self.execute_command(CommandId::OpenDocumentInspector);
                     return;
                 }
                 Key::Char('e') if mods.shift => {

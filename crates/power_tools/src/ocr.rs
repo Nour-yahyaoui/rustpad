@@ -350,7 +350,7 @@ fn decode_grayscale_scan(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 
 fn parse_pgm_p5(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let mut idx = 2usize;
-    let mut next_token = |data: &[u8], pos: &mut usize| -> Option<u32> {
+    let next_token = |data: &[u8], pos: &mut usize| -> Option<u32> {
         while *pos < data.len() {
             if data[*pos] == b'#' {
                 while *pos < data.len() && data[*pos] != b'\n' {

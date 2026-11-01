@@ -57,7 +57,6 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
     );
     zw.add_file("_rels/.rels", build_root_rels().into_bytes());
     zw.add_file("docProps/core.xml", build_core_props(doc).into_bytes());
-    zw.add_file("docProps/app.xml", build_app_props(doc).into_bytes());
     zw.add_file(
         "word/_rels/document.xml.rels",
         build_doc_rels(
@@ -112,7 +111,6 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
         "[Content_Types].xml",
         "_rels/.rels",
         "docProps/core.xml",
-        "docProps/app.xml",
         "word/_rels/document.xml.rels",
         "word/styles.xml",
         "word/numbering.xml",
@@ -149,8 +147,8 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
     }
 
     if !doc.metadata.company.is_empty()
-        && !doc.passthrough_parts.contains_key("docProps/app.xml")
-        && !doc.passthrough_shared.contains_key("docProps/app.xml")
+        || (!doc.passthrough_parts.contains_key("docProps/app.xml")
+            && !doc.passthrough_shared.contains_key("docProps/app.xml"))
     {
         emitted_names.insert("docProps/app.xml".into());
         zw.add_file("docProps/app.xml", build_app_props(doc).into_bytes());
