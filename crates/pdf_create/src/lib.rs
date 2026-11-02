@@ -493,7 +493,7 @@ fn render_paragraph_pdf(
 
     // Merge contiguous same-style tokens on each wrapped line so phrases get continuous underlines/highlights
     for line in &mut lines {
-        let mut merged: Vec<PdfToken> = Vec::with_capacity(line.len());
+        let mut merged: Vec<WordToken> = Vec::with_capacity(line.len());
         for tok in line.drain(..) {
             if let Some(prev) = merged.last_mut() {
                 if prev.style == tok.style {
