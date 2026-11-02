@@ -1568,15 +1568,16 @@ mod tests {
 
         let expected_x_hello = doc.page_setup.margin_left_pt;
         let expected_x_nour = expected_x_hello + w_prefix_with_space;
-        let expected_x_after = expected_x_nour + w_bold_name + space_w;
+        let expected_underline_end = expected_x_nour + w_bold_name;
+        let expected_x_after = expected_underline_end + space_w;
 
         assert!(
             stream.contains(&format!("{:.2}", expected_x_nour)),
             "Expected bold run at x={expected_x_nour:.2}, stream:\n{stream}"
         );
         assert!(
-            stream.contains(&format!("{:.2} 0.85 re f", w_bold_name)),
-            "Expected full underline width {w_bold_name:.2}, stream:\n{stream}"
+            stream.contains(&format!("m {:.2} ", expected_underline_end)),
+            "Expected full underline end x={expected_underline_end:.2}, stream:\n{stream}"
         );
         assert!(
             stream.contains(&format!("{:.2}", expected_x_after)),
