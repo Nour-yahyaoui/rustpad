@@ -12,17 +12,66 @@ const MONO_REGULAR_TTF: &[u8] = include_bytes!("../../../assets/fonts/Mono-Regul
 pub enum FontSlot {
     SansRegular,
     SansBold,
+    SansItalic,
+    SansBoldItalic,
     SerifRegular,
+    SerifBold,
+    SerifItalic,
+    SerifBoldItalic,
     MonoRegular,
+    MonoBold,
+    MonoItalic,
+    MonoBoldItalic,
 }
 
 impl FontSlot {
     pub fn select(family: FontFamily, bold: bool) -> Self {
-        match (family, bold) {
-            (FontFamily::Sans, false) => Self::SansRegular,
-            (FontFamily::Sans, true) => Self::SansBold,
-            (FontFamily::Serif, _) => Self::SerifRegular,
-            (FontFamily::Mono, _) => Self::MonoRegular,
+        Self::select_styled(family, bold, false)
+    }
+
+    pub fn select_styled(family: FontFamily, bold: bool, italic: bool) -> Self {
+        match (family, bold, italic) {
+            (FontFamily::Sans, false, false) => Self::SansRegular,
+            (FontFamily::Sans, true, false) => Self::SansBold,
+            (FontFamily::Sans, false, true) => Self::SansItalic,
+            (FontFamily::Sans, true, true) => Self::SansBoldItalic,
+            (FontFamily::Serif, false, false) => Self::SerifRegular,
+            (FontFamily::Serif, true, false) => Self::SerifBold,
+            (FontFamily::Serif, false, true) => Self::SerifItalic,
+            (FontFamily::Serif, true, true) => Self::SerifBoldItalic,
+            (FontFamily::Mono, false, false) => Self::MonoRegular,
+            (FontFamily::Mono, true, false) => Self::MonoBold,
+            (FontFamily::Mono, false, true) => Self::MonoItalic,
+            (FontFamily::Mono, true, true) => Self::MonoBoldItalic,
+        }
+    }
+
+    #[inline]
+    pub fn is_italic(self) -> bool {
+        matches!(
+            self,
+            Self::SansItalic
+                | Self::SansBoldItalic
+                | Self::SerifItalic
+                | Self::SerifBoldItalic
+                | Self::MonoItalic
+                | Self::MonoBoldItalic
+        )
+    }
+
+    #[inline]
+    pub fn is_synthetic_bold(self) -> bool {
+        matches!(
+            self,
+            Self::SerifBold | Self::SerifBoldItalic | Self::MonoBold | Self::MonoBoldItalic
+        )
+    }
+
+    #[inline]
+    pub fn advance_factor(self) -> f32 {
+        match self {
+            Self::SerifBold | Self::SerifBoldItalic => 1.045,
+            _ => 1.0,
         }
     }
 }
@@ -382,10 +431,10 @@ impl TtfFace {
         }
     }
 
-    fn rasterize(&self, ch: char, px_size: f32) -> RasterGlyph {
+    fn rasterize(&self, ch: char, px_size: f32, slot: FontSlot) -> RasterGlyph {
         let gid = self.glyph_index(ch);
         let scale = px_size / self.units_per_em;
-        let advance_px = (self.advance_units(gid) as f32) * scale;
+        let advance_px = (self.advance_units(gid) as f32) * scale * slot.advance_factor();
 
         let mut raw_edges = Vec::new();
         self.collect_segments(gid, 0, &mut raw_edges);
@@ -400,6 +449,13 @@ impl TtfFace {
             };
         }
 
+        let shear = if slot.is_italic() { 0.20f32 } else { 0.0 };
+        let bold_pad = if slot.is_synthetic_bold() {
+            (px_size * 0.042).clamp(0.55, 2.2)
+        } else {
+            0.0
+        };
+
         // Convert font coordinates (Y-up) into screen pixel coordinates (Y-down relative to baseline)
         let mut min_x = f32::MAX;
         let mut max_x = f32::MIN;
@@ -408,12 +464,12 @@ impl TtfFace {
         let mut scaled = Vec::with_capacity(raw_edges.len());
 
         for (x0, y0, x1, y1) in raw_edges {
-            let sx0 = x0 * scale;
+            let sx0 = (x0 + shear * y0) * scale;
             let sy0 = -y0 * scale;
-            let sx1 = x1 * scale;
+            let sx1 = (x1 + shear * y1) * scale;
             let sy1 = -y1 * scale;
             min_x = min_x.min(sx0).min(sx1);
-            max_x = max_x.max(sx0).max(sx1);
+            max_x = max_x.max(sx0 + bold_pad).max(sx1 + bold_pad);
             min_y = min_y.min(sy0).min(sy1);
             max_y = max_y.max(sy0).max(sy1);
             if (sy0 - sy1).abs() > 1e-4 {
@@ -457,22 +513,32 @@ impl TtfFace {
 
                 let mut winding = 0i32;
                 let mut span_start = 0.0f32;
+                let mut filled_spans: Vec<(f32, f32)> = Vec::new();
                 for &(x_hit, dir) in &intersections {
                     if winding == 0 {
                         span_start = x_hit;
                     }
                     winding += dir;
                     if winding == 0 {
-                        let span_end = x_hit;
-                        let px_start = (span_start.floor() as i32).max(0) as u32;
-                        let px_end = (span_end.ceil() as i32).min(w as i32).max(0) as u32;
-                        for px in px_start..px_end {
-                            let left = (px as f32).max(span_start);
-                            let right = ((px + 1) as f32).min(span_end);
-                            if right > left {
-                                let cov = ((right - left) * 63.75).round() as u8;
-                                row_cov[px as usize] = row_cov[px as usize].saturating_add(cov);
+                        let span_end = x_hit + bold_pad;
+                        if let Some(last) = filled_spans.last_mut() {
+                            if span_start <= last.1 {
+                                last.1 = last.1.max(span_end);
+                                continue;
                             }
+                        }
+                        filled_spans.push((span_start, span_end));
+                    }
+                }
+                for (s0, s1) in filled_spans {
+                    let px_start = (s0.floor() as i32).max(0) as u32;
+                    let px_end = (s1.ceil() as i32).min(w as i32).max(0) as u32;
+                    for px in px_start..px_end {
+                        let left = (px as f32).max(s0);
+                        let right = ((px + 1) as f32).min(s1);
+                        if right > left {
+                            let cov = ((right - left) * 63.75).round() as u8;
+                            row_cov[px as usize] = row_cov[px as usize].saturating_add(cov);
                         }
                     }
                 }
@@ -578,10 +644,16 @@ impl FontBook {
 
     fn face(&self, slot: FontSlot) -> &TtfFace {
         match slot {
-            FontSlot::SansRegular => &self.sans_reg,
-            FontSlot::SansBold => &self.sans_bold,
-            FontSlot::SerifRegular => &self.serif_reg,
-            FontSlot::MonoRegular => &self.mono_reg,
+            FontSlot::SansRegular | FontSlot::SansItalic => &self.sans_reg,
+            FontSlot::SansBold | FontSlot::SansBoldItalic => &self.sans_bold,
+            FontSlot::SerifRegular
+            | FontSlot::SerifBold
+            | FontSlot::SerifItalic
+            | FontSlot::SerifBoldItalic => &self.serif_reg,
+            FontSlot::MonoRegular
+            | FontSlot::MonoBold
+            | FontSlot::MonoItalic
+            | FontSlot::MonoBoldItalic => &self.mono_reg,
         }
     }
 
@@ -593,7 +665,7 @@ impl FontBook {
             if self.cache.len() >= 4096 {
                 self.cache.clear();
             }
-            let raster = self.face(slot).rasterize(ch, quantized_px);
+            let raster = self.face(slot).rasterize(ch, quantized_px, slot);
             self.cache.insert(key, raster);
         }
         &self.cache[&key]
@@ -604,7 +676,7 @@ impl FontBook {
         let size_key = (px_size.clamp(6.0, 140.0) * 4.0).round() as u16;
         let quantized_px = (size_key as f32) / 4.0;
         let units_per_em = self.face(slot).units_per_em;
-        let scale = quantized_px / units_per_em;
+        let scale = (quantized_px / units_per_em) * slot.advance_factor();
         let space_adv = (self.face(slot).ascii_advances[b' ' as usize] as f32) * scale;
 
         let mut w = 0.0f32;

@@ -92,6 +92,8 @@ pub struct WordTabState {
     pub cursor_block: usize,
     pub cursor_char: usize,
     pub selection_anchor: Option<(usize, usize)>, // (block_idx, char_idx)
+    /// Inline typing style (`B`, `I`, `U`, font, color, highlight, sup/sub) queued at caret when no selection is active.
+    pub pending_typing_style: Option<SpanStyle>,
     pub active_table_cell: Option<(usize, usize, usize)>, // (block_idx, row, col)
     pub selected_image_block: Option<usize>,
     pub table_cursor_char: usize,
@@ -141,6 +143,7 @@ impl WordTabState {
             cursor_block: 0,
             cursor_char,
             selection_anchor: None,
+            pending_typing_style: None,
             active_table_cell: None,
             selected_image_block: None,
             table_cursor_char: 0,
@@ -595,10 +598,37 @@ impl WordTabState {
         }
         self.doc.ensure_non_empty();
         self.selected_image_block = None;
+        self.pending_typing_style = None;
         self.cursor_block = img_idx.min(self.doc.blocks.len().saturating_sub(1));
         self.cursor_char = 0;
         self.dirty = true;
         true
+    }
+
+    /// Mutates the active inline typing style at the caret without overwriting existing spans in non-empty paragraphs.
+    pub fn apply_cursor_typing_style(
+        &mut self,
+        idx: usize,
+        mut f: impl FnMut(&mut SpanStyle),
+    ) -> Option<SpanStyle> {
+        let Some(Block::Paragraph(p)) = self.doc.blocks.get_mut(idx) else {
+            return None;
+        };
+        if p.spans.is_empty() {
+            p.spans.push(TextSpan::plain(""));
+        }
+        let mut st = self
+            .pending_typing_style
+            .clone()
+            .unwrap_or_else(|| p.style_at_char(self.cursor_char));
+        f(&mut st);
+        if p.plain_text().is_empty() {
+            for sp in &mut p.spans {
+                sp.style = st.clone();
+            }
+        }
+        self.pending_typing_style = Some(st.clone());
+        Some(st)
     }
 }
 
@@ -2035,6 +2065,7 @@ impl RustPadApp {
                         w.active_table_cell = None;
                         w.selected_image_block = None;
                         w.selection_anchor = None;
+                        w.pending_typing_style = None;
                         w.cursor_block = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
                         w.cursor_char = 0;
                         self.status_toast = "Undid last edit".into();
@@ -2049,6 +2080,7 @@ impl RustPadApp {
                         w.active_table_cell = None;
                         w.selected_image_block = None;
                         w.selection_anchor = None;
+                        w.pending_typing_style = None;
                         w.cursor_block = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
                         w.cursor_char = 0;
                         self.status_toast = "Redid edit".into();
@@ -2681,6 +2713,7 @@ impl RustPadApp {
             if let Some(((b0, c0), (b1, c1))) = w.ordered_selection() {
                 w.history.record(&w.doc);
                 w.dirty = true;
+                w.pending_typing_style = None;
                 for bi in b0..=b1.min(w.doc.blocks.len().saturating_sub(1)) {
                     if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(bi) {
                         let len = p.plain_text().chars().count();
@@ -2693,14 +2726,9 @@ impl RustPadApp {
                 return;
             }
             let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
-            if matches!(w.doc.blocks.get(idx), Some(Block::Paragraph(_))) {
-                w.history.record(&w.doc);
-            }
-            if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
-                w.dirty = true;
-                for s in &mut p.spans {
-                    s.style.font_family = fam;
-                }
+            if w.apply_cursor_typing_style(idx, |st| st.font_family = fam)
+                .is_some()
+            {
                 self.status_toast = format!("Font Family: {}", fam.label());
             }
         }
@@ -3021,6 +3049,7 @@ impl RustPadApp {
             CommandId::ToggleSuperscript | CommandId::ToggleSubscript => {
                 let is_sup = cmd == CommandId::ToggleSuperscript;
                 if let Some(((b0, c0), (b1, c1))) = w.ordered_selection() {
+                    w.pending_typing_style = None;
                     for bi in b0..=b1.min(w.doc.blocks.len().saturating_sub(1)) {
                         if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(bi) {
                             let len = p.plain_text().chars().count();
@@ -3041,25 +3070,20 @@ impl RustPadApp {
                             });
                         }
                     }
-                } else if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
-                    let target = if is_sup {
-                        !p.spans.first().is_some_and(|s| s.style.superscript)
-                    } else {
-                        !p.spans.first().is_some_and(|s| s.style.subscript)
-                    };
-                    for sp in &mut p.spans {
+                } else {
+                    w.apply_cursor_typing_style(idx, |st| {
                         if is_sup {
-                            sp.style.superscript = target;
-                            if target {
-                                sp.style.subscript = false;
+                            st.superscript = !st.superscript;
+                            if st.superscript {
+                                st.subscript = false;
                             }
                         } else {
-                            sp.style.subscript = target;
-                            if target {
-                                sp.style.superscript = false;
+                            st.subscript = !st.subscript;
+                            if st.subscript {
+                                st.superscript = false;
                             }
                         }
-                    }
+                    });
                 }
                 self.status_toast = if is_sup {
                     "Toggled Superscript (<w:vertAlign w:val=\"superscript\"/>)".into()
@@ -3085,6 +3109,7 @@ impl RustPadApp {
                     | CommandId::CycleTextColor
                     | CommandId::ToggleHighlight
             ) {
+                w.pending_typing_style = None;
                 let probe_style = match w.doc.blocks.get(b0) {
                     Some(Block::Paragraph(p)) => p.style_at_char(c0 + 1),
                     _ => SpanStyle::default(),
@@ -3141,40 +3166,69 @@ impl RustPadApp {
             }
         }
 
+        if matches!(
+            cmd,
+            CommandId::ToggleBold
+                | CommandId::ToggleItalic
+                | CommandId::ToggleUnderline
+                | CommandId::ToggleStrike
+                | CommandId::CycleFontFamily
+                | CommandId::FontSizeUp
+                | CommandId::FontSizeDown
+                | CommandId::CycleTextColor
+                | CommandId::ToggleHighlight
+        ) {
+            if let Some(updated) = w.apply_cursor_typing_style(idx, |st| match cmd {
+                CommandId::ToggleBold => st.bold = !st.bold,
+                CommandId::ToggleItalic => st.italic = !st.italic,
+                CommandId::ToggleUnderline => st.underline = !st.underline,
+                CommandId::ToggleStrike => st.strikethrough = !st.strikethrough,
+                CommandId::CycleFontFamily => {
+                    st.font_family = match st.font_family {
+                        FontFamily::Sans => FontFamily::Serif,
+                        FontFamily::Serif => FontFamily::Mono,
+                        FontFamily::Mono => FontFamily::Sans,
+                    };
+                }
+                CommandId::FontSizeUp => st.font_size_pt = (st.font_size_pt + 1.0).min(56.0),
+                CommandId::FontSizeDown => st.font_size_pt = (st.font_size_pt - 1.0).max(8.5),
+                CommandId::CycleTextColor => {
+                    st.color = if st.color == RgbColor::INK_SLATE {
+                        RgbColor::COBALT
+                    } else if st.color == RgbColor::COBALT {
+                        RgbColor::CORAL
+                    } else if st.color == RgbColor::CORAL {
+                        RgbColor::EMERALD
+                    } else {
+                        RgbColor::INK_SLATE
+                    };
+                }
+                CommandId::ToggleHighlight => {
+                    st.highlight = match st.highlight {
+                        None => Some(RgbColor::AMBER_HIGHLIGHT),
+                        Some(c) if c == RgbColor::AMBER_HIGHLIGHT => {
+                            Some(RgbColor::MINT_HIGHLIGHT)
+                        }
+                        Some(c) if c == RgbColor::MINT_HIGHLIGHT => Some(RgbColor::SKY_HIGHLIGHT),
+                        _ => None,
+                    };
+                }
+                _ => {}
+            }) {
+                if cmd == CommandId::CycleFontFamily {
+                    self.status_toast = format!("Font: {}", updated.font_family.label());
+                }
+            }
+            return;
+        }
+
         if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
             if p.spans.is_empty() {
                 p.spans.push(TextSpan::plain(""));
             }
             match cmd {
-                CommandId::ToggleBold => {
-                    let target = !p.spans.first().map(|s| s.style.bold).unwrap_or(false);
-                    for s in &mut p.spans {
-                        s.style.bold = target;
-                    }
-                }
-                CommandId::ToggleItalic => {
-                    let target = !p.spans.first().map(|s| s.style.italic).unwrap_or(false);
-                    for s in &mut p.spans {
-                        s.style.italic = target;
-                    }
-                }
-                CommandId::ToggleUnderline => {
-                    let target = !p.spans.first().map(|s| s.style.underline).unwrap_or(false);
-                    for s in &mut p.spans {
-                        s.style.underline = target;
-                    }
-                }
-                CommandId::ToggleStrike => {
-                    let target = !p
-                        .spans
-                        .first()
-                        .map(|s| s.style.strikethrough)
-                        .unwrap_or(false);
-                    for s in &mut p.spans {
-                        s.style.strikethrough = target;
-                    }
-                }
                 CommandId::CycleStyle => {
+                    w.pending_typing_style = None;
                     let next = match p.style {
                         ParagraphStyle::Normal => ParagraphStyle::Heading1,
                         ParagraphStyle::Heading1 => ParagraphStyle::Heading2,
@@ -3192,65 +3246,6 @@ impl RustPadApp {
                         s.style.italic = next == ParagraphStyle::Quote;
                     }
                     self.status_toast = format!("Style: {}", next.label());
-                }
-                CommandId::CycleFontFamily => {
-                    let next = match p
-                        .spans
-                        .first()
-                        .map(|s| s.style.font_family)
-                        .unwrap_or(FontFamily::Sans)
-                    {
-                        FontFamily::Sans => FontFamily::Serif,
-                        FontFamily::Serif => FontFamily::Mono,
-                        FontFamily::Mono => FontFamily::Sans,
-                    };
-                    for s in &mut p.spans {
-                        s.style.font_family = next;
-                    }
-                    self.status_toast = format!("Font: {}", next.label());
-                }
-                CommandId::FontSizeUp => {
-                    for s in &mut p.spans {
-                        s.style.font_size_pt = (s.style.font_size_pt + 1.0).min(56.0);
-                    }
-                }
-                CommandId::FontSizeDown => {
-                    for s in &mut p.spans {
-                        s.style.font_size_pt = (s.style.font_size_pt - 1.0).max(8.5);
-                    }
-                }
-                CommandId::CycleTextColor => {
-                    let cur = p
-                        .spans
-                        .first()
-                        .map(|s| s.style.color)
-                        .unwrap_or(RgbColor::INK_SLATE);
-                    let next = if cur == RgbColor::INK_SLATE {
-                        RgbColor::COBALT
-                    } else if cur == RgbColor::COBALT {
-                        RgbColor::CORAL
-                    } else if cur == RgbColor::CORAL {
-                        RgbColor::EMERALD
-                    } else {
-                        RgbColor::INK_SLATE
-                    };
-                    for s in &mut p.spans {
-                        s.style.color = next;
-                    }
-                }
-                CommandId::ToggleHighlight => {
-                    let cur = p.spans.first().and_then(|s| s.style.highlight);
-                    let next = match cur {
-                        None => Some(RgbColor::AMBER_HIGHLIGHT),
-                        Some(c) if c == RgbColor::AMBER_HIGHLIGHT => {
-                            Some(RgbColor::MINT_HIGHLIGHT)
-                        }
-                        Some(c) if c == RgbColor::MINT_HIGHLIGHT => Some(RgbColor::SKY_HIGHLIGHT),
-                        _ => None,
-                    };
-                    for s in &mut p.spans {
-                        s.style.highlight = next;
-                    }
                 }
                 CommandId::AlignLeft => p.alignment = Alignment::Left,
                 CommandId::AlignCenter => p.alignment = Alignment::Center,
@@ -3450,6 +3445,7 @@ impl RustPadApp {
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
                     w.active_table_cell = None;
                     w.selected_image_block = None;
+                    w.pending_typing_style = None;
                     if is_double_click {
                         let (ws, we) = match w.doc.blocks.get(block_idx) {
                             Some(Block::Paragraph(p)) => {
@@ -5337,12 +5333,18 @@ fn word_insert_char_no_record(w: &mut WordTabState, ch: char) {
     let track = w.doc.track_changes;
     let rev_author = w.doc.author.clone();
     let next_rev_id = if track { w.doc.next_revision_id() } else { 1 };
+    let desired_style = w.pending_typing_style.clone();
     if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
         if p.spans.is_empty() {
+            let init_style = desired_style.clone().unwrap_or_else(|| SpanStyle {
+                font_size_pt: p.style.default_font_size(),
+                bold: p.style.is_bold_by_default(),
+                ..SpanStyle::default()
+            });
             if track {
                 p.spans.push(TextSpan::tracked(
                     ch.to_string(),
-                    SpanStyle::default(),
+                    init_style,
                     RevisionMeta {
                         id: next_rev_id,
                         kind: RevisionKind::Insertion,
@@ -5353,7 +5355,7 @@ fn word_insert_char_no_record(w: &mut WordTabState, ch: char) {
                 w.cursor_char = 1;
                 return;
             }
-            p.spans.push(TextSpan::plain(""));
+            p.spans.push(TextSpan::styled(String::new(), init_style));
         }
         let mut rem = w.cursor_char;
         let span_count = p.spans.len();
@@ -5362,27 +5364,34 @@ fn word_insert_char_no_record(w: &mut WordTabState, ch: char) {
             if rem <= slen || si + 1 == span_count {
                 let target_char = rem.min(slen);
                 let byte_idx = char_to_byte(&p.spans[si].text, target_char);
+                let target_style = desired_style
+                    .clone()
+                    .unwrap_or_else(|| p.spans[si].style.clone());
                 let is_ins = p.spans[si]
                     .revision
                     .as_ref()
                     .map(|r| r.kind == RevisionKind::Insertion)
                     .unwrap_or(false);
-                if !track || is_ins {
+                if (!track || is_ins) && target_style == p.spans[si].style {
                     p.spans[si].text.insert(byte_idx, ch);
                 } else {
                     let orig = p.spans[si].clone();
                     let left = orig.text[..byte_idx].to_string();
                     let right = orig.text[byte_idx..].to_string();
-                    let ins_span = TextSpan::tracked(
-                        ch.to_string(),
-                        orig.style.clone(),
-                        RevisionMeta {
-                            id: next_rev_id,
-                            kind: RevisionKind::Insertion,
-                            author: rev_author,
-                            date_iso: "2026-10-27T12:00:00Z".into(),
-                        },
-                    );
+                    let ins_span = if track {
+                        TextSpan::tracked(
+                            ch.to_string(),
+                            target_style,
+                            RevisionMeta {
+                                id: next_rev_id,
+                                kind: RevisionKind::Insertion,
+                                author: rev_author,
+                                date_iso: "2026-10-27T12:00:00Z".into(),
+                            },
+                        )
+                    } else {
+                        TextSpan::styled(ch.to_string(), target_style)
+                    };
                     let mut replacement = Vec::with_capacity(3);
                     if !left.is_empty() {
                         let mut l_sp = orig.clone();
@@ -5503,7 +5512,6 @@ fn word_backspace(w: &mut WordTabState) {
         let cur_block = w.doc.blocks.remove(w.cursor_block);
         w.cursor_block -= 1;
         if let Block::Paragraph(cur_p) = cur_block {
-            let cur_text = cur_p.plain_text();
             let prev_is_para = matches!(
                 w.doc.blocks.get(w.cursor_block),
                 Some(Block::Paragraph(_))
@@ -5516,17 +5524,8 @@ fn word_backspace(w: &mut WordTabState) {
             if prev_is_para {
                 if let Some(Block::Paragraph(prev_p)) = w.doc.blocks.get_mut(w.cursor_block) {
                     let prev_len = prev_p.plain_text().chars().count();
-                    if prev_p.spans.is_empty() {
-                        if cur_p.spans.is_empty() {
-                            prev_p.spans.push(TextSpan::plain(cur_text));
-                        } else {
-                            prev_p.spans = cur_p.spans;
-                        }
-                    } else if !cur_text.is_empty() {
-                        if let Some(last) = prev_p.spans.last_mut() {
-                            last.text.push_str(&cur_text);
-                        }
-                    }
+                    prev_p.spans.extend(cur_p.spans);
+                    prev_p.normalize_spans();
                     w.cursor_char = prev_len;
                 }
             } else if prev_is_break_or_rule {
@@ -5572,12 +5571,13 @@ fn word_delete(w: &mut WordTabState) {
     let len = p.plain_text().chars().count();
     if w.cursor_char < len {
         let mut rem = w.cursor_char;
-        for span in &mut p.spans {
-            let slen = span.text.chars().count();
+        for si in 0..p.spans.len() {
+            let slen = p.spans[si].text.chars().count();
             if rem < slen {
-                let b0 = char_to_byte(&span.text, rem);
-                let b1 = char_to_byte(&span.text, rem + 1);
-                span.text.replace_range(b0..b1, "");
+                let b0 = char_to_byte(&p.spans[si].text, rem);
+                let b1 = char_to_byte(&p.spans[si].text, rem + 1);
+                p.spans[si].text.replace_range(b0..b1, "");
+                p.normalize_spans();
                 w.dirty = true;
                 return;
             }
@@ -5586,13 +5586,9 @@ fn word_delete(w: &mut WordTabState) {
     } else if w.cursor_block + 1 < w.doc.blocks.len() {
         if matches!(w.doc.blocks.get(w.cursor_block + 1), Some(Block::Paragraph(_))) {
             if let Block::Paragraph(next_p) = w.doc.blocks.remove(w.cursor_block + 1) {
-                let next_text = next_p.plain_text();
                 if let Some(Block::Paragraph(cur_p)) = w.doc.blocks.get_mut(w.cursor_block) {
-                    if cur_p.spans.is_empty() {
-                        cur_p.spans.push(TextSpan::plain(next_text));
-                    } else if let Some(last) = cur_p.spans.last_mut() {
-                        last.text.push_str(&next_text);
-                    }
+                    cur_p.spans.extend(next_p.spans);
+                    cur_p.normalize_spans();
                 }
                 w.dirty = true;
             }
@@ -5668,22 +5664,8 @@ fn word_enter(w: &mut WordTabState) -> Option<String> {
     }
 
     let new_para = if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(idx) {
-        let full = p.plain_text();
-        let split_char = w.cursor_char.min(full.chars().count());
-        let b = char_to_byte(&full, split_char);
-        let left = full[..b].to_string();
-        let right = full[b..].to_string();
-        let inherited_font = p
-            .spans
-            .first()
-            .map(|s| s.style.font_family)
-            .unwrap_or(FontFamily::Sans);
-        let st = p
-            .spans
-            .first()
-            .map(|s| s.style.clone())
-            .unwrap_or_default();
-        p.spans = vec![TextSpan::styled(left, st)];
+        let split_char = w.cursor_char.min(p.plain_text().chars().count());
+        let right_spans = p.split_at_char(split_char);
 
         let next_list = match p.list_kind {
             ListKind::Bullet => ListKind::Bullet,
@@ -5691,11 +5673,18 @@ fn word_enter(w: &mut WordTabState) -> Option<String> {
             ListKind::Numbered(n) => ListKind::Numbered(n + 1),
             ListKind::None => ListKind::None,
         };
-        let mut np = Paragraph::new(ParagraphStyle::Normal, right);
+        let mut np = Paragraph::new(ParagraphStyle::Normal, "");
+        np.alignment = p.alignment;
+        np.line_spacing = p.line_spacing;
         np.list_kind = next_list;
         np.indent_level = p.indent_level;
-        for s in &mut np.spans {
-            s.style.font_family = inherited_font;
+        np.spans = right_spans;
+        if let Some(pending) = &w.pending_typing_style {
+            if np.plain_text().is_empty() {
+                for sp in &mut np.spans {
+                    sp.style = pending.clone();
+                }
+            }
         }
         np
     } else {
@@ -5712,6 +5701,7 @@ fn word_enter(w: &mut WordTabState) -> Option<String> {
 }
 
 fn word_move_left(w: &mut WordTabState) {
+    w.pending_typing_style = None;
     if let Some((tb_idx, r, c)) = w.active_table_cell {
         if w.table_cursor_char > 0 {
             w.table_cursor_char -= 1;
@@ -5737,6 +5727,7 @@ fn word_move_left(w: &mut WordTabState) {
 }
 
 fn word_move_word_left(w: &mut WordTabState) {
+    w.pending_typing_style = None;
     if w.cursor_char > 0 {
         if let Some(Block::Paragraph(p)) = w.doc.blocks.get(w.cursor_block) {
             w.cursor_char = prev_word_char_idx(&p.plain_text(), w.cursor_char);
@@ -5747,6 +5738,7 @@ fn word_move_word_left(w: &mut WordTabState) {
 }
 
 fn word_move_word_right(w: &mut WordTabState) {
+    w.pending_typing_style = None;
     if let Some(Block::Paragraph(p)) = w.doc.blocks.get(w.cursor_block) {
         let plain = p.plain_text();
         let len = plain.chars().count();
@@ -5759,6 +5751,7 @@ fn word_move_word_right(w: &mut WordTabState) {
 }
 
 fn word_move_right(w: &mut WordTabState) {
+    w.pending_typing_style = None;
     if let Some((tb_idx, r, c)) = w.active_table_cell {
         if let Some(Block::Table(t)) = w.doc.blocks.get(tb_idx) {
             let len = t.rows[r][c].text.chars().count();
@@ -5785,6 +5778,7 @@ fn word_move_right(w: &mut WordTabState) {
 }
 
 fn word_move_up(w: &mut WordTabState) {
+    w.pending_typing_style = None;
     if let Some((tb_idx, r, c)) = w.active_table_cell {
         if r > 0 {
             if let Some(Block::Table(t)) = w.doc.blocks.get(tb_idx) {
@@ -5813,6 +5807,7 @@ fn word_move_up(w: &mut WordTabState) {
 }
 
 fn word_move_down(w: &mut WordTabState) {
+    w.pending_typing_style = None;
     if let Some((tb_idx, r, c)) = w.active_table_cell {
         if let Some(Block::Table(t)) = w.doc.blocks.get(tb_idx) {
             if r + 1 < t.rows.len() {

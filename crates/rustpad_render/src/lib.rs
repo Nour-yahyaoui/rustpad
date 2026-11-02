@@ -20,3 +20,48 @@ pub use theme::{
     set_active_theme_mode, Color, DaylightTheme, MidnightTheme, StudioTheme, ThemeMode,
 };
 pub use ttf::{FontBook, FontSlot};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use doc_model::FontFamily;
+
+    #[test]
+    fn test_styled_font_slots_and_calibrated_width_drawing() {
+        let mut fonts = FontBook::load_embedded();
+        assert_eq!(
+            FontSlot::select_styled(FontFamily::Sans, true, true),
+            FontSlot::SansBoldItalic
+        );
+        assert_eq!(
+            FontSlot::select_styled(FontFamily::Serif, true, false),
+            FontSlot::SerifBold
+        );
+        assert_eq!(
+            FontSlot::select_styled(FontFamily::Mono, false, true),
+            FontSlot::MonoItalic
+        );
+
+        let serif_reg = fonts.measure_text(FontSlot::SerifRegular, "RustPad Typography", 16.0);
+        let serif_bold = fonts.measure_text(FontSlot::SerifBold, "RustPad Typography", 16.0);
+        assert!(serif_bold > serif_reg);
+
+        let g_italic = fonts.glyph(FontSlot::SansItalic, 'I', 20.0);
+        assert!(g_italic.width > 0 && g_italic.height > 0);
+
+        let mut surf = Surface::new(360, 48);
+        surf.clear(Color::WHITE);
+        let target_w = 88.0;
+        let end_x = surf.draw_text_to_width(
+            &mut fonts,
+            FontSlot::SansBold,
+            14.0,
+            12.0,
+            28.0,
+            target_w,
+            Color::rgb(15, 23, 42),
+            "nour yahyaoui",
+        );
+        assert!((end_x - (12.0 + target_w)).abs() < 0.05);
+    }
+}

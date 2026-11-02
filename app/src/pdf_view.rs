@@ -4,6 +4,7 @@
 use crate::commands::CommandId;
 use crate::state::{DragInteraction, HitRegion, PdfTabState, PdfTool, UiAction};
 use crate::word_view::paint_canvas_scrollbar;
+use pdf_create::estimate_styled_text_width;
 use pdf_engine::PdfAnnotation;
 use rustpad_render::{Color, FontBook, FontSlot, Rect, StudioTheme, Surface, UiIcon};
 
@@ -214,14 +215,11 @@ pub fn paint_pdf_tab(
             let tx = sheet.x + item.x * scale;
             let baseline_y = sheet.y + (page.height_pt - item.y) * scale;
             let px_size = (item.font_size * scale).clamp(8.0, 52.0);
-            let slot = if item.bold {
-                FontSlot::SansBold
-            } else {
-                FontSlot::SansRegular
-            };
-            let tw = fonts
-                .measure_text(slot, &item.text, px_size)
-                .max(32.0 * scale);
+            let slot = FontSlot::select_styled(item.font_family, item.bold, item.italic);
+            let target_w =
+                estimate_styled_text_width(&item.text, item.font_size, item.font_family, item.bold)
+                    * scale;
+            let tw = target_w.max(32.0 * scale);
             let item_box = Rect::new(tx - 3.0, baseline_y - px_size * 0.92, tw + 6.0, px_size * 1.24);
             let selected = is_focused && p.selected_text_id == Some(item.id);
             let hovered = item_box.contains(mouse_x, mouse_y);
@@ -233,20 +231,20 @@ pub fn paint_pdf_tab(
                 surface.stroke_rounded_rect(item_box, 3.0, 1.0, StudioTheme::border_strong());
             }
 
-            surface.draw_text(
+            let drawn_end_x = surface.draw_text_to_width(
                 fonts,
                 slot,
                 px_size,
                 tx,
                 baseline_y,
+                target_w,
                 Color::rgb(item.color.r, item.color.g, item.color.b),
                 &item.text,
             );
 
             if selected && cursor_blink_on {
-                let end_x = tx + fonts.measure_text(slot, &item.text, px_size);
                 surface.fill_rect(
-                    Rect::new(end_x + 1.0, item_box.y + 2.0, 2.0, item_box.h - 4.0),
+                    Rect::new(drawn_end_x + 1.0, item_box.y + 2.0, 2.0, item_box.h - 4.0),
                     StudioTheme::word_accent(),
                 );
             }
