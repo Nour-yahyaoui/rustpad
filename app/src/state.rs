@@ -5571,12 +5571,12 @@ fn word_delete(w: &mut WordTabState) {
     let len = p.plain_text().chars().count();
     if w.cursor_char < len {
         let mut rem = w.cursor_char;
-        for span in &mut p.spans {
-            let slen = span.text.chars().count();
+        for si in 0..p.spans.len() {
+            let slen = p.spans[si].text.chars().count();
             if rem < slen {
-                let b0 = char_to_byte(&span.text, rem);
-                let b1 = char_to_byte(&span.text, rem + 1);
-                span.text.replace_range(b0..b1, "");
+                let b0 = char_to_byte(&p.spans[si].text, rem);
+                let b1 = char_to_byte(&p.spans[si].text, rem + 1);
+                p.spans[si].text.replace_range(b0..b1, "");
                 p.normalize_spans();
                 w.dirty = true;
                 return;
