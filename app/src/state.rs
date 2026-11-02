@@ -6143,6 +6143,48 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_v301_pending_typing_style_inline_bold_underline_and_enter_split() {
+        let mut app = RustPadApp::new();
+        app.execute_command(CommandId::NewWordBlank);
+
+        for ch in "hello everyone im ".chars() {
+            app.handle_text_input(ch);
+        }
+        // Toggle Bold + Underline with NO selection -> must queue pending_typing_style without altering prefix!
+        app.execute_command(CommandId::ToggleBold);
+        app.execute_command(CommandId::ToggleUnderline);
+
+        for ch in "nour yahyaoui".chars() {
+            app.handle_text_input(ch);
+        }
+        // Toggle Bold + Underline OFF -> continue typing regular text!
+        app.execute_command(CommandId::ToggleBold);
+        app.execute_command(CommandId::ToggleUnderline);
+        for ch in " a web developer from tunisia".chars() {
+            app.handle_text_input(ch);
+        }
+
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            let Block::Paragraph(p) = &w.doc.blocks[0] else {
+                panic!("expected paragraph");
+            };
+            assert_eq!(
+                p.plain_text(),
+                "hello everyone im nour yahyaoui a web developer from tunisia"
+            );
+            assert_eq!(p.spans.len(), 3);
+            assert_eq!(p.spans[0].text, "hello everyone im ");
+            assert!(!p.spans[0].style.bold && !p.spans[0].style.underline);
+            assert_eq!(p.spans[1].text, "nour yahyaoui");
+            assert!(p.spans[1].style.bold && p.spans[1].style.underline);
+            assert_eq!(p.spans[2].text, " a web developer from tunisia");
+            assert!(!p.spans[2].style.bold && !p.spans[2].style.underline);
+        } else {
+            panic!("expected Word tab");
+        }
+    }
+
     trait BlockParaLen {
         fn as_paragraph_len(&self) -> usize;
     }

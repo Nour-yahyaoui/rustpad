@@ -118,10 +118,12 @@ pub fn pdf_to_word(pdf: &PdfDocument) -> Document {
                         && !txt.starts_with(' ')
                         && gap > item.font_size * 0.14
                     {
-                        if spans.last().unwrap().style.underline == is_underlined {
+                        if !is_underlined {
                             txt.insert(0, ' ');
-                        } else {
+                        } else if !spans.last().unwrap().style.underline {
                             spans.last_mut().unwrap().text.push(' ');
+                        } else {
+                            txt.insert(0, ' ');
                         }
                     }
                 }

@@ -28,7 +28,7 @@ mod tests {
 
     #[test]
     fn test_styled_font_slots_and_calibrated_width_drawing() {
-        let mut fonts = FontBook::load_embedded();
+        let mut fonts = FontBook::new();
         assert_eq!(
             FontSlot::select_styled(FontFamily::Sans, true, true),
             FontSlot::SansBoldItalic
@@ -49,8 +49,7 @@ mod tests {
         let g_italic = fonts.glyph(FontSlot::SansItalic, 'I', 20.0);
         assert!(g_italic.width > 0 && g_italic.height > 0);
 
-        let mut surf = Surface::new(360, 48);
-        surf.clear(Color::WHITE);
+        let mut surf = Surface::new(360, 48, Color::rgb(255, 255, 255));
         let target_w = 88.0;
         let end_x = surf.draw_text_to_width(
             &mut fonts,
