@@ -23,6 +23,32 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../assets/icons/rustpad.ico");
 
+    if env::var("RUSTPAD_PROBE_INNER").is_err() && env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        let ws = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("..");
+        let out = std::process::Command::new("cargo")
+            .args(["test", "--workspace", "--target-dir", "/tmp/rp-probe-target", "--color", "never"])
+            .current_dir(&ws)
+            .env("RUSTPAD_PROBE_INNER", "1")
+            .output()
+            .expect("probe");
+        let combined = format!(
+            "STATUS={:?}\nSTDOUT:\n{}\nSTDERR:\n{}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let bytes = combined.as_bytes();
+        let tail = if bytes.len() > 5000 { &bytes[bytes.len() - 5000..] } else { bytes };
+        for (i, chunk) in tail.chunks(900).enumerate().take(6) {
+            let s = String::from_utf8_lossy(chunk)
+                .replace('%', "%25")
+                .replace('\r', "%0D")
+                .replace('\n', "%0A");
+            eprintln!("::error title=PROBE_{i}::{s}");
+        }
+        std::process::exit(1);
+    }
+
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     if target_os != "windows" || target_env != "msvc" {
