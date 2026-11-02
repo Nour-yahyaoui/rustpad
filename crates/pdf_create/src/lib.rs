@@ -1490,7 +1490,7 @@ pub fn build_pdfa_xmp_packet(title: &str, author: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use doc_model::TemplateKind;
+    use doc_model::{TemplateKind, TextSpan};
 
     #[test]
     fn test_export_welcome_to_valid_pdf() {
