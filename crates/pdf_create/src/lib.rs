@@ -391,6 +391,11 @@ fn render_paragraph_pdf(
             continue;
         }
         let mut span_style = span.style.clone();
+        span_style.bold = span_style.bold || p.style.is_bold_by_default();
+        span_style.italic = span_style.italic || p.style == ParagraphStyle::Quote;
+        if span_style.hyperlink.is_some() {
+            span_style.underline = true;
+        }
         if let Some(rev) = &span.revision {
             match rev.kind {
                 RevisionKind::Deletion => {
@@ -408,11 +413,21 @@ fn render_paragraph_pdf(
                 }
             }
         }
+        let eff_size_pt = if span_style.superscript || span_style.subscript {
+            (span_style.font_size_pt * 0.75).max(6.5)
+        } else {
+            span_style.font_size_pt
+        };
         let mut current = String::new();
         for ch in span.text.chars() {
             if ch == '\n' {
                 if !current.is_empty() {
-                    let w = estimate_text_width(&current, span_style.font_size_pt, span_style.font_family);
+                    let w = estimate_styled_text_width(
+                        &current,
+                        eff_size_pt,
+                        span_style.font_family,
+                        span_style.bold,
+                    );
                     tokens.push(WordToken {
                         text: std::mem::take(&mut current),
                         style: span_style.clone(),
@@ -426,7 +441,12 @@ fn render_paragraph_pdf(
                 });
             } else if ch == ' ' {
                 current.push(' ');
-                let w = estimate_text_width(&current, span_style.font_size_pt, span_style.font_family);
+                let w = estimate_styled_text_width(
+                    &current,
+                    eff_size_pt,
+                    span_style.font_family,
+                    span_style.bold,
+                );
                 tokens.push(WordToken {
                     text: std::mem::take(&mut current),
                     style: span_style.clone(),
@@ -437,7 +457,12 @@ fn render_paragraph_pdf(
             }
         }
         if !current.is_empty() {
-            let w = estimate_text_width(&current, span_style.font_size_pt, span_style.font_family);
+            let w = estimate_styled_text_width(
+                &current,
+                eff_size_pt,
+                span_style.font_family,
+                span_style.bold,
+            );
             tokens.push(WordToken {
                 text: current,
                 style: span_style,
@@ -466,14 +491,17 @@ fn render_paragraph_pdf(
         lines.push(cur_line);
     }
 
-    let line_h = (base_size * p.line_spacing).max(base_size + 3.0);
-
     for (line_idx, line) in lines.iter().enumerate() {
-        if *cursor_y - line_h < m_bot {
+        let line_max_size = line
+            .iter()
+            .map(|t| t.style.font_size_pt)
+            .fold(base_size, f32::max);
+        let eff_line_h = (line_max_size * p.line_spacing).max(line_max_size + 3.0);
+        if *cursor_y - eff_line_h < m_bot {
             streams.push(String::new());
             *cursor_y = page_h - m_top;
         }
-        *cursor_y -= base_size;
+        *cursor_y -= line_max_size;
         let baseline_y = *cursor_y;
         let s = streams.last_mut().unwrap();
 
@@ -484,7 +512,7 @@ fn render_paragraph_pdf(
                 (m_left - 8.0).max(8.0),
                 baseline_y - 3.0,
                 (m_left - 8.0).max(8.0),
-                baseline_y + base_size
+                baseline_y + line_max_size
             );
         }
 
@@ -495,7 +523,7 @@ fn render_paragraph_pdf(
                 m_left + 6.0,
                 baseline_y - 3.0,
                 m_left + 6.0,
-                baseline_y + base_size
+                baseline_y + line_max_size
             );
         }
 
@@ -519,13 +547,6 @@ fn render_paragraph_pdf(
             }
         }
 
-        let line_w: f32 = line.iter().map(|t| t.width_pt).sum();
-        let mut x = match p.alignment {
-            Alignment::Left | Alignment::Justify => m_left + indent_pt,
-            Alignment::Center => m_left + indent_pt + ((avail_w - line_w) * 0.5).max(0.0),
-            Alignment::Right => m_left + indent_pt + (avail_w - line_w).max(0.0),
-        };
-
         // Coalesce adjacent same-style tokens on the line so PDF streams emit clean full-line runs
         let mut coalesced: Vec<WordToken> = Vec::with_capacity(line.len());
         for tok in line {
@@ -539,68 +560,186 @@ fn render_paragraph_pdf(
             coalesced.push(tok.clone());
         }
 
-        for tok in &coalesced {
-            let clean_text = tok.text.trim_end_matches(' ');
-            if clean_text.is_empty() {
+        // Trim trailing spaces at the very end of the visual line so centered/right lines center accurately
+        let visible_line_w: f32 = if let Some((last, head)) = coalesced.split_last() {
+            let head_w: f32 = head.iter().map(|t| t.width_pt).sum();
+            let eff_sz = if last.style.superscript || last.style.subscript {
+                (last.style.font_size_pt * 0.75).max(6.5)
+            } else {
+                last.style.font_size_pt
+            };
+            let trimmed_last = last.text.trim_end_matches(' ');
+            head_w
+                + estimate_styled_text_width(
+                    trimmed_last,
+                    eff_sz,
+                    last.style.font_family,
+                    last.style.bold,
+                )
+        } else {
+            0.0
+        };
+
+        let mut x = match p.alignment {
+            Alignment::Left | Alignment::Justify => m_left + indent_pt,
+            Alignment::Center => m_left + indent_pt + ((avail_w - visible_line_w) * 0.5).max(0.0),
+            Alignment::Right => m_left + indent_pt + (avail_w - visible_line_w).max(0.0),
+        };
+
+        for (t_idx, tok) in coalesced.iter().enumerate() {
+            let eff_size_pt = if tok.style.superscript || tok.style.subscript {
+                (tok.style.font_size_pt * 0.75).max(6.5)
+            } else {
+                tok.style.font_size_pt
+            };
+            let adj_baseline_y = if tok.style.superscript {
+                baseline_y + tok.style.font_size_pt * 0.28
+            } else if tok.style.subscript {
+                baseline_y - tok.style.font_size_pt * 0.16
+            } else {
+                baseline_y
+            };
+
+            let lead_bytes = tok.text.len() - tok.text.trim_start_matches(' ').len();
+            let after_lead = &tok.text[lead_bytes..];
+            let core_text = after_lead.trim_end_matches(' ');
+            let trail_str = &after_lead[core_text.len()..];
+
+            if core_text.is_empty() {
+                if let Some(hl) = tok.style.highlight {
+                    let _ = writeln!(
+                        s,
+                        "q {:.3} {:.3} {:.3} rg {:.2} {:.2} {:.2} {:.2} re f Q",
+                        hl.r as f32 / 255.0,
+                        hl.g as f32 / 255.0,
+                        hl.b as f32 / 255.0,
+                        x,
+                        baseline_y - 2.5,
+                        tok.width_pt,
+                        tok.style.font_size_pt + 3.0
+                    );
+                }
+                if tok.style.underline {
+                    let c = tok.style.color;
+                    let _ = writeln!(
+                        s,
+                        "q {:.3} {:.3} {:.3} RG 0.65 w {:.2} {:.2} m {:.2} {:.2} l S Q",
+                        c.r as f32 / 255.0,
+                        c.g as f32 / 255.0,
+                        c.b as f32 / 255.0,
+                        x,
+                        baseline_y - 1.8,
+                        x + tok.width_pt,
+                        baseline_y - 1.8
+                    );
+                }
                 x += tok.width_pt;
                 continue;
             }
+
+            let lead_w = estimate_styled_text_width(
+                &tok.text[..lead_bytes],
+                eff_size_pt,
+                tok.style.font_family,
+                tok.style.bold,
+            );
+            let core_w = estimate_styled_text_width(
+                core_text,
+                eff_size_pt,
+                tok.style.font_family,
+                tok.style.bold,
+            );
+            let trail_w = estimate_styled_text_width(
+                trail_str,
+                eff_size_pt,
+                tok.style.font_family,
+                tok.style.bold,
+            );
+
+            let prev_under = t_idx > 0 && coalesced[t_idx - 1].style.underline;
+            let next_under = coalesced
+                .get(t_idx + 1)
+                .map(|n| n.style.underline)
+                .unwrap_or(false);
+            let prev_strike = t_idx > 0 && coalesced[t_idx - 1].style.strikethrough;
+            let next_strike = coalesced
+                .get(t_idx + 1)
+                .map(|n| n.style.strikethrough)
+                .unwrap_or(false);
+
             if let Some(hl) = tok.style.highlight {
+                let hl_x = x + lead_w;
+                let hl_w = core_w
+                    + if coalesced
+                        .get(t_idx + 1)
+                        .and_then(|n| n.style.highlight)
+                        == Some(hl)
+                    {
+                        trail_w
+                    } else {
+                        0.0
+                    };
                 let _ = writeln!(
                     s,
                     "q {:.3} {:.3} {:.3} rg {:.2} {:.2} {:.2} {:.2} re f Q",
                     hl.r as f32 / 255.0,
                     hl.g as f32 / 255.0,
                     hl.b as f32 / 255.0,
-                    x,
+                    hl_x,
                     baseline_y - 2.5,
-                    tok.width_pt,
+                    hl_w,
                     tok.style.font_size_pt + 3.0
                 );
             }
+
             let font_id = select_pdf_font(tok.style.font_family, tok.style.bold, tok.style.italic);
             write_pdf_text_cmd(
                 s,
                 font_id,
-                tok.style.font_size_pt,
-                x,
-                baseline_y,
+                eff_size_pt,
+                x + lead_w,
+                adj_baseline_y,
                 tok.style.color,
-                clean_text,
+                core_text,
             );
+
             if tok.style.underline {
                 let c = tok.style.color;
+                let u_x0 = if prev_under { x } else { x + lead_w };
+                let u_x1 = x + lead_w + core_w + if next_under { trail_w } else { 0.0 };
                 let _ = writeln!(
                     s,
-                    "q {:.3} {:.3} {:.3} RG 0.65 w {:.2} {:.2} m {:.2} {:.2} l S Q",
+                    "q {:.3} {:.3} {:.3} RG 0.72 w {:.2} {:.2} m {:.2} {:.2} l S Q",
                     c.r as f32 / 255.0,
                     c.g as f32 / 255.0,
                     c.b as f32 / 255.0,
-                    x,
+                    u_x0,
                     baseline_y - 1.8,
-                    x + tok.width_pt,
+                    u_x1,
                     baseline_y - 1.8
                 );
             }
             if tok.style.strikethrough {
                 let c = tok.style.color;
-                let sy = baseline_y + tok.style.font_size_pt * 0.32;
+                let sy = adj_baseline_y + eff_size_pt * 0.32;
+                let s_x0 = if prev_strike { x } else { x + lead_w };
+                let s_x1 = x + lead_w + core_w + if next_strike { trail_w } else { 0.0 };
                 let _ = writeln!(
                     s,
-                    "q {:.3} {:.3} {:.3} RG 0.65 w {:.2} {:.2} m {:.2} {:.2} l S Q",
+                    "q {:.3} {:.3} {:.3} RG 0.72 w {:.2} {:.2} m {:.2} {:.2} l S Q",
                     c.r as f32 / 255.0,
                     c.g as f32 / 255.0,
                     c.b as f32 / 255.0,
-                    x,
+                    s_x0,
                     sy,
-                    x + tok.width_pt,
+                    s_x1,
                     sy
                 );
             }
-            x += tok.width_pt * 1.08;
+            x += lead_w + core_w + trail_w;
         }
 
-        *cursor_y -= line_h - base_size;
+        *cursor_y -= eff_line_h - line_max_size;
     }
 
     *cursor_y -= 5.0;
@@ -659,9 +798,23 @@ fn render_table_pdf(
             );
 
             let font_id = if cell.bold { "F2" } else { "F1" };
-            let max_chars = ((col_w - 12.0) / 5.3).max(4.0) as usize;
-            let clipped: String = cell.text.chars().take(max_chars).collect();
-            let est_w = (clipped.chars().count() as f32) * 5.2;
+            let avail_cell_w = (col_w - 12.0).max(16.0);
+            let mut clipped = String::new();
+            for ch in cell.text.chars() {
+                if ch == '\n' {
+                    clipped.push(' ');
+                    continue;
+                }
+                let mut cand = clipped.clone();
+                cand.push(ch);
+                if estimate_styled_text_width(&cand, 10.0, FontFamily::Sans, cell.bold)
+                    > avail_cell_w
+                {
+                    break;
+                }
+                clipped.push(ch);
+            }
+            let est_w = estimate_styled_text_width(&clipped, 10.0, FontFamily::Sans, cell.bold);
             let tx = match cell.alignment {
                 doc_model::Alignment::Center => x + ((col_w - est_w) * 0.5).max(6.0),
                 doc_model::Alignment::Right => (x + col_w - 6.0 - est_w).max(x + 6.0),
@@ -700,23 +853,94 @@ pub fn select_pdf_font(family: FontFamily, bold: bool, italic: bool) -> &'static
     }
 }
 
-pub fn estimate_text_width(text: &str, size_pt: f32, family: FontFamily) -> f32 {
+/// Official Adobe Standard-14 AFM advance widths (`0x20..=0x7E`, in `1/1000 em` units).
+const HELVETICA_AFM: [u16; 95] = [
+    278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, // SP../
+    556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, // 0..?
+    1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, // @..O
+    667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, // P.._
+    333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, // `..o
+    556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584, // p..~
+];
+
+const HELVETICA_BOLD_AFM: [u16; 95] = [
+    278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, // SP../
+    556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611, // 0..?
+    975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722, 778, // @..O
+    667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556, // P.._
+    333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611, // `..o
+    611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584, // p..~
+];
+
+const TIMES_ROMAN_AFM: [u16; 95] = [
+    250, 333, 408, 500, 500, 833, 778, 180, 333, 333, 500, 564, 250, 333, 250, 278, // SP../
+    500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 278, 278, 564, 564, 564, 444, // 0..?
+    921, 722, 667, 667, 722, 611, 556, 722, 722, 333, 389, 722, 611, 889, 722, 722, // @..O
+    556, 722, 667, 556, 611, 722, 722, 944, 722, 722, 611, 333, 278, 333, 469, 500, // P.._
+    333, 444, 500, 444, 500, 444, 333, 500, 500, 278, 278, 500, 278, 778, 500, 500, // `..o
+    500, 500, 333, 389, 278, 500, 500, 722, 500, 500, 444, 480, 200, 480, 541, // p..~
+];
+
+const TIMES_BOLD_AFM: [u16; 95] = [
+    250, 333, 555, 500, 500, 1000, 833, 278, 333, 333, 500, 570, 250, 333, 250, 278, // SP../
+    500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 333, 333, 570, 570, 570, 500, // 0..?
+    930, 722, 667, 722, 722, 667, 611, 778, 778, 389, 500, 778, 667, 944, 722, 778, // @..O
+    611, 778, 722, 556, 667, 722, 722, 1000, 722, 722, 667, 333, 278, 333, 581, 500, // P.._
+    333, 500, 556, 444, 556, 444, 333, 500, 556, 278, 333, 556, 278, 833, 556, 500, // `..o
+    556, 556, 444, 389, 333, 556, 500, 722, 500, 500, 444, 394, 220, 394, 520, // p..~
+];
+
+pub fn estimate_styled_text_width(
+    text: &str,
+    size_pt: f32,
+    family: FontFamily,
+    bold: bool,
+) -> f32 {
     if family == FontFamily::Mono {
-        return (text.chars().count() as f32) * size_pt * 0.60;
+        let mut count = 0usize;
+        for ch in text.chars() {
+            if ch == '\t' {
+                count += 4;
+            } else if ch != '\n' {
+                count += 1;
+            }
+        }
+        return (count as f32) * size_pt * 0.60;
     }
-    let mut units = 0.0f32;
+
+    let tbl: &[u16; 95] = match (family, bold) {
+        (FontFamily::Sans, false) => &HELVETICA_AFM,
+        (FontFamily::Sans, true) => &HELVETICA_BOLD_AFM,
+        (FontFamily::Serif, false) => &TIMES_ROMAN_AFM,
+        (FontFamily::Serif, true) => &TIMES_BOLD_AFM,
+        (FontFamily::Mono, _) => &HELVETICA_AFM,
+    };
+
+    let mut milli_em = 0u32;
     for ch in text.chars() {
-        units += match ch {
-            ' ' => 0.28,
-            'i' | 'l' | '!' | '|' | '.' | ',' | ':' | ';' | '\'' => 0.27,
-            'f' | 'j' | 'r' | 't' | '(' | ')' | '[' | ']' => 0.35,
-            'm' | 'w' => 0.82,
-            'M' | 'W' => 0.90,
-            c if c.is_ascii_uppercase() => 0.67,
-            _ => 0.53,
-        };
+        if ch == '\n' {
+            continue;
+        }
+        if ch == '\t' {
+            milli_em += (tbl[0] as u32) * 4;
+            continue;
+        }
+        let cp = ch as u32;
+        if (0x20..=0x7E).contains(&cp) {
+            milli_em += tbl[(cp - 0x20) as usize] as u32;
+        } else if ch.is_whitespace() {
+            milli_em += tbl[0] as u32;
+        } else if ch.is_uppercase() {
+            milli_em += if bold { 700 } else { 667 };
+        } else {
+            milli_em += if bold { 590 } else { 556 };
+        }
     }
-    units * size_pt
+    (milli_em as f32) * size_pt * 0.001
+}
+
+pub fn estimate_text_width(text: &str, size_pt: f32, family: FontFamily) -> f32 {
+    estimate_styled_text_width(text, size_pt, family, false)
 }
 
 pub fn write_pdf_text_cmd(
@@ -1284,5 +1508,62 @@ mod tests {
         assert!(pdf_ascii.contains("/Subtype /Image"));
         assert!(pdf_ascii.contains("/Im1 Do"));
         assert!(pdf_ascii.contains("Figure 1: System Topology"));
+    }
+
+    #[test]
+    fn test_mixed_inline_bold_underline_pdf_layout_no_overlap_or_space_collapse() {
+        let mut doc = Document::blank();
+        doc.blocks.clear();
+        let mut p = Paragraph::new(ParagraphStyle::Normal, "");
+        p.spans = vec![
+            TextSpan::plain("hello everyone im "),
+            TextSpan::styled(
+                "nour yahyaoui",
+                SpanStyle {
+                    bold: true,
+                    underline: true,
+                    ..SpanStyle::default()
+                },
+            ),
+            TextSpan::plain(" a web developer from tunisia"),
+        ];
+        doc.blocks.push(Block::Paragraph(p));
+
+        let opts = PdfCreateOptions {
+            compress_streams: false,
+            ..PdfCreateOptions::default()
+        };
+        let pdf = export_document_to_pdf_bytes(&doc, &opts);
+        let stream = String::from_utf8_lossy(&pdf);
+
+        let w_prefix_with_space =
+            estimate_styled_text_width("hello everyone im ", 11.5, FontFamily::Sans, false);
+        let w_prefix_trimmed =
+            estimate_styled_text_width("hello everyone im", 11.5, FontFamily::Sans, false);
+        let w_bold_name =
+            estimate_styled_text_width("nour yahyaoui", 11.5, FontFamily::Sans, true);
+        let w_reg_name =
+            estimate_styled_text_width("nour yahyaoui", 11.5, FontFamily::Sans, false);
+        let space_w = estimate_styled_text_width(" ", 11.5, FontFamily::Sans, false);
+
+        assert!(w_prefix_with_space - w_prefix_trimmed > 3.0);
+        assert!(w_bold_name > w_reg_name);
+
+        let expected_x_hello = doc.page_setup.margin_left_pt;
+        let expected_x_nour = expected_x_hello + w_prefix_with_space;
+        let expected_x_after = expected_x_nour + w_bold_name + space_w;
+
+        assert!(
+            stream.contains(&format!("{:.2}", expected_x_nour)),
+            "Expected bold run at x={expected_x_nour:.2}, stream:\n{stream}"
+        );
+        assert!(
+            stream.contains(&format!("{:.2} 0.85 re f", w_bold_name)),
+            "Expected full underline width {w_bold_name:.2}, stream:\n{stream}"
+        );
+        assert!(
+            stream.contains(&format!("{:.2}", expected_x_after)),
+            "Expected trailing run at x={expected_x_after:.2} with zero overlap, stream:\n{stream}"
+        );
     }
 }

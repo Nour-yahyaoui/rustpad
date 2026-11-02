@@ -69,8 +69,15 @@ pub fn pdf_to_word(pdf: &PdfDocument) -> Document {
 
             let mut spans: Vec<TextSpan> = Vec::new();
             let mut list_kind = ListKind::None;
+            let mut prev_end_x: Option<f32> = None;
 
             for (idx, item) in line.into_iter().enumerate() {
+                let item_w = pdf_create::estimate_styled_text_width(
+                    &item.text,
+                    item.font_size,
+                    item.font_family,
+                    item.bold,
+                );
                 let mut txt = item.text;
                 if idx == 0 {
                     let trimmed = txt.trim();
@@ -90,12 +97,35 @@ pub fn pdf_to_word(pdf: &PdfDocument) -> Document {
                         }
                     }
                 }
-                if !spans.is_empty()
-                    && !spans.last().unwrap().text.ends_with(' ')
-                    && !txt.starts_with(' ')
-                {
-                    txt.insert(0, ' ');
+                let is_underlined = page.rects.iter().any(|r| {
+                    r.h <= 2.4
+                        && r.w >= 2.0
+                        && (r.y - (item.y - 2.0)).abs() <= 2.2
+                        && r.x < item.x + item_w - 1.0
+                        && (r.x + r.w) > item.x + 1.0
+                });
+                let is_struck = page.rects.iter().any(|r| {
+                    r.h <= 2.4
+                        && r.w >= 2.0
+                        && (r.y - (item.y + item.font_size * 0.30)).abs() <= 2.5
+                        && r.x < item.x + item_w - 1.0
+                        && (r.x + r.w) > item.x + 1.0
+                });
+                if let Some(pe) = prev_end_x {
+                    let gap = item.x - pe;
+                    if !spans.is_empty()
+                        && !spans.last().unwrap().text.ends_with(' ')
+                        && !txt.starts_with(' ')
+                        && gap > item.font_size * 0.14
+                    {
+                        if spans.last().unwrap().style.underline == is_underlined {
+                            txt.insert(0, ' ');
+                        } else {
+                            spans.last_mut().unwrap().text.push(' ');
+                        }
+                    }
                 }
+                prev_end_x = Some(item.x + item_w);
                 spans.push(TextSpan {
                     text: txt,
                     style: SpanStyle {
@@ -103,6 +133,8 @@ pub fn pdf_to_word(pdf: &PdfDocument) -> Document {
                         font_size_pt: item.font_size,
                         bold: item.bold,
                         italic: item.italic,
+                        underline: is_underlined,
+                        strikethrough: is_struck,
                         color: item.color,
                         ..SpanStyle::default()
                     },
@@ -601,7 +633,7 @@ pub fn word_to_html(doc: &Document, dark_mode_default: bool) -> String {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <meta name="generator" content="RustPad v3.0.0"/>
+  <meta name="generator" content="RustPad v3.0.1"/>
   <title>{}</title>
   <style>
     :root {{ --desk:#eef2f7; --sheet:#ffffff; --ink:#0f172a; --muted:#64748b; --border:#d0d8e4; --accent:#2563eb; --th:#f1f5f9; }}

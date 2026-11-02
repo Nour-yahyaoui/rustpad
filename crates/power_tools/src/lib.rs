@@ -123,4 +123,47 @@ mod tests {
         assert!(doc.author.is_empty());
         assert!(doc.metadata.company.is_empty());
     }
+
+    #[test]
+    fn test_pdf_roundtrip_preserves_spaces_bold_and_underline() {
+        use doc_model::{Block, Document, Paragraph, ParagraphStyle, SpanStyle, TextSpan};
+        use pdf_create::{export_document_to_pdf_bytes, PdfCreateOptions};
+        use pdf_engine::load_pdf_bytes;
+
+        let mut doc = Document::blank();
+        doc.blocks.clear();
+        let mut p = Paragraph::new(ParagraphStyle::Normal, "");
+        p.spans = vec![
+            TextSpan::plain("hello everyone im "),
+            TextSpan::styled(
+                "nour yahyaoui",
+                SpanStyle {
+                    bold: true,
+                    underline: true,
+                    ..SpanStyle::default()
+                },
+            ),
+            TextSpan::plain(" a web developer from tunisia"),
+        ];
+        doc.blocks.push(Block::Paragraph(p));
+
+        let pdf_bytes = export_document_to_pdf_bytes(&doc, &PdfCreateOptions::default());
+        let parsed_pdf = load_pdf_bytes(&pdf_bytes).expect("valid PDF");
+        let recovered = pdf_to_word(&parsed_pdf);
+
+        let Block::Paragraph(rp) = &recovered.blocks[0] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(
+            rp.plain_text(),
+            "hello everyone im nour yahyaoui a web developer from tunisia"
+        );
+        assert!(
+            rp.spans
+                .iter()
+                .any(|s| s.text.contains("nour yahyaoui") && s.style.bold && s.style.underline),
+            "Expected bold+underlined 'nour yahyaoui' span in {:?}",
+            rp.spans
+        );
+    }
 }

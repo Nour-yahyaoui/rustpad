@@ -159,8 +159,12 @@ impl PdfPage {
 
         let before = self.text_items.len();
         self.text_items.retain(|item| {
-            let approx_w =
-                pdf_create::estimate_text_width(&item.text, item.font_size, item.font_family);
+            let approx_w = pdf_create::estimate_styled_text_width(
+                &item.text,
+                item.font_size,
+                item.font_family,
+                item.bold,
+            );
             let ix0 = item.x;
             let ix1 = item.x + approx_w;
             let iy0 = item.y - 2.0;
@@ -343,8 +347,12 @@ impl PdfDocument {
 
             let before_txt = page.text_items.len();
             page.text_items.retain(|item| {
-                let approx_w =
-                    pdf_create::estimate_text_width(&item.text, item.font_size, item.font_family);
+                let approx_w = pdf_create::estimate_styled_text_width(
+                    &item.text,
+                    item.font_size,
+                    item.font_family,
+                    item.bold,
+                );
                 let ix0 = item.x;
                 let ix1 = item.x + approx_w;
                 let iy0 = item.y - 2.0;

@@ -1,26 +1,34 @@
-# RustPad Studio `v3.0.0` — Native Dark Mode, Lossless OOXML Intelligence & Offline Word/PDF/AI Suite
+# RustPad Studio `v3.0.1` — Native Dark Mode, Lossless OOXML Intelligence & Offline Word/PDF/AI Suite
 
 [![committers.top badge](https://user-badge.committers.top/tunisia/Nour-yahyaoui.svg)](https://user-badge.committers.top/tunisia/Nour-yahyaoui)
-[![Release v3.0.0](https://img.shields.io/badge/release-v3.0.0-A83E26?style=flat-square)](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.0)
+[![Release v3.0.1](https://img.shields.io/badge/release-v3.0.1-A83E26?style=flat-square)](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.1)
 [![Zero Crates.io Deps](https://img.shields.io/badge/crates.io%20deps-0%20(100%25%20stdlib)-2B5E42?style=flat-square)](Cargo.toml)
 [![Live Showcase](https://img.shields.io/badge/web-rustpad--studio.vercel.app-1D4E7A?style=flat-square)](https://rustpad-studio.vercel.app/)
 [![Portfolio](https://img.shields.io/badge/portfolio-nour--yahyaoui.vercel.app-1A1917?style=flat-square)](https://nour-yahyaoui.vercel.app/projects/rustpad)
 
-**RustPad Studio (`rustpad`) `v3.0.0`** is a native, sovereign, **zero-dependency (`0` external `crates.io` crates)** desktop & CLI document intelligence engine written in **100% pure Rust**. Built directly on native Win32 GDI + Windows 11 DWM & Linux X11 with a custom TrueType (`.ttf`) 4×4 supersampled rasterizer, non-blocking `LazyZipArchive` 100+ MB `.docx` streaming parser, OOXML validator & corrupt-archive repair engine, character/paragraph redline & conflict-aware 3-way `.docx` smart merger, permanent `.docx` & `.pdf` forensic redactor, pure-Rust offline OCR, and air-gapped Local AI governance — shipping as a **~4.2 MB** standalone native executable (`< 90 ms` cold start, `0` Electron/Chromium/WebView bloat, `0` telemetry).
+**RustPad Studio (`rustpad`) `v3.0.1`** is a native, sovereign, **zero-dependency (`0` external `crates.io` crates)** desktop & CLI document intelligence engine written in **100% pure Rust**. Built directly on native Win32 GDI + Windows 11 DWM & Linux X11 with a custom TrueType (`.ttf`) 4×4 supersampled rasterizer, non-blocking `LazyZipArchive` 100+ MB `.docx` streaming parser, OOXML validator & corrupt-archive repair engine, character/paragraph redline & conflict-aware 3-way `.docx` smart merger, permanent `.docx` & `.pdf` forensic redactor, pure-Rust offline OCR, and air-gapped Local AI governance — shipping as a **~4.2 MB** standalone native executable (`< 90 ms` cold start, `0` Electron/Chromium/WebView bloat, `0` telemetry).
 
-> **Portfolio Case Study**: [nour-yahyaoui.vercel.app/projects/rustpad](https://nour-yahyaoui.vercel.app/projects/rustpad) · **Interactive Studio Showcase**: [rustpad-studio.vercel.app](https://rustpad-studio.vercel.app/) · **Latest Release (`v3.0.0`)**: [GitHub Releases](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.0)
+> **Portfolio Case Study**: [nour-yahyaoui.vercel.app/projects/rustpad](https://nour-yahyaoui.vercel.app/projects/rustpad) · **Interactive Studio Showcase**: [rustpad-studio.vercel.app](https://rustpad-studio.vercel.app/) · **Latest Release (`v3.0.1`)**: [GitHub Releases](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.1)
 
 ![RustPad v3.0 Word Studio — Smooth Native Canvas, Dark Mode, Track Changes & Local AI](docs/screenshots/word-studio.png)
 
 ---
 
-## Download `v3.0.0` Prebuilt Native Binaries
+## Download `v3.0.1` Prebuilt Native Binaries
 
 | Platform | Architecture | Artifact |
 | :--- | :--- | :--- |
-| **Windows 10 / 11** | `x86_64` (Win32 GDI + DWM Dark Titlebar + WinHTTP TLS + Spooler) | [`rustpad-v3.0.0-windows-x86_64.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.0/rustpad-v3.0.0-windows-x86_64.exe) · [`rustpad.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.0/rustpad.exe) |
-| **Linux Desktop & CLI** | `x86_64` (`dlopen` X11 `_GTK_THEME_VARIANT` + CUPS/LP + Headless CLI) | [`rustpad-v3.0.0-linux-x86_64`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.0/rustpad-v3.0.0-linux-x86_64) |
-| **SHA-256 Checksums** | Cryptographic release manifest (`windows` + `linux`) | [`SHA256SUMS.txt`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.0/SHA256SUMS.txt) |
+| **Windows 10 / 11** | `x86_64` (Win32 GDI + DWM Dark Titlebar + WinHTTP TLS + Spooler) | [`rustpad-v3.0.1-windows-x86_64.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.1/rustpad-v3.0.1-windows-x86_64.exe) · [`rustpad.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.1/rustpad.exe) |
+| **Linux Desktop & CLI** | `x86_64` (`dlopen` X11 `_GTK_THEME_VARIANT` + CUPS/LP + Headless CLI) | [`rustpad-v3.0.1-linux-x86_64`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.1/rustpad-v3.0.1-linux-x86_64) |
+| **SHA-256 Checksums** | Cryptographic release manifest (`windows` + `linux`) | [`SHA256SUMS.txt`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.1/SHA256SUMS.txt) |
+
+---
+
+## What's New in `v3.0.1` — Rich-Span Typography, Inline Typing Styles & PDF AFM Calibration
+
+- **Adobe Standard-14 AFM PDF Metrics & Calibrated PDF Viewer**: Replaced coarse average-glyph width approximations and `.trim()` space stripping in `pdf_create` / `pdf_engine` / `pdf_view` with official per-codepoint Adobe AFM width tables (`Helvetica`, `Helvetica-Bold`, `Times-Roman`, `Times-Bold`, `Courier`) and calibrated `Surface::draw_text_to_width` rendering — eliminating missing inter-span spaces, truncated underlines, and overlapping runs after bold/styled words.
+- **12-Slot TrueType Styling (`Bold` + `Italic` + `BoldItalic`)**: Expanded `FontBook` / `FontSlot` across all `(Sans | Serif | Mono) × (Regular | Bold | Italic | BoldItalic)` combinations with 4×4 supersampled oblique italic shear and non-zero-winding span-dilated synthetic bold.
+- **Word-Style Pending Typing Style & Lossless Span Editing**: Toggling `Bold`, `Italic`, `Underline`, `Strikethrough`, `Superscript`, `Subscript`, font family, font size, ink color, or highlight at a caret without a selection now queues `pending_typing_style` for newly typed text instead of overwriting existing paragraph runs; `Enter`, `Backspace`, and `Delete` preserve all rich `TextSpan` styles across paragraph splits and merges; rich-span line wrapping, centering, and right-alignment measure per-span glyph advances with sub-pixel precision.
 
 ---
 

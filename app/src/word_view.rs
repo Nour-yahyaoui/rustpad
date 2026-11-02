@@ -559,12 +559,12 @@ fn paint_floating_selection_bar(
             Some(Block::Paragraph(p)) => p.style_at_char(c0 + 1),
             _ => doc_model::SpanStyle::default(),
         },
-        None => doc_model::SpanStyle::default(),
+        None => w.pending_typing_style.clone().unwrap_or_default(),
     };
 
     let items: [(&str, FontSlot, bool, bool, CommandId); 7] = [
         ("B", FontSlot::SansBold, probe_style.bold, false, CommandId::ToggleBold),
-        ("I", FontSlot::SerifRegular, probe_style.italic, false, CommandId::ToggleItalic),
+        ("I", FontSlot::SerifItalic, probe_style.italic, false, CommandId::ToggleItalic),
         ("U", FontSlot::SansBold, probe_style.underline, false, CommandId::ToggleUnderline),
         (
             "Highlight",
@@ -829,9 +829,22 @@ fn mix_single_block(mut h: u64, blk: &Block) -> u64 {
                         | ((sp.style.font_family as u64) << 4)
                         | ((sp.style.hidden as u64) << 8)
                         | ((sp.style.superscript as u64) << 9)
-                        | ((sp.style.subscript as u64) << 10),
+                        | ((sp.style.subscript as u64) << 10)
+                        | ((sp.style.hyperlink.is_some() as u64) << 11),
                 );
                 h = fnv_mix_u64(h, sp.style.font_size_pt.to_bits() as u64);
+                h = fnv_mix_u64(
+                    h,
+                    ((sp.style.color.r as u64) << 16)
+                        | ((sp.style.color.g as u64) << 8)
+                        | (sp.style.color.b as u64),
+                );
+                if let Some(hl) = sp.style.highlight {
+                    h = fnv_mix_u64(
+                        h,
+                        0x4000_0000 | ((hl.r as u64) << 16) | ((hl.g as u64) << 8) | (hl.b as u64),
+                    );
+                }
                 if let Some(rev) = &sp.revision {
                     h = fnv_mix_u64(h, 0x9000 + (rev.id as u64) * 4 + (rev.kind as u64));
                 }
@@ -1319,26 +1332,27 @@ fn wrap_paragraph_lines(
         .unwrap_or_else(|| p.style.default_font_size());
     let px_size = (base_pt * scale).clamp(9.5, 58.0);
     let bold = first_span
-        .map(|s| s.style.bold)
+        .map(|s| s.style.bold || p.style.is_bold_by_default())
         .unwrap_or_else(|| p.style.is_bold_by_default());
+    let italic = first_span
+        .map(|s| s.style.italic || p.style == ParagraphStyle::Quote)
+        .unwrap_or(p.style == ParagraphStyle::Quote);
     let fam = first_span
         .map(|s| s.style.font_family)
         .unwrap_or(FontFamily::Sans);
-    let slot = match (fam, bold) {
-        (FontFamily::Mono, _) => FontSlot::MonoRegular,
-        (FontFamily::Serif, _) => FontSlot::SerifRegular,
-        (FontFamily::Sans, true) => FontSlot::SansBold,
-        (FontFamily::Sans, false) => FontSlot::SansRegular,
-    };
+    let slot = FontSlot::select_styled(fam, bold, italic);
     let col = first_span
         .map(|s| StudioTheme::adapt_doc_ink(s.style.color, s.style.highlight.is_some()))
         .unwrap_or_else(StudioTheme::sheet_ink);
     let hl = first_span
         .and_then(|s| s.style.highlight)
         .map(|h| Color::rgb(h.r, h.g, h.b));
-    let underline = first_span.map(|s| s.style.underline).unwrap_or(false);
+    let underline = first_span
+        .map(|s| s.style.underline || s.style.hyperlink.is_some())
+        .unwrap_or(false);
     let strike = first_span.map(|s| s.style.strikethrough).unwrap_or(false);
-    let line_h = px_size * p.line_spacing.max(1.32);
+    let spacing_mult = p.line_spacing.max(1.32);
+    let default_line_h = px_size * spacing_mult;
 
     let full_text = p.plain_text();
     if full_text.is_empty() {
@@ -1347,7 +1361,7 @@ fn wrap_paragraph_lines(
             char_start: 0,
             slot,
             px_size,
-            line_h,
+            line_h: default_line_h,
             color: col,
             highlight: hl,
             underline,
@@ -1355,34 +1369,80 @@ fn wrap_paragraph_lines(
         }];
     }
 
+    // Precompute exact per-character `(advance_px, base_px)` across all spans (`O(1)` lookup per ASCII char)
+    let total_chars = full_text.chars().count();
+    let mut char_metrics: Vec<(f32, f32)> = Vec::with_capacity(total_chars);
+    let mut utf8_buf = [0u8; 4];
+    for sp in &p.spans {
+        let (sp_slot, sp_base_px, sp_draw_px) = span_slot_and_px(sp, p, scale);
+        for ch in sp.text.chars() {
+            let s_ch = ch.encode_utf8(&mut utf8_buf);
+            let adv = fonts.measure_text(sp_slot, s_ch, sp_draw_px);
+            char_metrics.push((adv, sp_base_px));
+        }
+    }
+
     let mut out = Vec::new();
     let mut cur_line = String::new();
     let mut cur_w = 0.0f32;
+    let mut cur_max_px = px_size;
     let mut cur_start = 0usize;
     let mut char_cursor = 0usize;
 
     for token in full_text.split_inclusive(' ') {
-        let tok_w = fonts.measure_text(slot, token, px_size);
+        let tok_chars = token.chars().count();
+        let slice = &char_metrics[char_cursor.min(char_metrics.len())
+            ..(char_cursor + tok_chars).min(char_metrics.len())];
+        let tok_w: f32 = slice.iter().map(|m| m.0).sum();
+        let tok_max_px: f32 = slice.iter().map(|m| m.1).fold(px_size, f32::max);
+
         if !cur_line.is_empty() && cur_w + tok_w > wrap_w {
             out.push(LaidOutLine {
-                text: cur_line,
+                text: std::mem::take(&mut cur_line),
                 char_start: cur_start,
                 slot,
-                px_size,
-                line_h,
+                px_size: cur_max_px,
+                line_h: cur_max_px * spacing_mult,
                 color: col,
                 highlight: hl,
                 underline,
                 strike,
             });
-            cur_line = token.to_string();
-            cur_w = tok_w;
+            cur_w = 0.0;
+            cur_max_px = px_size;
             cur_start = char_cursor;
+        }
+
+        // Soft-break single overlong unbroken tokens (e.g. long URLs) so they never spill off the sheet!
+        if tok_w > wrap_w && cur_line.is_empty() {
+            for (ci, ch) in token.chars().enumerate() {
+                let (cw, cpx) = slice.get(ci).copied().unwrap_or((px_size * 0.55, px_size));
+                if !cur_line.is_empty() && cur_w + cw > wrap_w {
+                    out.push(LaidOutLine {
+                        text: std::mem::take(&mut cur_line),
+                        char_start: cur_start,
+                        slot,
+                        px_size: cur_max_px,
+                        line_h: cur_max_px * spacing_mult,
+                        color: col,
+                        highlight: hl,
+                        underline,
+                        strike,
+                    });
+                    cur_w = 0.0;
+                    cur_max_px = px_size;
+                    cur_start = char_cursor + ci;
+                }
+                cur_line.push(ch);
+                cur_w += cw;
+                cur_max_px = cur_max_px.max(cpx);
+            }
         } else {
             cur_line.push_str(token);
             cur_w += tok_w;
+            cur_max_px = cur_max_px.max(tok_max_px);
         }
-        char_cursor += token.chars().count();
+        char_cursor += tok_chars;
     }
 
     if !cur_line.is_empty() {
@@ -1390,8 +1450,8 @@ fn wrap_paragraph_lines(
             text: cur_line,
             char_start: cur_start,
             slot,
-            px_size,
-            line_h,
+            px_size: cur_max_px,
+            line_h: cur_max_px * spacing_mult,
             color: col,
             highlight: hl,
             underline,
@@ -2122,26 +2182,37 @@ fn paint_paragraph_block(
     let mut cur_y = y;
 
     for (line_idx, ln) in item.lines.iter().enumerate() {
-        let lw = fonts.measure_text(ln.slot, &ln.text, ln.px_size);
         let eff_align = if p.alignment == Alignment::Left && p.is_rtl() {
             Alignment::Right
         } else {
             p.alignment
         };
-        let draw_x = match eff_align {
-            Alignment::Center => text_x + ((avail_w - lw) * 0.5).max(0.0),
-            Alignment::Right => text_x + (avail_w - lw).max(0.0),
-            Alignment::Left | Alignment::Justify => text_x,
-        };
         let baseline_y = cur_y + ln.px_size * 0.90;
         let line_chars = ln.text.chars().count();
-        let use_rich_spans = !ln.text.is_empty() && (p.spans.len() > 1 || p.has_revisions());
+        let use_rich_spans = !ln.text.is_empty()
+            && (p.spans.len() > 1
+                || p.has_revisions()
+                || p.spans.first().is_some_and(|s| {
+                    s.style.superscript
+                        || s.style.subscript
+                        || s.style.hidden
+                        || s.style.hyperlink.is_some()
+                }));
 
-        let char_xs = if use_rich_spans {
-            measure_rich_spans_char_xs(fonts, p, ln, draw_x, scale)
+        let rel_xs = if use_rich_spans {
+            measure_rich_spans_char_xs(fonts, p, ln, 0.0, scale)
         } else {
-            compute_line_char_xs(fonts, ln.slot, ln.px_size, draw_x, &ln.text)
+            compute_line_char_xs(fonts, ln.slot, ln.px_size, 0.0, &ln.text)
         };
+        let lw = rel_xs.last().copied().unwrap_or(0.0);
+        let trimmed_chars = ln.text.trim_end_matches(' ').chars().count();
+        let align_w = rel_xs.get(trimmed_chars).copied().unwrap_or(lw);
+        let draw_x = match eff_align {
+            Alignment::Center => text_x + ((avail_w - align_w) * 0.5).max(0.0),
+            Alignment::Right => text_x + (avail_w - align_w).max(0.0),
+            Alignment::Left | Alignment::Justify => text_x,
+        };
+        let char_xs: Vec<f32> = rel_xs.into_iter().map(|ox| draw_x + ox).collect();
 
         // Paint silky Cobalt-Linen range selection pill behind selected glyphs!
         if let Some((sel_s, sel_e)) = block_sel {
@@ -2387,18 +2458,19 @@ fn paint_paragraph_block(
     }
 }
 
-fn span_slot_and_px(sp: &doc_model::TextSpan, p: &Paragraph, scale: f32) -> (FontSlot, f32) {
-    let slot = match (
+fn span_slot_and_px(sp: &doc_model::TextSpan, p: &Paragraph, scale: f32) -> (FontSlot, f32, f32) {
+    let slot = FontSlot::select_styled(
         sp.style.font_family,
         sp.style.bold || p.style.is_bold_by_default(),
-    ) {
-        (FontFamily::Mono, _) => FontSlot::MonoRegular,
-        (FontFamily::Serif, _) => FontSlot::SerifRegular,
-        (FontFamily::Sans, true) => FontSlot::SansBold,
-        (FontFamily::Sans, false) => FontSlot::SansRegular,
+        sp.style.italic || p.style == ParagraphStyle::Quote,
+    );
+    let base_px = (sp.style.font_size_pt * scale).clamp(9.5, 58.0);
+    let draw_px = if sp.style.superscript || sp.style.subscript {
+        (base_px * 0.78).max(8.0)
+    } else {
+        base_px
     };
-    let px = (sp.style.font_size_pt * scale).clamp(9.5, 58.0);
-    (slot, px)
+    (slot, base_px, draw_px)
 }
 
 fn measure_rich_spans_char_xs(
@@ -2425,9 +2497,9 @@ fn measure_rich_spans_char_xs(
         }
         let ov_start = sp_start.max(ln.char_start) - sp_start;
         let ov_end = sp_end.min(line_end) - sp_start;
-        let (slot, px) = span_slot_and_px(sp, p, scale);
+        let (slot, _base_px, draw_px) = span_slot_and_px(sp, p, scale);
         for ch in sp.text.chars().skip(ov_start).take(ov_end - ov_start) {
-            pen += fonts.glyph(slot, ch, px).advance_px;
+            pen += fonts.glyph(slot, ch, draw_px).advance_px;
             xs.push(pen);
         }
     }
@@ -2475,8 +2547,8 @@ fn paint_rich_spans_line(
             continue;
         }
 
-        let (sp_slot, sp_px) = span_slot_and_px(sp, p, scale);
-        let sw = fonts.measure_text(sp_slot, &slice_str, sp_px);
+        let (sp_slot, sp_px, adj_px) = span_slot_and_px(sp, p, scale);
+        let sw = fonts.measure_text(sp_slot, &slice_str, adj_px);
         let rev_kind = sp.revision.as_ref().map(|r| r.kind);
 
         match rev_kind {
@@ -2490,7 +2562,7 @@ fn paint_rich_spans_line(
                 surface.draw_text(
                     fonts,
                     sp_slot,
-                    sp_px,
+                    adj_px,
                     seg_x,
                     baseline_y,
                     ins_col,
@@ -2511,7 +2583,7 @@ fn paint_rich_spans_line(
                 surface.draw_text(
                     fonts,
                     sp_slot,
-                    sp_px,
+                    adj_px,
                     seg_x,
                     baseline_y,
                     del_col,
@@ -2544,6 +2616,8 @@ fn paint_rich_spans_line(
                 }
                 let col = if is_checked_done || sp.style.hidden {
                     StudioTheme::sheet_ink_muted()
+                } else if sp.style.hyperlink.is_some() && sp.style.color == doc_model::RgbColor::INK_SLATE {
+                    StudioTheme::word_accent()
                 } else {
                     StudioTheme::adapt_doc_ink(sp.style.color, sp.style.highlight.is_some())
                 };
@@ -2553,11 +2627,6 @@ fn paint_rich_spans_line(
                     baseline_y + sp_px * 0.16
                 } else {
                     baseline_y
-                };
-                let adj_px = if sp.style.superscript || sp.style.subscript {
-                    (sp_px * 0.78).max(8.0)
-                } else {
-                    sp_px
                 };
                 surface.draw_text(fonts, sp_slot, adj_px, seg_x, adj_y, col, &slice_str);
                 if sp.style.underline || sp.style.hyperlink.is_some() {
@@ -2570,7 +2639,7 @@ fn paint_rich_spans_line(
                     surface.fill_rect(
                         Rect::new(
                             seg_x,
-                            baseline_y - sp_px * 0.30,
+                            adj_y - adj_px * 0.30,
                             sw,
                             (1.1 * scale).max(1.0),
                         ),
@@ -2599,15 +2668,25 @@ fn paint_word_ribbon(
         Block::Paragraph(p) => Some(p),
         _ => None,
     });
-    let active_sp_style = cur_para
-        .map(|p| {
-            let probe = w
-                .ordered_selection()
-                .map(|((_, c0), _)| c0 + 1)
-                .unwrap_or(w.cursor_char);
-            p.style_at_char(probe)
-        })
-        .unwrap_or_default();
+    let active_sp_style = if w.ordered_selection().is_none() {
+        if let Some(pending) = &w.pending_typing_style {
+            pending.clone()
+        } else {
+            cur_para
+                .map(|p| p.style_at_char(w.cursor_char))
+                .unwrap_or_default()
+        }
+    } else {
+        cur_para
+            .map(|p| {
+                let probe = w
+                    .ordered_selection()
+                    .map(|((_, c0), _)| c0 + 1)
+                    .unwrap_or(w.cursor_char);
+                p.style_at_char(probe)
+            })
+            .unwrap_or_default()
+    };
     let is_bold = active_sp_style.bold;
     let is_italic = active_sp_style.italic;
     let is_under = active_sp_style.underline;
@@ -2778,7 +2857,7 @@ fn paint_word_ribbon(
 
     // 3. Inline Marks (`B`, `I`, `U`, `Ink`, `Mark`)
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "B", FontSlot::SansBold, is_bold, false, CommandId::ToggleBold);
-    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "I", FontSlot::SerifRegular, is_italic, false, CommandId::ToggleItalic);
+    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "I", FontSlot::SerifItalic, is_italic, false, CommandId::ToggleItalic);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "U", FontSlot::SansRegular, is_under, false, CommandId::ToggleUnderline);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Ink", FontSlot::SansRegular, false, false, CommandId::CycleTextColor);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Mark", FontSlot::SansRegular, has_hl, false, CommandId::ToggleHighlight);

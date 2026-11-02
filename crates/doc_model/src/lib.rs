@@ -674,16 +674,73 @@ impl Paragraph {
         self.normalize_spans();
     }
 
+    /// Splits `self.spans` at character index `split_char`, keeping `[..split_char]` in `self`
+    /// and returning `[split_char..]` with all rich `SpanStyle` and `RevisionMeta` intact.
+    pub fn split_at_char(&mut self, split_char: usize) -> Vec<TextSpan> {
+        let mut left_spans: Vec<TextSpan> = Vec::with_capacity(self.spans.len());
+        let mut right_spans: Vec<TextSpan> = Vec::with_capacity(self.spans.len());
+        let trailing_style = self.style_at_char(split_char);
+        let mut cursor = 0usize;
+
+        for sp in self.spans.drain(..) {
+            let len = sp.text.chars().count();
+            let sp_start = cursor;
+            let sp_end = cursor + len;
+            cursor = sp_end;
+
+            if sp_end <= split_char {
+                left_spans.push(sp);
+            } else if sp_start >= split_char {
+                right_spans.push(sp);
+            } else {
+                let rel = split_char - sp_start;
+                let left_txt: String = sp.text.chars().take(rel).collect();
+                let right_txt: String = sp.text.chars().skip(rel).collect();
+                if !left_txt.is_empty() {
+                    left_spans.push(TextSpan {
+                        text: left_txt,
+                        style: sp.style.clone(),
+                        revision: sp.revision.clone(),
+                    });
+                }
+                if !right_txt.is_empty() {
+                    right_spans.push(TextSpan {
+                        text: right_txt,
+                        style: sp.style,
+                        revision: sp.revision,
+                    });
+                }
+            }
+        }
+
+        self.spans = left_spans;
+        self.normalize_spans();
+
+        if right_spans.is_empty() {
+            let mut next_style = trailing_style;
+            if self.style != ParagraphStyle::Normal {
+                next_style.font_size_pt = ParagraphStyle::Normal.default_font_size();
+                next_style.bold = false;
+                next_style.italic = false;
+                next_style.color = RgbColor::INK_SLATE;
+            }
+            right_spans.push(TextSpan::styled(String::new(), next_style));
+        }
+        right_spans
+    }
+
     pub fn normalize_spans(&mut self) {
+        let fallback_style = self
+            .spans
+            .first()
+            .map(|s| s.style.clone())
+            .unwrap_or_else(|| SpanStyle {
+                font_size_pt: self.style.default_font_size(),
+                bold: self.style.is_bold_by_default(),
+                ..SpanStyle::default()
+            });
         if self.spans.is_empty() {
-            self.spans.push(TextSpan::styled(
-                String::new(),
-                SpanStyle {
-                    font_size_pt: self.style.default_font_size(),
-                    bold: self.style.is_bold_by_default(),
-                    ..SpanStyle::default()
-                },
-            ));
+            self.spans.push(TextSpan::styled(String::new(), fallback_style));
             return;
         }
         let mut merged: Vec<TextSpan> = Vec::with_capacity(self.spans.len());
@@ -706,14 +763,7 @@ impl Paragraph {
         }
         merged.retain(|s| !s.text.is_empty());
         if merged.is_empty() {
-            merged.push(TextSpan::styled(
-                String::new(),
-                SpanStyle {
-                    font_size_pt: self.style.default_font_size(),
-                    bold: self.style.is_bold_by_default(),
-                    ..SpanStyle::default()
-                },
-            ));
+            merged.push(TextSpan::styled(String::new(), fallback_style));
         }
         self.spans = merged;
     }
@@ -2921,5 +2971,41 @@ mod tests {
             ImageBlock::parse_slash_image_command("/figure \"chart.png\""),
             Some(Some("chart.png".to_string()))
         );
+    }
+
+    #[test]
+    fn test_paragraph_split_at_char_preserves_rich_spans_and_styles() {
+        let mut p = Paragraph::new(ParagraphStyle::Normal, "");
+        p.spans = vec![
+            TextSpan::plain("hello everyone im "),
+            TextSpan::styled(
+                "nour yahyaoui",
+                SpanStyle {
+                    bold: true,
+                    underline: true,
+                    color: RgbColor::COBALT,
+                    ..SpanStyle::default()
+                },
+            ),
+            TextSpan::plain(" a web developer"),
+        ];
+
+        // Split right inside "nour |yahyaoui" (char 18 + 5 = 23)
+        let right = p.split_at_char(23);
+        assert_eq!(p.plain_text(), "hello everyone im nour ");
+        assert_eq!(p.spans.len(), 2);
+        assert!(!p.spans[0].style.bold);
+        assert!(p.spans[1].style.bold && p.spans[1].style.underline);
+        assert_eq!(p.spans[1].style.color, RgbColor::COBALT);
+
+        let mut next_p = Paragraph::new(ParagraphStyle::Normal, "");
+        next_p.spans = right;
+        next_p.normalize_spans();
+        assert_eq!(next_p.plain_text(), "yahyaoui a web developer");
+        assert_eq!(next_p.spans.len(), 2);
+        assert!(next_p.spans[0].style.bold && next_p.spans[0].style.underline);
+        assert_eq!(next_p.spans[0].text, "yahyaoui");
+        assert!(!next_p.spans[1].style.bold && !next_p.spans[1].style.underline);
+        assert_eq!(next_p.spans[1].text, " a web developer");
     }
 }

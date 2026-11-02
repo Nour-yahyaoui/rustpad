@@ -326,6 +326,57 @@ impl Surface {
         color: Color,
         text: &str,
     ) -> f32 {
+        self.draw_text_tracked(fonts, slot, px_size, x, baseline_y, 1.0, color, text)
+    }
+
+    /// Draws TrueType text calibrated to `target_width` (e.g. matching PDF Standard-14 AFM run widths
+    /// so adjacent bold/regular/underlined PDF text runs never collide or overshoot underlines).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_text_to_width(
+        &mut self,
+        fonts: &mut FontBook,
+        slot: FontSlot,
+        px_size: f32,
+        x: f32,
+        baseline_y: f32,
+        target_width: f32,
+        color: Color,
+        text: &str,
+    ) -> f32 {
+        if text.is_empty() || target_width <= 0.5 {
+            return self.draw_text(fonts, slot, px_size, x, baseline_y, color, text);
+        }
+        let nat_w = fonts.measure_text(slot, text, px_size);
+        if nat_w <= 0.5 || (nat_w - target_width).abs() <= 0.6 {
+            return self.draw_text(fonts, slot, px_size, x, baseline_y, color, text);
+        }
+        let adj_px = if nat_w > target_width {
+            let ratio = (target_width / nat_w).clamp(0.70, 1.0);
+            (px_size * ratio.sqrt().clamp(0.88, 1.0)).max(6.5)
+        } else {
+            px_size
+        };
+        let adj_w = fonts.measure_text(slot, text, adj_px);
+        let adv_scale = if adj_w > 0.5 {
+            (target_width / adj_w).clamp(0.60, 1.40)
+        } else {
+            1.0
+        };
+        self.draw_text_tracked(fonts, slot, adj_px, x, baseline_y, adv_scale, color, text)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_text_tracked(
+        &mut self,
+        fonts: &mut FontBook,
+        slot: FontSlot,
+        px_size: f32,
+        x: f32,
+        baseline_y: f32,
+        adv_scale: f32,
+        color: Color,
+        text: &str,
+    ) -> f32 {
         let mut pen_x = x;
         let (cx0, cy0, cx1, cy1) = self.clip;
         let stride = self.width as usize;
@@ -335,7 +386,7 @@ impl Surface {
                 continue;
             }
             if ch == '\t' {
-                pen_x += fonts.glyph(slot, ' ', px_size).advance_px * 4.0;
+                pen_x += fonts.glyph(slot, ' ', px_size).advance_px * 4.0 * adv_scale;
                 continue;
             }
             let g = fonts.glyph(slot, ch, px_size);
@@ -343,7 +394,7 @@ impl Surface {
             let gy0 = baseline_y.round() as i32 + g.offset_y;
             let gw = g.width as i32;
             let gh = g.height as i32;
-            let adv = g.advance_px;
+            let adv = g.advance_px * adv_scale;
 
             if gw > 0 && gh > 0 && gx0 < cx1 && gx0 + gw > cx0 && gy0 < cy1 && gy0 + gh > cy0 {
                 let r_start = (cy0 - gy0).max(0);
