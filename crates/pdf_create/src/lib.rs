@@ -491,6 +491,22 @@ fn render_paragraph_pdf(
         lines.push(cur_line);
     }
 
+    // Merge contiguous same-style tokens on each wrapped line so phrases get continuous underlines/highlights
+    for line in &mut lines {
+        let mut merged: Vec<PdfToken> = Vec::with_capacity(line.len());
+        for tok in line.drain(..) {
+            if let Some(prev) = merged.last_mut() {
+                if prev.style == tok.style {
+                    prev.text.push_str(&tok.text);
+                    prev.width_pt += tok.width_pt;
+                    continue;
+                }
+            }
+            merged.push(tok);
+        }
+        *line = merged;
+    }
+
     for (line_idx, line) in lines.iter().enumerate() {
         let line_max_size = line
             .iter()
@@ -1536,15 +1552,16 @@ mod tests {
         let pdf = export_document_to_pdf_bytes(&doc, &opts);
         let stream = String::from_utf8_lossy(&pdf);
 
+        let sz = SpanStyle::default().font_size_pt;
         let w_prefix_with_space =
-            estimate_styled_text_width("hello everyone im ", 11.5, FontFamily::Sans, false);
+            estimate_styled_text_width("hello everyone im ", sz, FontFamily::Sans, false);
         let w_prefix_trimmed =
-            estimate_styled_text_width("hello everyone im", 11.5, FontFamily::Sans, false);
+            estimate_styled_text_width("hello everyone im", sz, FontFamily::Sans, false);
         let w_bold_name =
-            estimate_styled_text_width("nour yahyaoui", 11.5, FontFamily::Sans, true);
+            estimate_styled_text_width("nour yahyaoui", sz, FontFamily::Sans, true);
         let w_reg_name =
-            estimate_styled_text_width("nour yahyaoui", 11.5, FontFamily::Sans, false);
-        let space_w = estimate_styled_text_width(" ", 11.5, FontFamily::Sans, false);
+            estimate_styled_text_width("nour yahyaoui", sz, FontFamily::Sans, false);
+        let space_w = estimate_styled_text_width(" ", sz, FontFamily::Sans, false);
 
         assert!(w_prefix_with_space - w_prefix_trimmed > 3.0);
         assert!(w_bold_name > w_reg_name);
