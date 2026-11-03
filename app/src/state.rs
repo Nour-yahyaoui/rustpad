@@ -6368,7 +6368,8 @@ mod tests {
 
     #[test]
     fn test_v3011_inline_math_library_insertion_and_clean_prose_continuation() {
-        let mut app = RustPadApp::new_blank_word();
+        let mut app = RustPadApp::new();
+        app.execute_command(CommandId::NewWordBlank);
         for ch in "Given ".chars() {
             app.handle_text_input(ch);
         }
