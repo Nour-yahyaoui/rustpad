@@ -635,7 +635,7 @@ pub fn word_to_html(doc: &Document, dark_mode_default: bool) -> String {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <meta name="generator" content="RustPad v3.0.1"/>
+  <meta name="generator" content="RustPad v3.0.11"/>
   <title>{}</title>
   <style>
     :root {{ --desk:#eef2f7; --sheet:#ffffff; --ink:#0f172a; --muted:#64748b; --border:#d0d8e4; --accent:#2563eb; --th:#f1f5f9; }}
