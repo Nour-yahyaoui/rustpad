@@ -459,10 +459,13 @@ pub fn spool_pdf_to_os_printer(pdf_path: & std::path::Path) -> Result<String, St
     }
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         let p_str = pdf_path.display().to_string().replace('\'', "''");
-        let ps_cmd = format!("Start-Process -FilePath '{p_str}' -Verb Print");
-        if let Ok(st) = Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+        let ps_cmd = format!("Start-Process -WindowStyle Hidden -FilePath '{p_str}' -Verb Print");
+        let mut cmd = Command::new("powershell");
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        if let Ok(st) = cmd
+            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
             .status()
         {
             if st.success() {

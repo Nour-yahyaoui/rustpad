@@ -2,6 +2,11 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`) follow our continuous release workflow (`Issue → PR → CI Matrix → GitHub Release`).
 
+## [v3.0.12] - 2026-11-03 — Pure Win32 GUI Subsystem (Zero Console Window) & Linear Algebra / Probability Math Pack
+### Fixed & Added
+- **Eliminated Background Windows `cmd.exe` Console Window (`app/src/main.rs`, `crates/power_tools`, `crates/rustpad_window`)**: Added `#![cfg_attr(all(target_os = "windows", not(test)), windows_subsystem = "windows")]` so double-clicking `rustpad.exe` opens strictly the native Win32 GUI window with zero persistent terminal window, paired with `AttachConsole(ATTACH_PARENT_PROCESS)` for headless CLI subcommands and `CREATE_NO_WINDOW` (`0x0800_0000`) on background print/OCR/curl helpers.
+- **Expanded Inline Math Library (`83` Ready-to-Insert Templates)**: Added `MathCategory::LinearAlgebra` and `MathCategory::Probability` formulas (Dot Product, L1/L2/Frobenius Norms, Cosine Similarity, `Ax = b`, Matrix Product, Eigenvalues, SVD, QR/Cholesky, OLS, Orthogonal Projection, Cauchy–Schwarz, Kronecker/Hadamard, Bayes' Theorem, Conditional/Total Probability, Expectation, Variance, Correlation, Gaussian PDF, Z-Score/CI, Binomial/Poisson PMF, MLE, Chebyshev).
+
 ## [v3.0.0] - 2026-11-01 — Major Engine Upgrade: Native Dark Mode, Lossless OOXML Intelligence, Smart Merge, Redaction & Pure-Rust OCR
 ### Added & Upgraded
 - **Native Three-Mode Dark Studio (`Daylight` / `Midnight` / `HybridDarkDesk`) & OS Titlebar Sync** (`crates/rustpad_render/src/{theme,canvas,lib}.rs`, `crates/rustpad_window/src/{lib,win32,linux_x11}.rs`, `app/src/{commands,state,word_view,pdf_view,ui_paint,main}.rs`):

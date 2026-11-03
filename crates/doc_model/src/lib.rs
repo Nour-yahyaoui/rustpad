@@ -3049,8 +3049,17 @@ mod tests {
 
     #[test]
     fn test_inline_math_library_templates_and_span_insertion() {
-        assert!(MATH_TEMPLATES.len() >= 55);
+        assert!(MATH_TEMPLATES.len() >= 80);
+        for (i, a) in MATH_TEMPLATES.iter().enumerate() {
+            for b in &MATH_TEMPLATES[i + 1..] {
+                assert_ne!(a.id, b.id, "duplicate math template id: {}", a.id);
+            }
+        }
         let quad = find_math_template("quadratic").expect("quadratic template");
+        let bayes = find_math_template("bayes_theorem").expect("bayes template");
+        let svd = find_math_template("svd_decomp").expect("svd template");
+        assert_eq!(bayes.category, MathCategory::Probability);
+        assert_eq!(svd.category, MathCategory::LinearAlgebra);
         let base = SpanStyle::default();
         let spans = quad.to_inline_spans(&base);
         assert!(spans.len() >= 4);
@@ -3069,6 +3078,10 @@ mod tests {
         assert_eq!(
             parse_slash_math_command("/math quadratic"),
             Some(MathSlashAction::InsertTemplate("quadratic"))
+        );
+        assert_eq!(
+            parse_slash_math_command("/math bayes"),
+            Some(MathSlashAction::InsertTemplate("bayes_theorem"))
         );
     }
 }

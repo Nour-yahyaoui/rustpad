@@ -11,6 +11,8 @@ pub enum MathCategory {
     Core,
     Algebra,
     Calculus,
+    LinearAlgebra,
+    Probability,
     Greek,
 }
 
@@ -20,6 +22,8 @@ impl MathCategory {
             Self::Core => "Core",
             Self::Algebra => "Algebra",
             Self::Calculus => "Calculus",
+            Self::LinearAlgebra => "LinAlg",
+            Self::Probability => "Prob",
             Self::Greek => "Greek",
         }
     }
@@ -179,7 +183,7 @@ pub fn filter_math_templates(query: &str) -> Vec<&'static MathTemplate> {
         .collect()
 }
 
-use MathCategory::{Algebra, Calculus, Core, Greek};
+use MathCategory::{Algebra, Calculus, Core, Greek, LinearAlgebra, Probability};
 use MathPart::{Fn as MF, Op, Sub, SubVar, Sup, SupVar, Var};
 
 pub const MATH_TEMPLATES: &[MathTemplate] = &[
@@ -620,7 +624,280 @@ pub const MATH_TEMPLATES: &[MathTemplate] = &[
         ],
     },
 
-    // ==================== 4. GREEK VARIABLES, SETS & OPERATORS ====================
+    // ==================== 4. LINEAR ALGEBRA & MATRICES (`v3.0.12`) ====================
+    MathTemplate {
+        id: "dot_product",
+        category: LinearAlgebra,
+        title: "Dot / Transpose Product",
+        keywords: "dot scalar transpose vector linear algebra",
+        preview: "uᵀv = ∑ᵢ₌₁ⁿ uᵢvᵢ",
+        parts: &[
+            Var("u"), Sup("T"), Var("v"), Op(" = ∑"), Sub("i=1"), SupVar("n"),
+            Op(" "), Var("u"), SubVar("i"), Var("v"), SubVar("i"),
+        ],
+    },
+    MathTemplate {
+        id: "norm_l1_linf",
+        category: LinearAlgebra,
+        title: "Manhattan L1 & Max L∞ Norms",
+        keywords: "norm l1 manhattan infinity max vector",
+        preview: "‖x‖₁ = ∑ᵢ |xᵢ|, ‖x‖_∞ = maxᵢ |xᵢ|",
+        parts: &[
+            Op("‖"), Var("x"), Op("‖"), Sub("1"), Op(" = ∑"), SubVar("i"),
+            Op(" |"), Var("x"), SubVar("i"), Op("|, ‖"), Var("x"), Op("‖"), Sub("∞"),
+            Op(" = "), MF("max"), SubVar("i"), Op(" |"), Var("x"), SubVar("i"), Op("|"),
+        ],
+    },
+    MathTemplate {
+        id: "frobenius_norm",
+        category: LinearAlgebra,
+        title: "Frobenius Matrix Norm",
+        keywords: "frobenius matrix norm trace hilbert schmidt",
+        preview: "‖A‖_F = √(∑ᵢ ∑ⱼ |aᵢⱼ|²)",
+        parts: &[
+            Op("‖"), Var("A"), Op("‖"), SubVar("F"), Op(" = √(∑"), SubVar("i"),
+            Op(" ∑"), SubVar("j"), Op(" |"), Var("a"), SubVar("ij"), Op("|"), Sup("2"), Op(")"),
+        ],
+    },
+    MathTemplate {
+        id: "cosine_sim",
+        category: LinearAlgebra,
+        title: "Cosine Similarity",
+        keywords: "cosine similarity angle embedding vector",
+        preview: "cos(θ) = (u · v) / (‖u‖₂ ‖v‖₂)",
+        parts: &[
+            MF("cos"), Op("("), Var("θ"), Op(") = ("), Var("u"), Op(" · "), Var("v"),
+            Op(") / (‖"), Var("u"), Op("‖"), Sub("2"), Op(" ‖"), Var("v"), Op("‖"), Sub("2"), Op(")"),
+        ],
+    },
+    MathTemplate {
+        id: "linear_system",
+        category: LinearAlgebra,
+        title: "Matrix-Vector Linear System",
+        keywords: "ax=b linear system matrix equation",
+        preview: "Ax = b, A ∈ ℝ^(m×n), x ∈ ℝⁿ",
+        parts: &[
+            Var("A"), Var("x"), Op(" = "), Var("b"), Op(", "), Var("A"), Op(" ∈ ℝ"),
+            Sup("m×n"), Op(", "), Var("x"), Op(" ∈ ℝ"), SupVar("n"),
+        ],
+    },
+    MathTemplate {
+        id: "matmul_entry",
+        category: LinearAlgebra,
+        title: "Matrix Multiplication Entry",
+        keywords: "matmul matrix product index entry",
+        preview: "(AB)ᵢⱼ = ∑ₖ₌₁ᵖ aᵢₖ bₖⱼ",
+        parts: &[
+            Op("("), Var("AB"), Op(")"), SubVar("ij"), Op(" = ∑"), Sub("k=1"), SupVar("p"),
+            Op(" "), Var("a"), SubVar("ik"), Op(" "), Var("b"), SubVar("kj"),
+        ],
+    },
+    MathTemplate {
+        id: "eigenvalue_eq",
+        category: LinearAlgebra,
+        title: "Eigenvalue & Characteristic Eq.",
+        keywords: "eigenvalue eigenvector characteristic determinant",
+        preview: "Av = λv, det(A − λI) = 0",
+        parts: &[
+            Var("A"), Var("v"), Op(" = "), Var("λ"), Var("v"), Op(", "),
+            MF("det"), Op("("), Var("A"), Op(" − "), Var("λ"), Var("I"), Op(") = 0"),
+        ],
+    },
+    MathTemplate {
+        id: "svd_decomp",
+        category: LinearAlgebra,
+        title: "Singular Value Decomposition (SVD)",
+        keywords: "svd singular value decomposition orthogonal",
+        preview: "A = U Σ Vᵀ",
+        parts: &[Var("A"), Op(" = "), Var("U"), Op(" Σ "), Var("V"), Sup("T")],
+    },
+    MathTemplate {
+        id: "qr_cholesky",
+        category: LinearAlgebra,
+        title: "QR & Cholesky Factorizations",
+        keywords: "qr cholesky decomposition orthogonal positive definite",
+        preview: "A = QR (QᵀQ = I), A = LLᵀ",
+        parts: &[
+            Var("A"), Op(" = "), Var("QR"), Op(" ("), Var("Q"), Sup("T"), Var("Q"),
+            Op(" = "), Var("I"), Op("), "), Var("A"), Op(" = "), Var("LL"), Sup("T"),
+        ],
+    },
+    MathTemplate {
+        id: "least_squares",
+        category: LinearAlgebra,
+        title: "Ordinary Least Squares (Normal Eq.)",
+        keywords: "ols least squares regression pseudo inverse",
+        preview: "w* = (XᵀX)⁻¹ Xᵀy",
+        parts: &[
+            Var("w"), Sup("*"), Op(" = ("), Var("X"), Sup("T"), Var("X"),
+            Op(")"), Sup("−1"), Op(" "), Var("X"), Sup("T"), Var("y"),
+        ],
+    },
+    MathTemplate {
+        id: "orth_proj",
+        category: LinearAlgebra,
+        title: "Orthogonal Vector Projection",
+        keywords: "projection subspace inner product",
+        preview: "proj_u(v) = (⟨v, u⟩ / ⟨u, u⟩) u",
+        parts: &[
+            MF("proj"), SubVar("u"), Op("("), Var("v"), Op(") = (⟨"), Var("v"), Op(", "),
+            Var("u"), Op("⟩ / ⟨"), Var("u"), Op(", "), Var("u"), Op("⟩) "), Var("u"),
+        ],
+    },
+    MathTemplate {
+        id: "cauchy_schwarz",
+        category: LinearAlgebra,
+        title: "Cauchy–Schwarz Inequality",
+        keywords: "cauchy schwarz inequality inner product norm",
+        preview: "|⟨u, v⟩| ≤ ‖u‖ · ‖v‖",
+        parts: &[
+            Op("|⟨"), Var("u"), Op(", "), Var("v"), Op("⟩| ≤ ‖"),
+            Var("u"), Op("‖ · ‖"), Var("v"), Op("‖"),
+        ],
+    },
+    MathTemplate {
+        id: "kronecker_hadamard",
+        category: LinearAlgebra,
+        title: "Kronecker & Hadamard Products",
+        keywords: "kronecker tensor hadamard elementwise",
+        preview: "A ⊗ B, (A ⊙ B)ᵢⱼ = aᵢⱼ bᵢⱼ",
+        parts: &[
+            Var("A"), Op(" ⊗ "), Var("B"), Op(", ("), Var("A"), Op(" ⊙ "), Var("B"),
+            Op(")"), SubVar("ij"), Op(" = "), Var("a"), SubVar("ij"), Op(" "), Var("b"), SubVar("ij"),
+        ],
+    },
+
+    // ==================== 5. PROBABILITY & STATISTICS (`v3.0.12`) ====================
+    MathTemplate {
+        id: "bayes_theorem",
+        category: Probability,
+        title: "Bayes' Theorem",
+        keywords: "bayes posterior prior likelihood conditional probability",
+        preview: "P(A | B) = P(B | A) P(A) / P(B)",
+        parts: &[
+            Var("P"), Op("("), Var("A"), Op(" | "), Var("B"), Op(") = "),
+            Var("P"), Op("("), Var("B"), Op(" | "), Var("A"), Op(") "),
+            Var("P"), Op("("), Var("A"), Op(") / "), Var("P"), Op("("), Var("B"), Op(")"),
+        ],
+    },
+    MathTemplate {
+        id: "cond_total_prob",
+        category: Probability,
+        title: "Conditional & Total Probability",
+        keywords: "conditional intersection partition total probability",
+        preview: "P(A | B) = P(A ∩ B) / P(B), P(A) = ∑ᵢ P(A | Bᵢ) P(Bᵢ)",
+        parts: &[
+            Var("P"), Op("("), Var("A"), Op(" | "), Var("B"), Op(") = "),
+            Var("P"), Op("("), Var("A"), Op(" ∩ "), Var("B"), Op(") / "), Var("P"), Op("("), Var("B"),
+            Op("), "), Var("P"), Op("("), Var("A"), Op(") = ∑"), SubVar("i"),
+            Op(" "), Var("P"), Op("("), Var("A"), Op(" | "), Var("B"), SubVar("i"),
+            Op(") "), Var("P"), Op("("), Var("B"), SubVar("i"), Op(")"),
+        ],
+    },
+    MathTemplate {
+        id: "expectation_def",
+        category: Probability,
+        title: "Expected Value (Mean)",
+        keywords: "expectation expected value mean discrete random variable",
+        preview: "𝔼[X] = μ = ∑ₓ x · P(X = x)",
+        parts: &[
+            Op("𝔼["), Var("X"), Op("] = "), Var("μ"), Op(" = ∑"), SubVar("x"),
+            Op(" "), Var("x"), Op(" · "), Var("P"), Op("("), Var("X"), Op(" = "), Var("x"), Op(")"),
+        ],
+    },
+    MathTemplate {
+        id: "variance_identity",
+        category: Probability,
+        title: "Variance & Standard Deviation",
+        keywords: "variance std sigma expectation moment",
+        preview: "Var(X) = σ² = 𝔼[X²] − (𝔼[X])²",
+        parts: &[
+            MF("Var"), Op("("), Var("X"), Op(") = "), Var("σ"), Sup("2"),
+            Op(" = 𝔼["), Var("X"), Sup("2"), Op("] − (𝔼["), Var("X"), Op("])"), Sup("2"),
+        ],
+    },
+    MathTemplate {
+        id: "covariance_corr",
+        category: Probability,
+        title: "Covariance & Pearson Correlation",
+        keywords: "covariance correlation pearson rho",
+        preview: "ρ_(X,Y) = Cov(X, Y) / (σ_X σ_Y)",
+        parts: &[
+            Var("ρ"), Sub("X,Y"), Op(" = "), MF("Cov"), Op("("), Var("X"), Op(", "), Var("Y"),
+            Op(") / ("), Var("σ"), SubVar("X"), Op(" "), Var("σ"), SubVar("Y"), Op(")"),
+        ],
+    },
+    MathTemplate {
+        id: "gaussian_pdf",
+        category: Probability,
+        title: "Gaussian / Normal Density (PDF)",
+        keywords: "gaussian normal distribution bell curve density",
+        preview: "f(x) = (1 / (σ√(2π))) e^(−(x − μ)² / (2σ²))",
+        parts: &[
+            Var("f"), Op("("), Var("x"), Op(") = (1 / ("), Var("σ"), Op("√(2"), Var("π"),
+            Op("))) "), Var("e"), Sup("−(x−μ)²/(2σ²)"),
+        ],
+    },
+    MathTemplate {
+        id: "z_score_ci",
+        category: Probability,
+        title: "Z-Score & Confidence Interval",
+        keywords: "zscore standard normal confidence interval",
+        preview: "z = (x − μ) / σ, CI = μ ± z_(α/2) (s / √n)",
+        parts: &[
+            Var("z"), Op(" = ("), Var("x"), Op(" − "), Var("μ"), Op(") / "), Var("σ"),
+            Op(", CI = "), Var("μ"), Op(" ± "), Var("z"), Sub("α/2"),
+            Op(" ("), Var("s"), Op(" / √"), Var("n"), Op(")"),
+        ],
+    },
+    MathTemplate {
+        id: "binomial_pmf",
+        category: Probability,
+        title: "Binomial Distribution PMF",
+        keywords: "binomial bernoulli trials probability mass",
+        preview: "P(X = k) = C(n, k) pᵏ (1 − p)^(n−k)",
+        parts: &[
+            Var("P"), Op("("), Var("X"), Op(" = "), Var("k"), Op(") = "),
+            Var("C"), Op("("), Var("n"), Op(", "), Var("k"), Op(") "),
+            Var("p"), SupVar("k"), Op(" (1 − "), Var("p"), Op(")"), Sup("n−k"),
+        ],
+    },
+    MathTemplate {
+        id: "poisson_pmf",
+        category: Probability,
+        title: "Poisson Distribution PMF",
+        keywords: "poisson rate arrival events probability",
+        preview: "P(X = k) = (λᵏ e^(−λ)) / k!",
+        parts: &[
+            Var("P"), Op("("), Var("X"), Op(" = "), Var("k"), Op(") = ("),
+            Var("λ"), SupVar("k"), Op(" "), Var("e"), Sup("−λ"), Op(") / "), Var("k"), Op("!"),
+        ],
+    },
+    MathTemplate {
+        id: "mle_estimator",
+        category: Probability,
+        title: "Maximum Likelihood Estimation (MLE)",
+        keywords: "mle maximum likelihood log argmax parameter",
+        preview: "θ* = argmax_θ ∑ᵢ₌₁ⁿ ln p(xᵢ | θ)",
+        parts: &[
+            Var("θ"), Sup("*"), Op(" = "), MF("argmax"), SubVar("θ"),
+            Op(" ∑"), Sub("i=1"), SupVar("n"), Op(" "), MF("ln"), Op(" "),
+            Var("p"), Op("("), Var("x"), SubVar("i"), Op(" | "), Var("θ"), Op(")"),
+        ],
+    },
+    MathTemplate {
+        id: "clt_chebyshev",
+        category: Probability,
+        title: "Chebyshev's Tail Inequality",
+        keywords: "chebyshev markov bound tail concentration",
+        preview: "P(|X − μ| ≥ kσ) ≤ 1 / k²",
+        parts: &[
+            Var("P"), Op("(|"), Var("X"), Op(" − "), Var("μ"), Op("| ≥ "),
+            Var("k"), Var("σ"), Op(") ≤ 1 / "), Var("k"), Sup("2"),
+        ],
+    },
+
+    // ==================== 6. GREEK VARIABLES, SETS & OPERATORS ====================
     MathTemplate {
         id: "alpha_beta_gamma",
         category: Greek,
