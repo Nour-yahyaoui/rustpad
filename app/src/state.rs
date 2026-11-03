@@ -3,10 +3,11 @@
 
 use crate::commands::{filter_commands, CommandId};
 use doc_model::{
-    next_word_char_idx, prev_word_char_idx, word_range_at_char, Alignment, Block, Document,
-    DocumentStats, FontFamily, ImageBlock, ListKind, OutlineItem, PaperSize, Paragraph,
-    ParagraphStyle, RevisionKind, RevisionMeta, RgbColor, SectionBreakKind, SharedBytes, SpanStyle,
-    TableBlock, TablePreset, TableTheme, TemplateKind, TextSpan, UndoHistory,
+    filter_math_templates, find_math_template, next_word_char_idx, parse_slash_math_command,
+    prev_word_char_idx, word_range_at_char, Alignment, Block, Document, DocumentStats, FontFamily,
+    ImageBlock, ListKind, MathSlashAction, OutlineItem, PaperSize, Paragraph, ParagraphStyle,
+    RevisionKind, RevisionMeta, RgbColor, SectionBreakKind, SharedBytes, SpanStyle, TableBlock,
+    TablePreset, TableTheme, TemplateKind, TextSpan, UndoHistory,
 };
 use docx_io::{
     load_docx_file, load_docx_shared_with_progress, repair_docx_bytes, save_docx_bytes,
