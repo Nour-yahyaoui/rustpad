@@ -60,16 +60,9 @@ impl MathTemplate {
             let mut st = SpanStyle {
                 font_family: FontFamily::Serif,
                 font_size_pt: base.font_size_pt,
-                bold: false,
-                italic: false,
-                underline: false,
-                strikethrough: false,
-                superscript: false,
-                subscript: false,
                 color: base.color,
                 highlight: base.highlight,
-                hyperlink: None,
-                hidden: false,
+                ..SpanStyle::default()
             };
             let txt = match *part {
                 MathPart::Op(s) | MathPart::Fn(s) => s,
