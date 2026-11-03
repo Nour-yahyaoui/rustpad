@@ -105,6 +105,7 @@ pub enum CommandId {
     AddEndnote,
     ToggleSuperscript,
     ToggleSubscript,
+    OpenMathLibrary,
     OpenAbout,
 }
 
@@ -188,6 +189,7 @@ pub const ALL_COMMANDS: &[CommandSpec] = &[
     CommandSpec { id: CommandId::AddEndnote, category: "Word", title: "Insert Endnote Citation at Current Paragraph", shortcut: "" },
     CommandSpec { id: CommandId::ToggleSuperscript, category: "Word", title: "Toggle Superscript Formatting", shortcut: "" },
     CommandSpec { id: CommandId::ToggleSubscript, category: "Word", title: "Toggle Subscript Formatting", shortcut: "" },
+    CommandSpec { id: CommandId::OpenMathLibrary, category: "Math", title: "Insert Inline Math Function / Formula… (/math)", shortcut: "Ctrl+Shift+L" },
     CommandSpec { id: CommandId::CyclePaperSize, category: "Word", title: "Switch Paper Size (A4 / US Letter / US Legal)", shortcut: "" },
     CommandSpec { id: CommandId::ToggleSpellcheck, category: "Tools", title: "Toggle Offline Live Spellchecker", shortcut: "" },
     CommandSpec { id: CommandId::PdfSanitizeRedactions, category: "PDF", title: "PDF Forensics: Sanitize & Purge Redacted Underlying Text", shortcut: "" },

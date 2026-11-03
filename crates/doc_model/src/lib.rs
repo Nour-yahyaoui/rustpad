@@ -3,12 +3,17 @@
 //! Lossless OOXML `passthrough_parts`, Word-Level Legal Redline Diffing, and Undo/Redo).
 
 pub mod compare;
+pub mod math_library;
 pub mod templates;
 
 pub use compare::{
     compare_documents, diff_chars, diff_redline_char_level, merge_two_documents,
     smart_merge_documents, CharDiffOp, DocumentComparisonReport, FormattingChange, MergeOutcome,
     MergeStrategy, StructuralChange,
+};
+pub use math_library::{
+    filter_math_templates, find_math_template, parse_slash_math_command, MathCategory, MathPart,
+    MathSlashAction, MathTemplate, MATH_TEMPLATES,
 };
 use std::collections::BTreeMap;
 pub use templates::TemplateKind;
@@ -766,6 +771,39 @@ impl Paragraph {
             merged.push(TextSpan::styled(String::new(), fallback_style));
         }
         self.spans = merged;
+    }
+
+    /// Inserts multi-span inline content (such as a ready-to-use `MathTemplate`) at `char_idx`,
+    /// preserving left and right surrounding spans and returning the inserted character count.
+    pub fn insert_inline_spans_at(
+        &mut self,
+        char_idx: usize,
+        mut spans: Vec<TextSpan>,
+        revision: Option<RevisionMeta>,
+    ) -> usize {
+        if spans.is_empty() {
+            return 0;
+        }
+        let clamped = char_idx.min(self.plain_text().chars().count());
+        let right_spans = self.split_at_char(clamped);
+        let mut inserted_chars = 0usize;
+        for sp in &mut spans {
+            inserted_chars += sp.text.chars().count();
+            if sp.revision.is_none() {
+                sp.revision = revision.clone();
+            }
+        }
+        if self.spans.len() == 1 && self.spans[0].text.is_empty() {
+            self.spans.clear();
+        }
+        self.spans.extend(spans);
+        for rsp in right_spans {
+            if !rsp.text.is_empty() {
+                self.spans.push(rsp);
+            }
+        }
+        self.normalize_spans();
+        inserted_chars
     }
 }
 
@@ -3007,5 +3045,30 @@ mod tests {
         assert_eq!(next_p.spans[0].text, "yahyaoui");
         assert!(!next_p.spans[1].style.bold && !next_p.spans[1].style.underline);
         assert_eq!(next_p.spans[1].text, " a web developer");
+    }
+
+    #[test]
+    fn test_inline_math_library_templates_and_span_insertion() {
+        assert!(MATH_TEMPLATES.len() >= 55);
+        let quad = find_math_template("quadratic").expect("quadratic template");
+        let base = SpanStyle::default();
+        let spans = quad.to_inline_spans(&base);
+        assert!(spans.len() >= 4);
+        assert!(spans.iter().any(|s| s.style.superscript));
+        assert!(spans.iter().any(|s| s.style.italic && s.style.font_family == FontFamily::Serif));
+
+        let mut p = Paragraph::new(ParagraphStyle::Normal, "Solve  for roots.");
+        let added = p.insert_inline_spans_at(6, spans, None);
+        assert!(added > 5);
+        assert!(p.plain_text().starts_with("Solve x = (−b ± √(b2 − 4ac)) / 2a for roots."));
+
+        assert_eq!(
+            parse_slash_math_command("/math"),
+            Some(MathSlashAction::OpenPicker(String::new()))
+        );
+        assert_eq!(
+            parse_slash_math_command("/math quadratic"),
+            Some(MathSlashAction::InsertTemplate("quadratic"))
+        );
     }
 }

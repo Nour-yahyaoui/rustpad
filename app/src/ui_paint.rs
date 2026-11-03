@@ -9,7 +9,9 @@ use crate::state::{
     ToolbarDropdown, UiAction,
 };
 use crate::word_view::paint_word_tab;
-use doc_model::{FontFamily, ParagraphStyle, TablePreset, TemplateKind};
+use doc_model::{
+    filter_math_templates, FontFamily, MathCategory, ParagraphStyle, TablePreset, TemplateKind,
+};
 use docx_io::{
     inspect_formatting_consistency, inspect_security_and_hidden, save_docx_bytes,
     validate_docx_bytes,
@@ -2154,7 +2156,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 let cat_col = match cmd.category {
                     "PDF" => StudioTheme::pdf_accent(),
                     "AI" => StudioTheme::ai_accent(),
-                    "Table" | "Image" => StudioTheme::rust_orange(),
+                    "Math" | "Table" | "Image" => StudioTheme::rust_orange(),
                     _ => StudioTheme::word_accent(),
                 };
                 surface.draw_text(
@@ -2190,6 +2192,140 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 }
                 app.hit_regions
                     .push(HitRegion::button(row, UiAction::PalettePick(cmd.id)));
+                ry += row_h;
+            }
+        }
+
+        ActiveModal::MathLibrary { query: q, selected: sel } => {
+            let items = filter_math_templates(&q);
+            let total = items.len();
+            let mw = (660.0 * s).min(screen.w - 32.0);
+            let mh = (438.0 * s).min(screen.h - 44.0);
+            let card = Rect::new((screen.w - mw) * 0.5, (58.0 * s).min(screen.h * 0.10), mw, mh);
+
+            surface.draw_paper_shadow(card, 8.0, 18.0, 32);
+            surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 8.0, 1.0, StudioTheme::border_strong());
+
+            surface.draw_text(
+                &mut app.fonts,
+                FontSlot::SansBold,
+                13.0 * s,
+                card.x + 16.0 * s,
+                card.y + 24.0 * s,
+                StudioTheme::ink(),
+                "∑ Inline Math Function & Formula Library",
+            );
+            let count_lbl = format!("{total} ready-to-insert templates · Enter or Click");
+            let cw = app
+                .fonts
+                .measure_text(FontSlot::MonoRegular, &count_lbl, 10.2 * s);
+            surface.draw_text(
+                &mut app.fonts,
+                FontSlot::MonoRegular,
+                10.2 * s,
+                card.x + card.w - cw - 16.0 * s,
+                card.y + 24.0 * s,
+                StudioTheme::ink_muted(),
+                &count_lbl,
+            );
+
+            let input_r = Rect::new(card.x + 14.0 * s, card.y + 34.0 * s, card.w - 28.0 * s, 36.0 * s);
+            surface.fill_rounded_rect(input_r, 5.0, StudioTheme::sidebar());
+            surface.stroke_rounded_rect(input_r, 5.0, 1.5, StudioTheme::word_accent());
+
+            let prompt = if q.is_empty() {
+                "Search inline math (quadratic, integral, sum, euler, deriv, log, alpha, norm)…".to_string()
+            } else {
+                format!("{q}|")
+            };
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SansRegular,
+                12.4 * s,
+                input_r.x + 12.0 * s,
+                input_r.y + 23.0 * s,
+                input_r.w - 24.0 * s,
+                if q.is_empty() {
+                    StudioTheme::ink_muted()
+                } else {
+                    StudioTheme::ink()
+                },
+                &prompt,
+            );
+
+            let row_h = (33.0 * s).round();
+            let list_top = input_r.y + input_r.h + 8.0 * s;
+            let avail_h = (card.y + card.h - 10.0 * s - list_top).max(row_h);
+            let max_rows = (avail_h / row_h).floor().max(1.0) as usize;
+            let clamped_sel = if total == 0 { 0 } else { sel.min(total - 1) };
+            let start_idx = if total <= max_rows || clamped_sel < max_rows / 2 {
+                0
+            } else {
+                (clamped_sel - max_rows / 2).min(total - max_rows)
+            };
+
+            let mut ry = list_top;
+            for (offset, tmpl) in items.iter().skip(start_idx).take(max_rows).enumerate() {
+                let idx = start_idx + offset;
+                let row = Rect::new(card.x + 10.0 * s, ry, card.w - 20.0 * s, row_h - 2.0);
+                let is_sel = idx == clamped_sel;
+                let hov = row.contains(app.mouse_x, app.mouse_y);
+                if is_sel || hov {
+                    surface.fill_rounded_rect(
+                        row,
+                        5.0,
+                        if is_sel {
+                            StudioTheme::word_soft()
+                        } else {
+                            StudioTheme::hover()
+                        },
+                    );
+                }
+
+                let cat_col = match tmpl.category {
+                    MathCategory::Core => StudioTheme::word_accent(),
+                    MathCategory::Algebra => StudioTheme::rust_orange(),
+                    MathCategory::Calculus => StudioTheme::ai_accent(),
+                    MathCategory::Greek => StudioTheme::pdf_accent(),
+                };
+                surface.draw_text(
+                    &mut app.fonts,
+                    FontSlot::MonoRegular,
+                    10.0 * s,
+                    row.x + 10.0 * s,
+                    row.y + row.h * 0.66,
+                    cat_col,
+                    tmpl.category.label(),
+                );
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::SansRegular,
+                    12.0 * s,
+                    row.x + 74.0 * s,
+                    row.y + row.h * 0.66,
+                    row.w * 0.44,
+                    StudioTheme::ink(),
+                    tmpl.title,
+                );
+                let prev_max_w = row.w * 0.39;
+                let pw = app
+                    .fonts
+                    .measure_text(FontSlot::SerifRegular, tmpl.preview, 12.6 * s)
+                    .min(prev_max_w);
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::SerifRegular,
+                    12.6 * s,
+                    row.x + row.w - pw - 12.0 * s,
+                    row.y + row.h * 0.66,
+                    prev_max_w,
+                    StudioTheme::word_accent(),
+                    tmpl.preview,
+                );
+
+                app.hit_regions
+                    .push(HitRegion::button(row, UiAction::MathPick(tmpl.id)));
                 ry += row_h;
             }
         }

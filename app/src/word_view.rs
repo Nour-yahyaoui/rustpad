@@ -2994,6 +2994,23 @@ fn paint_word_ribbon(
             bx += bw + 4.0 * s;
         }
     }
+    bx = draw_label_btn(
+        surface,
+        fonts,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        max_x,
+        "∑ Math",
+        FontSlot::SansBold,
+        false,
+        false,
+        CommandId::OpenMathLibrary,
+    );
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Break", FontSlot::SansRegular, false, false, CommandId::InsertPageBreak);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Track", FontSlot::SansBold, w.doc.track_changes, false, CommandId::ToggleTrackChanges);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "+Comment", FontSlot::SansRegular, !w.doc.comments.is_empty(), false, CommandId::AddReviewComment);

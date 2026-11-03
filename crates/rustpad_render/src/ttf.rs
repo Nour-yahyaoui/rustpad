@@ -657,6 +657,36 @@ impl FontBook {
         }
     }
 
+    fn face_for_char(&self, slot: FontSlot, ch: char) -> (&TtfFace, FontSlot) {
+        let primary = self.face(slot);
+        if ch.is_ascii() || primary.glyph_index(ch) != 0 {
+            return (primary, slot);
+        }
+        let fb_slot = match (
+            matches!(
+                slot,
+                FontSlot::SansBold
+                    | FontSlot::SansBoldItalic
+                    | FontSlot::SerifBold
+                    | FontSlot::SerifBoldItalic
+                    | FontSlot::MonoBold
+                    | FontSlot::MonoBoldItalic
+            ),
+            slot.is_italic(),
+        ) {
+            (true, true) => FontSlot::SansBoldItalic,
+            (true, false) => FontSlot::SansBold,
+            (false, true) => FontSlot::SansItalic,
+            (false, false) => FontSlot::SansRegular,
+        };
+        let fb_face = self.face(fb_slot);
+        if fb_face.glyph_index(ch) != 0 {
+            (fb_face, fb_slot)
+        } else {
+            (&self.sans_reg, FontSlot::SansRegular)
+        }
+    }
+
     pub fn glyph(&mut self, slot: FontSlot, ch: char, px_size: f32) -> &RasterGlyph {
         let size_key = (px_size.clamp(6.0, 140.0) * 4.0).round() as u16;
         let quantized_px = (size_key as f32) / 4.0;
@@ -665,7 +695,8 @@ impl FontBook {
             if self.cache.len() >= 4096 {
                 self.cache.clear();
             }
-            let raster = self.face(slot).rasterize(ch, quantized_px, slot);
+            let (face, eff_slot) = self.face_for_char(slot, ch);
+            let raster = face.rasterize(ch, quantized_px, eff_slot);
             self.cache.insert(key, raster);
         }
         &self.cache[&key]
@@ -690,7 +721,7 @@ impl FontBook {
                 } else if let Some(&u) = self.unicode_adv_cache.get(&(slot, ch)) {
                     u
                 } else {
-                    let f = self.face(slot);
+                    let (f, _) = self.face_for_char(slot, ch);
                     let u = f.advance_units(f.glyph_index(ch));
                     if self.unicode_adv_cache.len() >= 4096 {
                         self.unicode_adv_cache.clear();

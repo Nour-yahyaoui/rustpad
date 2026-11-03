@@ -708,6 +708,10 @@ pub enum ActiveModal {
         query: String,
         selected: usize,
     },
+    MathLibrary {
+        query: String,
+        selected: usize,
+    },
     FilePrompt {
         kind: FileModalKind,
         input_path: String,
@@ -953,6 +957,7 @@ pub enum UiAction {
     ModalConfirm,
     SignatureClear,
     PalettePick(CommandId),
+    MathPick(&'static str),
     FileCandidatePick(PathBuf),
     FindFocusField(bool),
     FindReplaceAll,
@@ -2632,6 +2637,14 @@ impl RustPadApp {
             | CommandId::ToggleSubscript => {
                 self.exec_word_command(cmd);
             }
+            CommandId::OpenMathLibrary => {
+                self.ensure_active_word_tab();
+                self.open_dropdown = None;
+                self.modal = Some(ActiveModal::MathLibrary {
+                    query: String::new(),
+                    selected: 0,
+                });
+            }
             CommandId::OpenAbout => {
                 self.modal = Some(ActiveModal::About);
             }
@@ -3810,6 +3823,10 @@ impl RustPadApp {
                 self.modal = None;
                 self.execute_command(cmd);
             }
+            UiAction::MathPick(id) => {
+                self.modal = None;
+                self.insert_math_template_by_id(id);
+            }
             UiAction::FileCandidatePick(path) => {
                 let maybe_kind = match &self.modal {
                     Some(ActiveModal::FilePrompt { kind, .. }) => Some(*kind),
@@ -3867,6 +3884,12 @@ impl RustPadApp {
                 let items = filter_commands(&query);
                 if let Some(spec) = items.get(selected).or_else(|| items.first()) {
                     self.execute_command(spec.id);
+                }
+            }
+            ActiveModal::MathLibrary { query, selected } => {
+                let items = filter_math_templates(&query);
+                if let Some(tmpl) = items.get(selected).or_else(|| items.first()) {
+                    self.insert_math_template_by_id(tmpl.id);
                 }
             }
             ActiveModal::FilePrompt {
@@ -4242,7 +4265,99 @@ impl RustPadApp {
         self.active_drag = DragInteraction::None;
     }
 
+    pub fn insert_math_template_by_id(&mut self, id: &str) {
+        let Some(tmpl) = find_math_template(id) else {
+            return;
+        };
+        self.ensure_active_word_tab();
+        let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) else {
+            return;
+        };
+        w.history.record(&w.doc);
+        w.dirty = true;
+
+        if let Some((tb_idx, r, c)) = w.active_table_cell {
+            if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
+                if let Some(cell) = t.rows.get_mut(r).and_then(|rw| rw.get_mut(c)) {
+                    if r == 0 && cell.text == format!("Column {}", c + 1) {
+                        cell.text.clear();
+                        w.table_cursor_char = 0;
+                    }
+                    insert_str_at_char(&mut cell.text, w.table_cursor_char, tmpl.preview);
+                    w.table_cursor_char += tmpl.preview.chars().count();
+                    w.scroll_to_caret = true;
+                    self.status_toast = format!(
+                        "Inserted inline math '{}' ({}) into cell",
+                        tmpl.title, tmpl.preview
+                    );
+                    return;
+                }
+            }
+        }
+
+        if w.has_selection() {
+            w.delete_selection();
+        }
+
+        let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+        if !matches!(w.doc.blocks.get(idx), Some(Block::Paragraph(_))) {
+            let ins_at = (idx + 1).min(w.doc.blocks.len());
+            w.doc
+                .blocks
+                .insert(ins_at, Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "")));
+            w.cursor_block = ins_at;
+            w.cursor_char = 0;
+            w.selected_image_block = None;
+        }
+
+        let track = w.doc.track_changes;
+        let rev = if track {
+            let next_rev_id = w.doc.next_revision_id();
+            Some(RevisionMeta {
+                id: next_rev_id,
+                kind: RevisionKind::Insertion,
+                author: w.doc.author.clone(),
+                date_iso: "2026-11-03T12:00:00Z".into(),
+            })
+        } else {
+            None
+        };
+
+        let target_idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+        if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(target_idx) {
+            let mut base_style = w
+                .pending_typing_style
+                .clone()
+                .unwrap_or_else(|| p.style_at_char(w.cursor_char));
+            base_style.superscript = false;
+            base_style.subscript = false;
+
+            let spans = tmpl.to_inline_spans(&base_style);
+            let added = p.insert_inline_spans_at(w.cursor_char, spans, rev);
+            w.cursor_char += added;
+            // Reset pending typing style to clean surrounding prose so typing right after
+            // a superscripted/italic math formula continues naturally in normal text.
+            w.pending_typing_style = Some(base_style);
+            w.scroll_to_caret = true;
+            self.status_toast = format!(
+                "Inserted inline math: {}  ·  {} (Ctrl+Z to undo)",
+                tmpl.title, tmpl.preview
+            );
+        }
+    }
+
     pub fn handle_scroll(&mut self, delta_y: f32, ctrl: bool) {
+        if let Some(ActiveModal::MathLibrary { query, selected }) = &mut self.modal {
+            let count = filter_math_templates(query).len();
+            if count > 0 {
+                if delta_y > 0.0 {
+                    *selected = (*selected + 2).min(count - 1);
+                } else if delta_y < 0.0 {
+                    *selected = selected.saturating_sub(2);
+                }
+            }
+            return;
+        }
         if ctrl {
             self.adjust_zoom(if delta_y < 0.0 { 0.08 } else { -0.08 });
             return;
@@ -4463,11 +4578,21 @@ impl RustPadApp {
             return;
         }
 
+        // Global Alt+= (Microsoft Word-style instant inline math picker)
+        if mods.alt && !mods.ctrl && key == Key::Char('=') {
+            self.execute_command(CommandId::OpenMathLibrary);
+            return;
+        }
+
         // Global Ctrl shortcuts
         if mods.ctrl {
             match key {
                 Key::Char('k') => {
                     self.dispatch_ui_action(UiAction::OpenCommandPalette);
+                    return;
+                }
+                Key::Char('l') if mods.shift => {
+                    self.execute_command(CommandId::OpenMathLibrary);
                     return;
                 }
                 Key::Char('j') if mods.shift => {
@@ -4624,6 +4749,33 @@ impl RustPadApp {
                         Key::Enter => follow_up = ModalKeyFollowUp::Confirm,
                         _ => {}
                     },
+                    ActiveModal::MathLibrary { query, selected } => match key {
+                        Key::Backspace => {
+                            query.pop();
+                            *selected = 0;
+                        }
+                        Key::Down => {
+                            let count = filter_math_templates(query).len().max(1);
+                            *selected = (*selected + 1) % count;
+                        }
+                        Key::Up => {
+                            let count = filter_math_templates(query).len().max(1);
+                            *selected = if *selected == 0 {
+                                count - 1
+                            } else {
+                                *selected - 1
+                            };
+                        }
+                        Key::PageDown => {
+                            let count = filter_math_templates(query).len().max(1);
+                            *selected = (*selected + 8).min(count - 1);
+                        }
+                        Key::PageUp => {
+                            *selected = selected.saturating_sub(8);
+                        }
+                        Key::Enter => follow_up = ModalKeyFollowUp::Confirm,
+                        _ => {}
+                    },
                     ActiveModal::FilePrompt { input_path, .. } => match key {
                         Key::Backspace => {
                             input_path.pop();
@@ -4735,6 +4887,8 @@ impl RustPadApp {
                 ExitedSelectedImage,
                 SlashImageDialog,
                 SlashImagePath(String),
+                SlashMathOpen(String),
+                SlashMathInsert(&'static str),
             }
             let mut pre = PreWordAction::None;
             if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
@@ -4764,20 +4918,34 @@ impl RustPadApp {
                     }
                 } else if key == Key::Enter && w.active_table_cell.is_none() {
                     let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
-                    let slash_img = w.doc.blocks.get(idx).and_then(|b| match b {
-                        Block::Paragraph(p) => ImageBlock::parse_slash_image_command(&p.plain_text()),
+                    let line_txt = w.doc.blocks.get(idx).and_then(|b| match b {
+                        Block::Paragraph(p) => Some(p.plain_text()),
                         _ => None,
                     });
-                    if let Some(opt_path) = slash_img {
-                        w.history.record(&w.doc);
-                        w.doc.blocks[idx] =
-                            Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, ""));
-                        w.cursor_char = 0;
-                        w.dirty = true;
-                        pre = match opt_path {
-                            Some(pth) => PreWordAction::SlashImagePath(pth),
-                            None => PreWordAction::SlashImageDialog,
-                        };
+                    if let Some(ref txt) = line_txt {
+                        if let Some(opt_path) = ImageBlock::parse_slash_image_command(txt) {
+                            w.history.record(&w.doc);
+                            w.doc.blocks[idx] =
+                                Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, ""));
+                            w.cursor_char = 0;
+                            w.dirty = true;
+                            pre = match opt_path {
+                                Some(pth) => PreWordAction::SlashImagePath(pth),
+                                None => PreWordAction::SlashImageDialog,
+                            };
+                        } else if let Some(math_act) = parse_slash_math_command(txt) {
+                            w.history.record(&w.doc);
+                            w.doc.blocks[idx] =
+                                Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, ""));
+                            w.cursor_char = 0;
+                            w.dirty = true;
+                            pre = match math_act {
+                                MathSlashAction::OpenPicker(q) => PreWordAction::SlashMathOpen(q),
+                                MathSlashAction::InsertTemplate(id) => {
+                                    PreWordAction::SlashMathInsert(id)
+                                }
+                            };
+                        }
                     }
                 }
             }
@@ -4799,6 +4967,17 @@ impl RustPadApp {
                     if let Err(e) = self.insert_image_from_path(Path::new(&pth), None) {
                         self.status_toast = format!("Image slash command error: {e}");
                     }
+                    return;
+                }
+                PreWordAction::SlashMathOpen(q) => {
+                    self.modal = Some(ActiveModal::MathLibrary {
+                        query: q,
+                        selected: 0,
+                    });
+                    return;
+                }
+                PreWordAction::SlashMathInsert(id) => {
+                    self.insert_math_template_by_id(id);
                     return;
                 }
             }
@@ -5099,7 +5278,8 @@ impl RustPadApp {
         if let Some(modal) = &mut self.modal {
             let single = cleaned.lines().next().unwrap_or("").trim();
             match modal {
-                ActiveModal::CommandPalette { query, selected } => {
+                ActiveModal::CommandPalette { query, selected }
+                | ActiveModal::MathLibrary { query, selected } => {
                     query.push_str(single);
                     *selected = 0;
                 }
@@ -5221,7 +5401,8 @@ impl RustPadApp {
     pub fn handle_text_input(&mut self, ch: char) {
         if let Some(modal) = &mut self.modal {
             match modal {
-                ActiveModal::CommandPalette { query, selected } => {
+                ActiveModal::CommandPalette { query, selected }
+                | ActiveModal::MathLibrary { query, selected } => {
                     query.push(ch);
                     *selected = 0;
                 }
@@ -6180,6 +6361,40 @@ mod tests {
             assert!(p.spans[1].style.bold && p.spans[1].style.underline);
             assert_eq!(p.spans[2].text, " a web developer from tunisia");
             assert!(!p.spans[2].style.bold && !p.spans[2].style.underline);
+        } else {
+            panic!("expected Word tab");
+        }
+    }
+
+    #[test]
+    fn test_v3011_inline_math_library_insertion_and_clean_prose_continuation() {
+        let mut app = RustPadApp::new_blank_word();
+        for ch in "Given ".chars() {
+            app.handle_text_input(ch);
+        }
+        app.execute_command(CommandId::OpenMathLibrary);
+        assert!(matches!(app.modal, Some(ActiveModal::MathLibrary { .. })));
+        for ch in "euler".chars() {
+            app.handle_text_input(ch);
+        }
+        app.confirm_active_modal();
+        assert!(app.modal.is_none());
+
+        for ch in " for all angles.".chars() {
+            app.handle_text_input(ch);
+        }
+
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            let Block::Paragraph(p) = &w.doc.blocks[0] else {
+                panic!("expected paragraph");
+            };
+            assert!(p.plain_text().starts_with("Given "));
+            assert!(p.plain_text().ends_with(" for all angles."));
+            assert!(p.spans.iter().any(|s| s.style.superscript));
+            // Trailing prose must NOT remain stuck in superscript or italic
+            let last_span = p.spans.last().expect("trailing span");
+            assert!(!last_span.style.superscript && !last_span.style.subscript);
+            assert!(!last_span.style.italic);
         } else {
             panic!("expected Word tab");
         }
