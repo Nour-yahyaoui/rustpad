@@ -950,6 +950,11 @@ fn https_post_via_curl(
 ) -> Result<(u16, String), String> {
     let secs = timeout.as_secs().max(5).to_string();
     let mut cmd = Command::new("curl");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     cmd.args([
         "--silent",
         "--show-error",

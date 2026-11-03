@@ -43,7 +43,13 @@ pub fn extract_text_ocr_or_pdf(path: impl AsRef<Path>) -> Result<(Document, Stri
     }
 
     // Fast-path: use local host `tesseract` binary if available
-    if let Ok(output) = Command::new("tesseract").arg(p).arg("stdout").output() {
+    let mut tess_cmd = Command::new("tesseract");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        tess_cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    if let Ok(output) = tess_cmd.arg(p).arg("stdout").output() {
         if output.status.success() {
             let text = String::from_utf8_lossy(&output.stdout).into_owned();
             if !text.trim().is_empty() {

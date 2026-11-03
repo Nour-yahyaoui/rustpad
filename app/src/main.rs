@@ -1,3 +1,4 @@
+#![cfg_attr(all(target_os = "windows", not(test)), windows_subsystem = "windows")]
 //! RustPad v3.0 Enterprise (`rustpad`) — Offline-First Pure-Rust Native Word (`.docx`),
 //! Native Dark Mode, OOXML Intelligence, Forensic PDF (`.pdf`), DLP Local AI & CLI Suite.
 //! Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
@@ -874,8 +875,55 @@ fn inspect_file(path: &Path, mode_flag: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn attach_parent_console_if_cli(args: &[String]) {
+    const ATTACH_PARENT_PROCESS: u32 = 0xFFFF_FFFF;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn AttachConsole(dwProcessId: u32) -> i32;
+    }
+    let is_cli = args.first().is_some_and(|first| {
+        matches!(
+            first.as_str(),
+            "-h" | "--help"
+                | "help"
+                | "-V"
+                | "--version"
+                | "version"
+                | "validate"
+                | "repair"
+                | "compare"
+                | "redact"
+                | "clean-meta"
+                | "batch"
+                | "redline"
+                | "sanitize"
+                | "sign"
+                | "verify"
+                | "sbom"
+                | "policy"
+                | "ai"
+                | "convert"
+                | "inspect"
+                | "ocr"
+                | "merge"
+                | "new-template"
+                | "render-screenshots"
+        )
+    });
+    if is_cli {
+        // SAFETY: Attaches stdout/stderr to an existing parent PowerShell/cmd session when
+        // running headless CLI subcommands, while double-clicking `rustpad.exe` never spawns cmd.
+        unsafe {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
 fn run_cli() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(target_os = "windows")]
+    attach_parent_console_if_cli(&args);
     if let Some(first) = args.first().map(|s| s.as_str()) {
         match first {
             "-h" | "--help" | "help" => {
@@ -1016,7 +1064,7 @@ fn run_cli() -> Result<(), String> {
         tick_counter: 0,
     };
     run_native_window(
-        "RustPad v3.0 — Native Dark Mode · OOXML Intelligence · 60–120Hz Pure-Rust Word, PDF & AI Suite",
+        "RustPad v3.0.12 — Native Dark Mode · Inline Math Library · 60–120Hz Pure-Rust Word, PDF & AI Suite",
         1380,
         880,
         &mut runner,

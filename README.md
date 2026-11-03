@@ -1,26 +1,33 @@
-# RustPad Studio `v3.0.11` — Native Dark Mode, Inline Math Library & Offline Word/PDF/AI Suite
+# RustPad Studio `v3.0.12` — Native Dark Mode, Inline Math Library & Offline Word/PDF/AI Suite
 
 [![committers.top badge](https://user-badge.committers.top/tunisia/Nour-yahyaoui.svg)](https://user-badge.committers.top/tunisia/Nour-yahyaoui)
-[![Release v3.0.11](https://img.shields.io/badge/release-v3.0.11-A83E26?style=flat-square)](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.11)
+[![Release v3.0.12](https://img.shields.io/badge/release-v3.0.12-A83E26?style=flat-square)](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.12)
 [![Zero Crates.io Deps](https://img.shields.io/badge/crates.io%20deps-0%20(100%25%20stdlib)-2B5E42?style=flat-square)](Cargo.toml)
 [![Live Showcase](https://img.shields.io/badge/web-rustpad--studio.vercel.app-1D4E7A?style=flat-square)](https://rustpad-studio.vercel.app/)
 [![Portfolio](https://img.shields.io/badge/portfolio-nour--yahyaoui.vercel.app-1A1917?style=flat-square)](https://nour-yahyaoui.vercel.app/projects/rustpad)
 
-**RustPad Studio (`rustpad`) `v3.0.11`** is a native, sovereign, **zero-dependency (`0` external `crates.io` crates)** desktop & CLI document intelligence engine written in **100% pure Rust**. Built directly on native Win32 GDI + Windows 11 DWM & Linux X11 with a custom TrueType (`.ttf`) 4×4 supersampled rasterizer, non-blocking `LazyZipArchive` 100+ MB `.docx` streaming parser, OOXML validator & corrupt-archive repair engine, character/paragraph redline & conflict-aware 3-way `.docx` smart merger, permanent `.docx` & `.pdf` forensic redactor, pure-Rust offline OCR, and air-gapped Local AI governance — shipping as a **~4.2 MB** standalone native executable (`< 90 ms` cold start, `0` Electron/Chromium/WebView bloat, `0` telemetry).
+**RustPad Studio (`rustpad`) `v3.0.12`** is a native, sovereign, **zero-dependency (`0` external `crates.io` crates)** desktop & CLI document intelligence engine written in **100% pure Rust**. Built directly on native Win32 GDI + Windows 11 DWM & Linux X11 with a custom TrueType (`.ttf`) 4×4 supersampled rasterizer, non-blocking `LazyZipArchive` 100+ MB `.docx` streaming parser, OOXML validator & corrupt-archive repair engine, character/paragraph redline & conflict-aware 3-way `.docx` smart merger, permanent `.docx` & `.pdf` forensic redactor, pure-Rust offline OCR, and air-gapped Local AI governance — shipping as a **~4.2 MB** standalone native executable (`< 90 ms` cold start, `0` Electron/Chromium/WebView bloat, `0` telemetry).
 
-> **Portfolio Case Study**: [nour-yahyaoui.vercel.app/projects/rustpad](https://nour-yahyaoui.vercel.app/projects/rustpad) · **Interactive Studio Showcase**: [rustpad-studio.vercel.app](https://rustpad-studio.vercel.app/) · **Latest Release (`v3.0.11`)**: [GitHub Releases](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.11)
+> **Portfolio Case Study**: [nour-yahyaoui.vercel.app/projects/rustpad](https://nour-yahyaoui.vercel.app/projects/rustpad) · **Interactive Studio Showcase**: [rustpad-studio.vercel.app](https://rustpad-studio.vercel.app/) · **Latest Release (`v3.0.12`)**: [GitHub Releases](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.12)
 
 ![RustPad v3.0 Word Studio — Smooth Native Canvas, Dark Mode, Track Changes & Local AI](docs/screenshots/word-studio.png)
 
 ---
 
-## Download `v3.0.11` Prebuilt Native Binaries
+## Download `v3.0.12` Prebuilt Native Binaries
 
 | Platform | Architecture | Artifact |
 | :--- | :--- | :--- |
-| **Windows 10 / 11** | `x86_64` (Win32 GDI + DWM Dark Titlebar + WinHTTP TLS + Spooler) | [`rustpad-v3.0.11-windows-x86_64.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.11/rustpad-v3.0.11-windows-x86_64.exe) · [`rustpad.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.11/rustpad.exe) |
-| **Linux Desktop & CLI** | `x86_64` (`dlopen` X11 `_GTK_THEME_VARIANT` + CUPS/LP + Headless CLI) | [`rustpad-v3.0.11-linux-x86_64`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.11/rustpad-v3.0.11-linux-x86_64) |
-| **SHA-256 Checksums** | Cryptographic release manifest (`windows` + `linux`) | [`SHA256SUMS.txt`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.11/SHA256SUMS.txt) |
+| **Windows 10 / 11** | `x86_64` (Win32 GDI + DWM Dark Titlebar + Zero Console Window + Spooler) | [`rustpad-v3.0.12-windows-x86_64.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.12/rustpad-v3.0.12-windows-x86_64.exe) · [`rustpad.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.12/rustpad.exe) |
+| **Linux Desktop & CLI** | `x86_64` (`dlopen` X11 `_GTK_THEME_VARIANT` + CUPS/LP + Headless CLI) | [`rustpad-v3.0.12-linux-x86_64`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.12/rustpad-v3.0.12-linux-x86_64) |
+| **SHA-256 Checksums** | Cryptographic release manifest (`windows` + `linux`) | [`SHA256SUMS.txt`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.12/SHA256SUMS.txt) |
+
+---
+
+## What's New in `v3.0.12` — Zero Windows Console Window + Linear Algebra & Probability Math Pack
+
+- **Pure Win32 GUI Subsystem (`windows_subsystem = "windows"` + `CREATE_NO_WINDOW`)**: Launching `rustpad.exe` on Windows no longer opens or keeps a background `cmd.exe` console window open, while CLI subcommands (`rustpad --version`, `rustpad convert`, etc.) automatically attach to an existing PowerShell/`cmd` terminal via `AttachConsole(ATTACH_PARENT_PROCESS)`.
+- **83+ Inline Math Templates (`LinearAlgebra` & `Probability` Expansion)**: Added 24 ready-to-insert inline Linear Algebra and Probability/Statistics formulas (Dot Product, L1/L2/Frobenius Norms, Cosine Similarity, `Ax = b`, Matrix Product, Eigenvalues, SVD, QR/Cholesky, OLS, Orthogonal Projection, Cauchy–Schwarz, Kronecker/Hadamard, Bayes' Theorem, Conditional/Total Probability, Expectation, Variance, Correlation, Gaussian PDF, Z-Score/CI, Binomial/Poisson PMF, MLE, Chebyshev).
 
 ---
 

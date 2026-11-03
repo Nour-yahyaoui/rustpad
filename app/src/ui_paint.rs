@@ -2235,7 +2235,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             surface.stroke_rounded_rect(input_r, 5.0, 1.5, StudioTheme::word_accent());
 
             let prompt = if q.is_empty() {
-                "Search inline math (quadratic, integral, sum, euler, deriv, log, alpha, norm)…".to_string()
+                "Search 80+ inline math functions (bayes, svd, eigen, cosine, gaussian, integral, quadratic)…".to_string()
             } else {
                 format!("{q}|")
             };
@@ -2287,6 +2287,8 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     MathCategory::Core => StudioTheme::word_accent(),
                     MathCategory::Algebra => StudioTheme::rust_orange(),
                     MathCategory::Calculus => StudioTheme::ai_accent(),
+                    MathCategory::LinearAlgebra => StudioTheme::word_accent(),
+                    MathCategory::Probability => StudioTheme::rust_orange(),
                     MathCategory::Greek => StudioTheme::pdf_accent(),
                 };
                 surface.draw_text(
