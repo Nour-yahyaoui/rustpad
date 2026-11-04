@@ -1,12 +1,12 @@
 //! Master "Architectural Paper & Linen" Native Studio GUI Painter:
 //! Unified Header Bar, Asymmetric Editorial Home Launchpad, Drag-Resizable Split Workspace,
-//! Pluggable Right-Side AI Agent Studio Dock, Floating Style/Font Dropdowns, Modals & Status Bar.
+//! Inline Math Library, Floating Style/Font Dropdowns, Modals & Status Bar.
 
 use crate::commands::{filter_commands, CommandId};
 use crate::pdf_view::paint_pdf_tab;
 use crate::state::{
-    ActiveModal, AiInputField, DragInteraction, FileModalKind, HitRegion, RustPadApp, StudioTab,
-    ToolbarDropdown, UiAction,
+    ActiveModal, DragInteraction, FileModalKind, HitRegion, RustPadApp, StudioTab, ToolbarDropdown,
+    UiAction,
 };
 use crate::word_view::paint_word_tab;
 use doc_model::{
@@ -16,9 +16,7 @@ use docx_io::{
     inspect_formatting_consistency, inspect_security_and_hidden, save_docx_bytes,
     validate_docx_bytes,
 };
-use power_tools::{
-    detect_broken_links, detect_duplicate_paragraphs, AiProviderPreset, AiTask,
-};
+use power_tools::{detect_broken_links, detect_duplicate_paragraphs};
 use rustpad_render::{
     active_theme_mode, Color, FontBook, FontSlot, Rect, StudioTheme, Surface, UiIcon,
 };
@@ -44,23 +42,13 @@ pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
         paint_header_bar(app, surface, s, Rect::new(0.0, 0.0, win_w, header_h));
     }
 
-    // 2. Main Workspace + Optional Right-Side Pluggable AI Agent Dock
-    let full_work = Rect::new(
+    // 2. Main Workspace (Single or Side-by-Side Split View)
+    let work = Rect::new(
         0.0,
         header_h,
-        win_w,
+        win_w.max(120.0),
         (win_h - header_h - status_h).max(40.0),
     );
-
-    let show_ai_dock = !app.focus_mode && app.ai_dock.open && full_work.w >= 620.0;
-    let ai_w = if show_ai_dock {
-        (app.ai_dock.width * s)
-            .clamp(264.0, (full_work.w * 0.46).max(264.0))
-            .round()
-    } else {
-        0.0
-    };
-    let work = Rect::new(full_work.x, full_work.y, (full_work.w - ai_w).max(120.0), full_work.h);
 
     let active_idx = app.active_tab;
     if let Some(sec_idx) = app
@@ -96,28 +84,6 @@ pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
         ));
     } else {
         paint_tab_pane(app, surface, active_idx, true, work);
-    }
-
-    if show_ai_dock {
-        let dock_rect = Rect::new(full_work.x + work.w, full_work.y, ai_w, full_work.h);
-        app.ai_dock_rect = Some(dock_rect);
-        paint_ai_dock(app, surface, s, dock_rect);
-
-        let split_hit = Rect::new(dock_rect.x - 4.0, dock_rect.y, 8.0, dock_rect.h);
-        if split_hit.contains(app.mouse_x, app.mouse_y) {
-            surface.fill_rect(
-                Rect::new(dock_rect.x - 1.5, dock_rect.y, 3.0, dock_rect.h),
-                StudioTheme::ai_accent(),
-            );
-        }
-        app.hit_regions.push(HitRegion::splitter(
-            split_hit,
-            UiAction::BeginDrag(DragInteraction::AiDockSplitter {
-                window_right: win_w,
-            }),
-        ));
-    } else {
-        app.ai_dock_rect = None;
     }
 
     // 3. Bottom Studio Status Bar (with UI Scale & Paper Zoom steppers)
@@ -498,8 +464,8 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         ));
     }
 
-    // Right Studio Action Cluster (`Theme`, `Inspector`, `AI Studio`, `Ctrl+K`, `Split`, `Open`, `Save`)
-    let mut rx = (bar.w - 524.0 * s).max(tx + 8.0 * s);
+    // Right Studio Action Cluster (`Theme`, `Inspector`, `Ctrl+K`, `Split`, `Open`, `Save`)
+    let mut rx = (bar.w - 424.0 * s).max(tx + 8.0 * s);
 
     // 0a. Dark Mode / Theme Switcher Pill (`Ctrl+Shift+D`)
     let cur_theme = active_theme_mode();
@@ -587,59 +553,6 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
         UiAction::ExecCommand(CommandId::OpenDocumentInspector),
     ));
     rx += insp_w + 6.0 * s;
-
-    // 1. Pluggable AI Studio Dock Toggle (`Ctrl+J`)
-    let ai_w = (94.0 * s).round();
-    let ai_r = Rect::new(rx, tab_y, ai_w, tab_h);
-    let ai_on = app.ai_dock.open;
-    let ai_hov = ai_r.contains(app.mouse_x, app.mouse_y);
-    surface.fill_rounded_rect(
-        ai_r,
-        6.0,
-        if ai_on {
-            StudioTheme::ai_accent()
-        } else if ai_hov {
-            StudioTheme::ai_soft()
-        } else {
-            StudioTheme::sidebar()
-        },
-    );
-    surface.stroke_rounded_rect(
-        ai_r,
-        6.0,
-        1.0,
-        if ai_on || ai_hov {
-            StudioTheme::ai_accent()
-        } else {
-            StudioTheme::border_strong()
-        },
-    );
-    let ai_fg = if ai_on {
-        StudioTheme::paper()
-    } else {
-        StudioTheme::ai_accent()
-    };
-    surface.draw_icon(
-        UiIcon::Sparkles,
-        ai_r.x + 14.0 * s,
-        ai_r.y + tab_h * 0.5,
-        12.5 * s,
-        ai_fg,
-    );
-    surface.draw_text(
-        &mut app.fonts,
-        FontSlot::SansBold,
-        11.5 * s,
-        ai_r.x + 25.0 * s,
-        ai_r.y + tab_h * 0.65,
-        ai_fg,
-        "AI Studio",
-    );
-    app.hit_regions.push(HitRegion::button(
-        ai_r,
-        UiAction::ExecCommand(CommandId::ToggleAiDock),
-    ));
-    rx += ai_w + 6.0 * s;
 
     // 2. Command Palette Search Trigger (`Ctrl+K`)
     let pal_w = (128.0 * s).round();
@@ -738,569 +651,6 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
     }
 }
 
-/// Resizable Right-Side Pluggable AI Agent Studio Dock (`Ollama`, `nour-code`, `LM Studio`, `OpenAI`, `Claude`).
-fn paint_ai_dock(app: &mut RustPadApp, surface: &mut Surface, s: f32, dock: Rect) {
-    surface.set_clip(dock);
-    surface.fill_rect(dock, StudioTheme::sidebar());
-    surface.fill_rect(Rect::new(dock.x, dock.y, 1.0, dock.h), StudioTheme::border());
-
-    let pad = 14.0 * s;
-    let inner_w = (dock.w - pad * 2.0).max(160.0);
-    let mut y = dock.y + 14.0 * s;
-
-    // Header
-    surface.draw_icon(
-        UiIcon::Sparkles,
-        dock.x + pad + 7.0 * s,
-        y + 6.0 * s,
-        13.0 * s,
-        StudioTheme::ai_accent(),
-    );
-    surface.draw_text(
-        &mut app.fonts,
-        FontSlot::SansBold,
-        12.5 * s,
-        dock.x + pad + 20.0 * s,
-        y + 11.0 * s,
-        StudioTheme::ink(),
-        "AI Agent Studio",
-    );
-    let close_r = Rect::new(dock.x + dock.w - pad - 22.0 * s, y - 3.0 * s, 22.0 * s, 22.0 * s);
-    surface.draw_icon(
-        UiIcon::Close,
-        close_r.x + close_r.w * 0.5,
-        close_r.y + close_r.h * 0.5,
-        10.0 * s,
-        StudioTheme::ink_muted(),
-    );
-    app.hit_regions.push(HitRegion::button(
-        close_r,
-        UiAction::ExecCommand(CommandId::ToggleAiDock),
-    ));
-    y += 22.0 * s;
-
-    surface.draw_text_clipped(
-        &mut app.fonts,
-        FontSlot::SansRegular,
-        10.8 * s,
-        dock.x + pad,
-        y + 8.0 * s,
-        inner_w,
-        StudioTheme::ink_muted(),
-        "Local HTTP (Ollama, nour-code) or Cloud API · Ctrl+V to paste",
-    );
-    y += 18.0 * s;
-
-    // 1. Provider Preset Chips (wrapped cleanly)
-    let mut px = dock.x + pad;
-    let chip_h = (23.0 * s).round();
-    for preset in AiProviderPreset::ALL {
-        let lbl = match preset {
-            AiProviderPreset::OllamaLocal => "Ollama",
-            AiProviderPreset::NourCodeLocal => "nour-code",
-            AiProviderPreset::LmStudioLocal => "LM Studio",
-            AiProviderPreset::OpenAiCompatible => "OpenAI/Cloud",
-            AiProviderPreset::AnthropicClaude => "Claude",
-        };
-        let tw = app.fonts.measure_text(FontSlot::SansBold, lbl, 10.4 * s);
-        let cw = (tw + 13.0 * s).round();
-        if px + cw > dock.x + dock.w - pad && px > dock.x + pad {
-            px = dock.x + pad;
-            y += chip_h + 4.0 * s;
-        }
-        let r = Rect::new(px, y, cw, chip_h);
-        let active = app.ai_dock.config.preset == *preset;
-        let hov = r.contains(app.mouse_x, app.mouse_y);
-        surface.fill_rounded_rect(
-            r,
-            4.0,
-            if active {
-                StudioTheme::ai_accent()
-            } else if hov {
-                StudioTheme::hover()
-            } else {
-                StudioTheme::paper()
-            },
-        );
-        surface.stroke_rounded_rect(
-            r,
-            4.0,
-            1.0,
-            if active {
-                StudioTheme::ai_accent()
-            } else {
-                StudioTheme::border()
-            },
-        );
-        surface.draw_text(
-            &mut app.fonts,
-            FontSlot::SansBold,
-            10.4 * s,
-            r.x + 6.5 * s,
-            r.y + chip_h * 0.69,
-            if active {
-                StudioTheme::paper()
-            } else {
-                StudioTheme::ink()
-            },
-            lbl,
-        );
-        app.hit_regions
-            .push(HitRegion::button(r, UiAction::AiSelectProvider(*preset)));
-        px += cw + 4.0 * s;
-    }
-    y += chip_h + 10.0 * s;
-
-    // 2. Editable Endpoint URL, Model (+ Detect Local button), and API Key Fields
-    let ep_val = app.ai_dock.config.endpoint_url.clone();
-    y = paint_ai_field(
-        app,
-        surface,
-        s,
-        dock.x + pad,
-        y,
-        inner_w,
-        "ENDPOINT URL",
-        &ep_val,
-        "http://127.0.0.1:11434/v1/chat/completions",
-        AiInputField::EndpointUrl,
-    );
-
-    // Model + Detect button row
-    let det_w = (72.0 * s).round();
-    let model_val = app.ai_dock.config.model.clone();
-    let _ = paint_ai_field(
-        app,
-        surface,
-        s,
-        dock.x + pad,
-        y,
-        inner_w - det_w - 6.0 * s,
-        "MODEL",
-        &model_val,
-        "qwen2.5:7b / nour-code / gpt-4o-mini",
-        AiInputField::Model,
-    );
-    let det_r = Rect::new(
-        dock.x + pad + inner_w - det_w,
-        y + 13.0 * s,
-        det_w,
-        (28.0 * s).round(),
-    );
-    let det_hov = det_r.contains(app.mouse_x, app.mouse_y);
-    surface.fill_rounded_rect(
-        det_r,
-        4.0,
-        if det_hov {
-            StudioTheme::ai_soft()
-        } else {
-            StudioTheme::paper()
-        },
-    );
-    surface.stroke_rounded_rect(det_r, 4.0, 1.0, StudioTheme::border_strong());
-    surface.draw_text(
-        &mut app.fonts,
-        FontSlot::SansBold,
-        10.2 * s,
-        det_r.x + 8.0 * s,
-        det_r.y + det_r.h * 0.67,
-        StudioTheme::ai_accent(),
-        "Detect Local",
-    );
-    app.hit_regions
-        .push(HitRegion::button(det_r, UiAction::AiDetectOllamaModels));
-    y += 47.0 * s;
-
-    // Discovered local models quick chips (if any)
-    let disc = app.ai_dock.discovered_models.clone();
-    if !disc.is_empty() {
-        let mut mx = dock.x + pad;
-        for m in disc.iter().take(3) {
-            let tw = app.fonts.measure_text(FontSlot::MonoRegular, m, 9.8 * s);
-            let mw = (tw + 12.0 * s).min(inner_w);
-            if mx + mw > dock.x + pad + inner_w {
-                break;
-            }
-            let mr = Rect::new(mx, y, mw, 20.0 * s);
-            surface.fill_rounded_rect(mr, 3.0, StudioTheme::ai_soft());
-            surface.draw_text_clipped(
-                &mut app.fonts,
-                FontSlot::MonoRegular,
-                9.8 * s,
-                mr.x + 6.0 * s,
-                mr.y + 14.0 * s,
-                mw - 10.0 * s,
-                StudioTheme::ai_accent(),
-                m,
-            );
-            app.hit_regions.push(HitRegion::button(
-                mr,
-                UiAction::AiPickDiscoveredModel(m.clone()),
-            ));
-            mx += mw + 4.0 * s;
-        }
-        y += 25.0 * s;
-    }
-
-    if !app.ai_dock.config.preset.is_local() || !app.ai_dock.config.api_key.is_empty() {
-        let masked = if app.ai_dock.config.api_key.is_empty() {
-            String::new()
-        } else {
-            let k = &app.ai_dock.config.api_key;
-            let tail: String = k
-                .chars()
-                .rev()
-                .take(4)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-            format!("••••••••{tail}")
-        };
-        y = paint_ai_field(
-            app,
-            surface,
-            s,
-            dock.x + pad,
-            y,
-            inner_w,
-            "API KEY (SESSION MEMORY ONLY)",
-            &masked,
-            "sk-... or set OPENAI_API_KEY / ANTHROPIC_API_KEY",
-            AiInputField::ApiKey,
-        );
-    }
-
-    // 3. Editorial Task Selector
-    surface.draw_text(
-        &mut app.fonts,
-        FontSlot::SansBold,
-        9.8 * s,
-        dock.x + pad,
-        y + 9.0 * s,
-        StudioTheme::ink_muted(),
-        "ACTION ON ACTIVE DOCUMENT",
-    );
-    y += 14.0 * s;
-
-    let mut tx = dock.x + pad;
-    for task in AiTask::ALL {
-        let lbl = task.short_label();
-        let tw = app.fonts.measure_text(FontSlot::SansBold, lbl, 10.6 * s);
-        let bw = (tw + 14.0 * s).round();
-        if tx + bw > dock.x + pad + inner_w && tx > dock.x + pad {
-            tx = dock.x + pad;
-            y += chip_h + 4.0 * s;
-        }
-        let r = Rect::new(tx, y, bw, chip_h);
-        let active = app.ai_dock.selected_task == *task;
-        let hov = r.contains(app.mouse_x, app.mouse_y);
-        surface.fill_rounded_rect(
-            r,
-            4.0,
-            if active {
-                StudioTheme::ai_soft()
-            } else if hov {
-                StudioTheme::hover()
-            } else {
-                StudioTheme::paper()
-            },
-        );
-        surface.stroke_rounded_rect(
-            r,
-            4.0,
-            1.0,
-            if active {
-                StudioTheme::ai_accent()
-            } else {
-                StudioTheme::border()
-            },
-        );
-        surface.draw_text(
-            &mut app.fonts,
-            FontSlot::SansBold,
-            10.6 * s,
-            r.x + 7.0 * s,
-            r.y + chip_h * 0.69,
-            if active {
-                StudioTheme::ai_accent()
-            } else {
-                StudioTheme::ink()
-            },
-            lbl,
-        );
-        app.hit_regions
-            .push(HitRegion::button(r, UiAction::AiSelectTask(*task)));
-        tx += bw + 4.0 * s;
-    }
-    y += chip_h + 9.0 * s;
-
-    let prompt_val = app.ai_dock.custom_prompt.clone();
-    y = paint_ai_field(
-        app,
-        surface,
-        s,
-        dock.x + pad,
-        y,
-        inner_w,
-        "FOCUS INSTRUCTION (OPTIONAL)",
-        &prompt_val,
-        "e.g. Add benchmark comparison section & conclusion",
-        AiInputField::CustomPrompt,
-    );
-
-    // 4. Primary Non-Blocking Run / Cancel Button
-    let run_h = (32.0 * s).round();
-    let run_r = Rect::new(dock.x + pad, y, inner_w, run_h);
-    let busy = app.ai_dock.is_busy();
-    surface.fill_rounded_rect(
-        run_r,
-        5.0,
-        if busy {
-            StudioTheme::rust_orange()
-        } else {
-            StudioTheme::ai_accent()
-        },
-    );
-    let run_lbl = if busy {
-        "Cancel · Agent Generating…"
-    } else {
-        "Run AI Agent (Enter)"
-    };
-    let rlw = app.fonts.measure_text(FontSlot::SansBold, run_lbl, 11.8 * s);
-    surface.draw_text(
-        &mut app.fonts,
-        FontSlot::SansBold,
-        11.8 * s,
-        run_r.x + (run_r.w - rlw) * 0.5,
-        run_r.y + run_h * 0.66,
-        StudioTheme::paper(),
-        run_lbl,
-    );
-    app.hit_regions.push(HitRegion::button(
-        run_r,
-        if busy {
-            UiAction::AiCancelTask
-        } else {
-            UiAction::AiRunCurrentTask
-        },
-    ));
-    y += run_h + 7.0 * s;
-
-    // Status line
-    let st_col = if app.ai_dock.is_error {
-        StudioTheme::pdf_accent()
-    } else {
-        StudioTheme::ink_sub()
-    };
-    let st_line = app.ai_dock.status_line.clone();
-    surface.draw_text_clipped(
-        &mut app.fonts,
-        FontSlot::SansRegular,
-        10.5 * s,
-        dock.x + pad,
-        y + 9.0 * s,
-        inner_w,
-        st_col,
-        &st_line,
-    );
-    y += 16.0 * s;
-
-    // 5. Output Preview Box + 1-Click Apply Buttons (`Insert Below`, `Replace`, `Copy`)
-    let bottom_btns_h = (34.0 * s).round();
-    let out_h = (dock.y + dock.h - y - bottom_btns_h - 14.0 * s).max(56.0);
-    let out_r = Rect::new(dock.x + pad, y, inner_w, out_h);
-    surface.fill_rounded_rect(out_r, 5.0, StudioTheme::paper());
-    surface.stroke_rounded_rect(out_r, 5.0, 1.0, StudioTheme::border());
-
-    surface.set_clip(Rect::new(out_r.x + 2.0, out_r.y + 2.0, out_r.w - 4.0, out_r.h - 4.0));
-    let out_txt = app.ai_dock.output_text.clone();
-    if out_txt.is_empty() {
-        surface.draw_text_clipped(
-            &mut app.fonts,
-            FontSlot::SansRegular,
-            11.2 * s,
-            out_r.x + 10.0 * s,
-            out_r.y + 22.0 * s,
-            out_r.w - 20.0 * s,
-            StudioTheme::ink_muted(),
-            "Agent response will appear here for inspection before touching your document.",
-        );
-    } else {
-        let mut oy = out_r.y + 18.0 * s - app.ai_dock.output_scroll_y;
-        let line_px = 11.4 * s;
-        for raw_ln in out_txt.lines() {
-            if raw_ln.trim().is_empty() {
-                oy += 8.0 * s;
-                continue;
-            }
-            // Word-wrap output inside preview box
-            let mut cur = String::new();
-            for w_tok in raw_ln.split_inclusive(' ') {
-                let cand = format!("{cur}{w_tok}");
-                if !cur.is_empty()
-                    && app.fonts.measure_text(FontSlot::SansRegular, &cand, line_px)
-                        > out_r.w - 20.0 * s
-                {
-                    if oy >= out_r.y && oy <= out_r.y + out_r.h + 12.0 {
-                        surface.draw_text(
-                            &mut app.fonts,
-                            FontSlot::SansRegular,
-                            line_px,
-                            out_r.x + 10.0 * s,
-                            oy,
-                            StudioTheme::ink(),
-                            cur.trim_end(),
-                        );
-                    }
-                    oy += 15.5 * s;
-                    cur = w_tok.to_string();
-                } else {
-                    cur = cand;
-                }
-            }
-            if !cur.is_empty() {
-                if oy >= out_r.y && oy <= out_r.y + out_r.h + 12.0 {
-                    surface.draw_text(
-                        &mut app.fonts,
-                        FontSlot::SansRegular,
-                        line_px,
-                        out_r.x + 10.0 * s,
-                        oy,
-                        StudioTheme::ink(),
-                        cur.trim_end(),
-                    );
-                }
-                oy += 16.0 * s;
-            }
-        }
-    }
-    surface.set_clip(dock);
-
-    let act_y = out_r.y + out_r.h + 7.0 * s;
-    let col3 = (inner_w - 8.0 * s) / 3.0;
-    for (idx, (lbl, act, primary)) in [
-        (
-            "Insert Below",
-            UiAction::AiApplyOutput {
-                replace_current: false,
-            },
-            true,
-        ),
-        (
-            "Replace",
-            UiAction::AiApplyOutput {
-                replace_current: true,
-            },
-            false,
-        ),
-        ("Copy", UiAction::AiCopyOutput, false),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let br = Rect::new(
-            dock.x + pad + (idx as f32) * (col3 + 4.0 * s),
-            act_y,
-            col3,
-            (28.0 * s).round(),
-        );
-        surface.fill_rounded_rect(
-            br,
-            4.0,
-            if primary {
-                StudioTheme::word_accent()
-            } else {
-                StudioTheme::paper()
-            },
-        );
-        if !primary {
-            surface.stroke_rounded_rect(br, 4.0, 1.0, StudioTheme::border_strong());
-        }
-        let lw = app.fonts.measure_text(FontSlot::SansBold, lbl, 10.8 * s);
-        surface.draw_text(
-            &mut app.fonts,
-            FontSlot::SansBold,
-            10.8 * s,
-            br.x + (br.w - lw) * 0.5,
-            br.y + br.h * 0.67,
-            if primary {
-                StudioTheme::paper()
-            } else {
-                StudioTheme::ink()
-            },
-            lbl,
-        );
-        app.hit_regions.push(HitRegion::button(br, act));
-    }
-
-    surface.reset_clip();
-}
-
-#[allow(clippy::too_many_arguments)]
-fn paint_ai_field(
-    app: &mut RustPadApp,
-    surface: &mut Surface,
-    s: f32,
-    x: f32,
-    y: f32,
-    w: f32,
-    label: &str,
-    value: &str,
-    placeholder: &str,
-    field: AiInputField,
-) -> f32 {
-    surface.draw_text(
-        &mut app.fonts,
-        FontSlot::SansBold,
-        9.5 * s,
-        x,
-        y + 9.0 * s,
-        StudioTheme::ink_muted(),
-        label,
-    );
-    let bh = (28.0 * s).round();
-    let box_r = Rect::new(x, y + 13.0 * s, w, bh);
-    let focused = app.ai_dock.focused_field == Some(field);
-    surface.fill_rounded_rect(box_r, 4.0, StudioTheme::paper());
-    surface.stroke_rounded_rect(
-        box_r,
-        4.0,
-        if focused { 1.5 } else { 1.0 },
-        if focused {
-            StudioTheme::ai_accent()
-        } else {
-            StudioTheme::border()
-        },
-    );
-    let disp_owned: String;
-    let disp: &str = if value.is_empty() {
-        placeholder
-    } else if focused && app.cursor_blink_on {
-        disp_owned = format!("{value}|");
-        &disp_owned
-    } else {
-        value
-    };
-    surface.draw_text_clipped(
-        &mut app.fonts,
-        FontSlot::MonoRegular,
-        10.5 * s,
-        box_r.x + 8.0 * s,
-        box_r.y + bh * 0.67,
-        w - 16.0 * s,
-        if value.is_empty() {
-            StudioTheme::ink_muted()
-        } else {
-            StudioTheme::ink()
-        },
-        disp,
-    );
-    app.hit_regions
-        .push(HitRegion::text(box_r, UiAction::AiFocusField(Some(field))));
-    y + 47.0 * s
-}
-
 /// Asymmetric Editorial Home Launchpad (replaces the old 6-card SaaS template grid).
 #[allow(clippy::too_many_arguments)]
 fn paint_home_hub(
@@ -1371,7 +721,7 @@ fn paint_home_hub(
         y + 24.0 * s,
         left_w,
         StudioTheme::ink_sub(),
-        "Author ECMA-376 Word (.docx) documents, edit ISO 32000 PDFs, and run local or cloud AI agents offline.",
+        "Author ECMA-376 Word (.docx) documents, inline mathematical formulas, and forensic ISO 32000 PDFs 100% offline.",
     );
     surface.draw_text_clipped(
         fonts,
@@ -1407,10 +757,10 @@ fn paint_home_hub(
             StudioTheme::ink(),
         ),
         (
-            "Connect AI Agent (Ctrl+J)",
-            CommandId::ToggleAiDock,
-            StudioTheme::ai_soft(),
-            StudioTheme::ai_accent(),
+            "∑ Inline Math Library (Alt+=)",
+            CommandId::OpenMathLibrary,
+            StudioTheme::word_soft(),
+            StudioTheme::word_accent(),
         ),
     ]
     .into_iter()
@@ -1425,7 +775,7 @@ fn paint_home_hub(
             btn_h,
         );
         surface.fill_rounded_rect(r, 5.0, fill);
-        if fill == StudioTheme::paper() || fill == StudioTheme::ai_soft() {
+        if fill == StudioTheme::paper() || fill == StudioTheme::word_soft() {
             surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::border_strong());
         }
         let lw = fonts.measure_text(FontSlot::SansBold, lbl, 11.6 * s);
@@ -1931,7 +1281,7 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
     surface.fill_rounded_rect(
         Rect::new(12.0, bar.y + bar.h * 0.5 - 3.5, 7.0, 7.0),
         3.5,
-        if app.ai_dock.is_busy() || app.pending_doc_load.is_some() {
+        if app.pending_doc_load.is_some() {
             StudioTheme::rust_orange()
         } else {
             StudioTheme::success()
@@ -2155,7 +1505,6 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
 
                 let cat_col = match cmd.category {
                     "PDF" => StudioTheme::pdf_accent(),
-                    "AI" => StudioTheme::ai_accent(),
                     "Math" | "Table" | "Image" => StudioTheme::rust_orange(),
                     _ => StudioTheme::word_accent(),
                 };
@@ -2635,9 +1984,9 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
 
             let chain_ok = app.audit_trail.verify_chain().is_ok();
             let dlp_mode = if app.policy.air_gapped_mode {
-                "STRICT AIR-GAPPED (Cloud AI Locked to 127.0.0.1)"
+                "STRICT AIR-GAPPED (100% Offline Workstation)"
             } else {
-                "HYBRID WORKSTATION (Local + Allowlisted HTTPS)"
+                "STANDARD WORKSTATION (Local Offline Studio)"
             };
             let meta_lines = [
                 format!("Organization:   {}", app.policy.organization),
@@ -3018,7 +2367,7 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 card.x + 98.0 * s,
                 card.y + 66.0 * s,
                 StudioTheme::ink_sub(),
-                "Ultra-Smooth 60–120Hz Native Word (.docx), PDF & Local AI Studio",
+                "Ultra-Smooth 60–120Hz Native Word (.docx), Inline Math & PDF Studio",
             );
 
             let lines = [

@@ -1,4 +1,4 @@
-//! Enterprise Governance, MDM Policy Engine (`policy.json`), Air-Gapped AI DLP Lockout,
+//! Enterprise Governance, MDM Policy Engine (`policy.json`), Air-Gapped Workstation Lock,
 //! SHA-256 Hash-Chained Audit Trail, Write-Ahead Crash Recovery Journal (WAL),
 //! Advisory SMB/NFS Lockfiles, Semantic Accessibility Tree, and CycloneDX 1.5 SBOM Generator.
 
@@ -12,13 +12,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const GENESIS_AUDIT_HASH: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 
-/// IT / MDM deployment policy (`policy.json`) governing AI DLP, air-gapped lockout, and redaction compliance.
+/// IT / MDM deployment policy (`policy.json`) governing offline workstation DLP and redaction compliance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnterprisePolicy {
     pub organization: String,
     pub air_gapped_mode: bool,
-    pub allow_cloud_ai: bool,
-    pub allowed_ai_hosts: Vec<String>,
     pub default_classification: SecurityClassification,
     pub require_redaction_sanitization: bool,
     pub audit_log_enabled: bool,
@@ -29,16 +27,6 @@ impl Default for EnterprisePolicy {
         Self {
             organization: "Open-Source Workstation".into(),
             air_gapped_mode: false,
-            allow_cloud_ai: true,
-            allowed_ai_hosts: vec![
-                "127.0.0.1".into(),
-                "localhost".into(),
-                "::1".into(),
-                "api.openai.com".into(),
-                "api.anthropic.com".into(),
-                "api.groq.com".into(),
-                "openrouter.ai".into(),
-            ],
             default_classification: SecurityClassification::Unclassified,
             require_redaction_sanitization: true,
             audit_log_enabled: true,
@@ -47,13 +35,11 @@ impl Default for EnterprisePolicy {
 }
 
 impl EnterprisePolicy {
-    /// Preset strict sovereign / air-gapped policy blocking all external cloud egress.
+    /// Preset strict sovereign / air-gapped offline workstation policy.
     pub fn strict_air_gapped(organization: impl Into<String>) -> Self {
         Self {
             organization: organization.into(),
             air_gapped_mode: true,
-            allow_cloud_ai: false,
-            allowed_ai_hosts: vec!["127.0.0.1".into(), "localhost".into(), "::1".into()],
             default_classification: SecurityClassification::Confidential,
             require_redaction_sanitization: true,
             audit_log_enabled: true,
@@ -93,14 +79,6 @@ impl EnterprisePolicy {
         if let Some(ag) = json_get_bool(raw, "air_gapped_mode") {
             pol.air_gapped_mode = ag;
         }
-        if let Some(ac) = json_get_bool(raw, "allow_cloud_ai") {
-            pol.allow_cloud_ai = ac;
-        }
-        if let Some(hosts) = json_get_str_array(raw, "allowed_ai_hosts") {
-            if !hosts.is_empty() {
-                pol.allowed_ai_hosts = hosts;
-            }
-        }
         if let Some(cls) = json_get_str(raw, "default_classification") {
             pol.default_classification = SecurityClassification::from_slug(&cls);
         }
@@ -114,98 +92,14 @@ impl EnterprisePolicy {
     }
 
     pub fn to_json_pretty(&self) -> String {
-        let hosts_json: Vec<String> = self
-            .allowed_ai_hosts
-            .iter()
-            .map(|h| format!("\"{}\"", escape_json(h)))
-            .collect();
         format!(
-            "{{\n  \"organization\": \"{}\",\n  \"air_gapped_mode\": {},\n  \"allow_cloud_ai\": {},\n  \"allowed_ai_hosts\": [{}],\n  \"default_classification\": \"{}\",\n  \"require_redaction_sanitization\": {},\n  \"audit_log_enabled\": {}\n}}",
+            "{{\n  \"organization\": \"{}\",\n  \"air_gapped_mode\": {},\n  \"default_classification\": \"{}\",\n  \"require_redaction_sanitization\": {},\n  \"audit_log_enabled\": {}\n}}",
             escape_json(&self.organization),
             self.air_gapped_mode,
-            self.allow_cloud_ai,
-            hosts_json.join(", "),
             self.default_classification.slug(),
             self.require_redaction_sanitization,
             self.audit_log_enabled
         )
-    }
-
-    /// Enforces Data Loss Prevention (DLP) rules before any AI HTTP/HTTPS socket is opened.
-    pub fn validate_ai_endpoint(&self, endpoint_url: &str) -> Result<(), String> {
-        let trimmed = endpoint_url.trim();
-        let (is_https, rest) = if let Some(r) = trimmed.strip_prefix("https://") {
-            (true, r)
-        } else if let Some(r) = trimmed.strip_prefix("http://") {
-            (false, r)
-        } else {
-            return Err("AI endpoint URL must start with http:// or https://".into());
-        };
-
-        let authority = rest.split('/').next().unwrap_or("");
-        let host = if authority.starts_with('[') {
-            authority
-                .find(']')
-                .map(|i| &authority[..=i])
-                .unwrap_or(authority)
-        } else {
-            authority.split(':').next().unwrap_or("")
-        }
-        .to_ascii_lowercase();
-
-        let is_loopback =
-            host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]";
-
-        if self.air_gapped_mode && !is_loopback {
-            return Err(format!(
-                "DLP POLICY BLOCKED: Air-Gapped Mode ({}) forbids non-loopback endpoint '{}'. Use local Ollama / nour-code on 127.0.0.1.",
-                self.organization, host
-            ));
-        }
-
-        if !self.allow_cloud_ai && (is_https || !is_loopback) {
-            let allowlisted = self
-                .allowed_ai_hosts
-                .iter()
-                .any(|h| h.eq_ignore_ascii_case(&host));
-            if !allowlisted || !is_loopback && self.air_gapped_mode {
-                return Err(format!(
-                    "DLP POLICY BLOCKED: Enterprise policy ({}) disables public cloud AI host '{}'.",
-                    self.organization, host
-                ));
-            }
-            if !allowlisted {
-                return Err(format!(
-                    "DLP POLICY BLOCKED: Host '{}' is not in allowed_ai_hosts.",
-                    host
-                ));
-            }
-            // If `allow_cloud_ai == false`, reject well-known public SaaS AI gateways even if listed in default
-            if matches!(
-                host.as_str(),
-                "api.openai.com" | "api.anthropic.com" | "api.groq.com" | "openrouter.ai"
-            ) {
-                return Err(format!(
-                    "DLP POLICY BLOCKED: Public cloud AI ('{}') is disabled by enterprise policy.",
-                    host
-                ));
-            }
-        }
-
-        if !is_loopback && !self.allowed_ai_hosts.is_empty() {
-            let allowlisted = self
-                .allowed_ai_hosts
-                .iter()
-                .any(|h| h == "*" || h.eq_ignore_ascii_case(&host));
-            if !allowlisted {
-                return Err(format!(
-                    "DLP POLICY BLOCKED: Endpoint host '{}' is not permitted by enterprise allowlist.",
-                    host
-                ));
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -532,7 +426,7 @@ pub fn generate_cyclonedx_sbom_json() -> String {
         ("docx_io", "Lossless ECMA-376 .docx Reader/Writer, Comments & Passthrough"),
         ("pdf_create", "ISO 32000 PDF 1.7 & Archival PDF/A-2b Vector Renderer"),
         ("pdf_engine", "PDF 1.5+ ObjStm Parser, Forensic Redaction Sanitizer & SHA-256 Sealer"),
-        ("power_tools", "Enterprise DLP Policy, WinHTTP/Local AI Bridge, WAL & Audit Trail"),
+        ("power_tools", "Enterprise DLP Policy, Redaction, Converter, OCR, WAL & Audit Trail"),
         ("rustpad_render", "Pure-Rust TrueType (.ttf) Subpixel Rasterizer & 2D SDF Painter"),
         ("rustpad_window", "Zero-Dependency Win32 & Linux X11 Windowing, DPI & Clipboard"),
     ];
@@ -597,50 +491,20 @@ fn json_get_bool(json: &str, key: &str) -> Option<bool> {
     }
 }
 
-fn json_get_str_array(json: &str, key: &str) -> Option<Vec<String>> {
-    let needle = format!("\"{key}\"");
-    let pos = json.find(&needle)?;
-    let after = json[pos + needle.len()..].trim_start();
-    let after_colon = after.strip_prefix(':')?.trim_start();
-    let inner = after_colon.strip_prefix('[')?;
-    let rb = inner.find(']')?;
-    let list_body = &inner[..rb];
-    let mut items = Vec::new();
-    for part in list_body.split(',') {
-        let t = part.trim().trim_matches('"').trim();
-        if !t.is_empty() {
-            items.push(t.to_string());
-        }
-    }
-    Some(items)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use doc_model::TemplateKind;
 
     #[test]
-    fn test_enterprise_dlp_policy_blocks_cloud_when_airgapped() {
+    fn test_enterprise_dlp_policy_json_roundtrip() {
         let strict = EnterprisePolicy::strict_air_gapped("Sovereign Defense Lab");
-        assert!(strict
-            .validate_ai_endpoint("http://127.0.0.1:11434/v1/chat/completions")
-            .is_ok());
-        assert!(strict
-            .validate_ai_endpoint("http://localhost:8000/v1/chat/completions")
-            .is_ok());
-        assert!(strict
-            .validate_ai_endpoint("https://api.openai.com/v1/chat/completions")
-            .is_err());
-        assert!(strict
-            .validate_ai_endpoint("https://api.anthropic.com/v1/messages")
-            .is_err());
-
         let serialized = strict.to_json_pretty();
         let reparsed = EnterprisePolicy::from_json(&serialized);
         assert_eq!(reparsed.organization, "Sovereign Defense Lab");
         assert!(reparsed.air_gapped_mode);
-        assert!(!reparsed.allow_cloud_ai);
+        assert!(reparsed.require_redaction_sanitization);
+        assert!(reparsed.audit_log_enabled);
     }
 
     #[test]
@@ -648,7 +512,7 @@ mod tests {
         let mut trail = AuditTrail::default();
         trail.record("DOC_OPENED", "MSA_v2.docx", "Nour Yahyaoui");
         trail.record("REDACTION_SANITIZED", "Discovery_Exhibit.pdf", "Legal Ops");
-        trail.record("AI_DLP_BLOCKED", "api.openai.com", "PolicyEngine");
+        trail.record("DLP_MODE_SWITCHED", "STRICT AIR-GAPPED", "PolicyEngine");
         assert_eq!(trail.verify_chain().unwrap(), 3);
 
         trail.events[1].subject = "Tampered_File.pdf".into();

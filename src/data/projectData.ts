@@ -27,17 +27,6 @@ export interface EnterpriseBenchmarkRow {
   legacySuites: string;
 }
 
-export interface AiProviderSpec {
-  id: string;
-  name: string;
-  mode: 'LOCAL HTTP' | 'CLOUD HTTPS';
-  endpoint: string;
-  defaultModel: string;
-  transport: string;
-  cliExample: string;
-  notes: string;
-}
-
 export interface CrateSpec {
   crateName: string;
   layer: string;
@@ -165,24 +154,24 @@ export const ENTERPRISE_BENCHMARKS: EnterpriseBenchmarkRow[] = [
     legacySuites: 'Paid Acrobat Pro License',
   },
   {
-    capability: 'Enterprise AI Data Loss Prevention',
-    rustpad: 'MDM policy.json Localhost Lock + Selection AI Polish',
-    cloudSaas: 'Vendor Cloud Egress',
-    electronApps: 'Unrestricted API Keys',
-    legacySuites: 'Cloud Copilot Egress',
+    capability: 'Inline Mathematical Formulas',
+    rustpad: '83+ Native Inline Math Templates (Alt+=, /math, Multi-Span Sub/Superscript)',
+    cloudSaas: 'Iframe LaTeX / Slow Web Equations',
+    electronApps: 'External Copy-Paste or KaTeX Plugins',
+    legacySuites: 'Heavy Modal Equation Builders',
   },
 ];
 
 export const STUDIO_SPECIMENS: StudioSpecimen[] = [
   {
-    id: 'word-ai',
+    id: 'word-studio',
     index: '01',
     label: 'v3.0 Word + Dark Mode',
     shortLabel: 'Word v3.0',
     badge: 'DARK MODE + REDLINE',
-    windowTitle: 'RustPad v3.0.0 — Enterprise_MSA_Redline.docx · Dark Mode, OOXML Intelligence & Table Studio',
+    windowTitle: 'RustPad v3.0 — Enterprise_MSA_Redline.docx · Dark Mode, Inline Math & Table Studio',
     image: '/screenshots/word-studio.png',
-    alt: 'RustPad v3.0.0 Word Studio showing Native Dark Mode, 60–120Hz smooth sheet rendering, async streaming 100+ MB large-doc engine, footnotes/endnotes, ECMA-376 Track Changes legal redlines, and DLP-governed local AI dock.',
+    alt: 'RustPad v3.0 Word Studio showing Native Dark Mode, 60–120Hz smooth sheet rendering, async streaming 100+ MB large-doc engine, inline math formulas, footnotes/endnotes, and ECMA-376 Track Changes legal redlines.',
     summary:
       'Switch seamlessly between Daylight, Midnight Dark Mode, and Hybrid Dark Desk (Ctrl+Shift+D) with zero-mutation render-time ink adaptation, inspect OOXML security & hidden text (Ctrl+Shift+J), and review legal redlines in 1 click.',
     highlights: [
@@ -244,11 +233,11 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
       },
       {
         tag: 'MDM policy.json',
-        detail: '1-click Strict Air-Gapped mode blocks external cloud AI before DNS resolution',
+        detail: '1-click Strict Air-Gapped mode enforces 100% offline workstation compliance',
       },
       {
-        tag: '103 Studio Actions',
-        detail: 'Ctrl+Shift+D Dark Mode, Ctrl+Shift+J Inspector, Ctrl+F Search, Ctrl+K Command Palette',
+        tag: '98 Studio Actions',
+        detail: 'Ctrl+Shift+D Dark Mode, Alt+= Math Library, Ctrl+Shift+J Inspector, Ctrl+K Palette',
       },
     ],
   },
@@ -319,78 +308,15 @@ export const CRAFT_PILLARS: CraftPillar[] = [
   },
   {
     index: '04',
-    tag: 'SECURITY & DLP · #9 #25 #26',
-    title: 'Zero-Crate Hardening, MDM DLP & WinHTTP TLS',
+    tag: 'INLINE MATH & SECURITY · #9 #25 #66',
+    title: '83+ Inline Math Templates, Zero-Crate Hardening & MDM DLP',
     summary:
-      'Designed to pass CISO, defense, and financial procurement reviews with zero transitive crates.io packages and deterministic parser ceilings.',
+      'Author classical multi-span inline mathematics inside prose and pass CISO procurement reviews with zero transitive crates.io packages.',
     bullets: [
+      '83+ inline math templates (`Alt+=`, `Ctrl+Shift+L`, `/math`) across Core, Algebra, Calculus, Linear Algebra & Probability',
       'Bounded DEFLATE zip-bomb guards (200:1 max ratio), ZipSlip rejection & MAX_XML_DEPTH=128',
-      'System MDM policy.json locks AI to localhost or allowlisted Sovereign VPC gateways',
-      'Native Windows `winhttp.dll` Schannel TLS honoring corporate PAC proxies & Root CAs',
+      'System MDM policy.json offline air-gap governance + SHA-256 hash-chained AuditTrail',
     ],
-  },
-];
-
-export const AI_PROVIDERS: AiProviderSpec[] = [
-  {
-    id: 'nour-code',
-    name: 'nour-code / vLLM (Air-Gapped)',
-    mode: 'LOCAL HTTP',
-    endpoint: 'http://127.0.0.1:8000/v1/chat/completions',
-    defaultModel: 'nour-code',
-    transport: 'Pure-Rust std::net::TcpStream + MDM EnterprisePolicy DLP check',
-    cliExample:
-      'rustpad ai MSA_Redline.docx --provider nour-code --task summarize -o counsel_brief.md',
-    notes:
-      'Permitted even under Strict Air-Gapped MDM policy (`air_gapped_mode: true`). Zero external DNS lookups, zero API keys, and 100% on-device sovereignty.',
-  },
-  {
-    id: 'ollama',
-    name: 'Ollama (Local Workstation)',
-    mode: 'LOCAL HTTP',
-    endpoint: 'http://127.0.0.1:11434/v1/chat/completions',
-    defaultModel: 'qwen2.5:7b',
-    transport: 'Pure-Rust TcpStream + /api/tags live model auto-discovery',
-    cliExample:
-      'rustpad ai report.pdf --provider ollama --model qwen2.5:7b --task sections -o report_v2.docx',
-    notes:
-      'Click "Detect Local" inside the AI Studio Dock to query 127.0.0.1:11434/api/tags and populate installed sovereign local models as 1-click pills.',
-  },
-  {
-    id: 'lm-studio',
-    name: 'LM Studio / llama.cpp',
-    mode: 'LOCAL HTTP',
-    endpoint: 'http://127.0.0.1:1234/v1/chat/completions',
-    defaultModel: 'local-model',
-    transport: 'Pure-Rust TcpStream HTTP/1.1 + chunked transfer decoder',
-    cliExample:
-      'rustpad ai contract.docx --provider lm-studio --task grammar -o contract_clean.docx',
-    notes:
-      'Works offline with LM Studio (:1234) and llama-server; automatically strips `<think>...</think>` reasoning traces before inserting OOXML blocks.',
-  },
-  {
-    id: 'openai',
-    name: 'OpenAI / Sovereign VPC HTTPS',
-    mode: 'CLOUD HTTPS',
-    endpoint: 'https://api.openai.com/v1/chat/completions',
-    defaultModel: 'gpt-4o-mini',
-    transport: 'Native Win32 WinHTTP Schannel TLS (Enterprise Root CA + Proxy) / Policy-Governed',
-    cliExample:
-      'OPENAI_API_KEY=sk-... rustpad ai proposal.docx --provider openai --task description',
-    notes:
-      'Uses native `winhttp.dll` (`WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY`) on Windows for Zscaler/Netskope TLS inspection compatibility — and is automatically blocked when MDM `allow_cloud_ai: false` is set.',
-  },
-  {
-    id: 'claude',
-    name: 'Anthropic Claude (Policy-Governed)',
-    mode: 'CLOUD HTTPS',
-    endpoint: 'https://api.anthropic.com/v1/messages',
-    defaultModel: 'claude-3-5-sonnet-latest',
-    transport: 'Native WinHTTP Schannel / OS TLS + SHA-256 Audit Trail logging',
-    cliExample:
-      'ANTHROPIC_API_KEY=sk-ant-... rustpad ai contract.pdf --provider claude --task ask --prompt "Flag indemnity caps"',
-    notes:
-      'Dispatches isolated `<document_context>` prompts when permitted by `allowed_ai_hosts` in `policy.json`, keeping API keys strictly in volatile session RAM.',
   },
 ];
 
@@ -398,26 +324,26 @@ export const CRATE_LEDGER: CrateSpec[] = [
   {
     crateName: 'rustpad (app)',
     layer: 'Enterprise Studio & CLI',
-    standard: 'Win32 + X11 + 13 CLI Ops',
+    standard: 'Win32 + X11 + 18 CLI Ops',
     responsibility:
-      'Native desktop Word/PDF studio, Legal Redline bar, DLP Governance modal & 13-command enterprise CLI.',
+      'Native desktop Word/PDF studio, Inline Math Library, Legal Redline bar, DLP Governance & 18-command CLI.',
     keyModules: 'app/src/{main,state,word_view,pdf_view,ui_paint,commands}.rs',
   },
   {
     crateName: 'power_tools',
-    layer: 'DLP, WAL, SBOM & AI',
-    standard: 'CycloneDX 1.5 + WinHTTP',
+    layer: 'DLP, WAL, Redact & SBOM',
+    standard: 'CycloneDX 1.5 + SHA-256',
     responsibility:
-      'MDM policy.json DLP engine, SHA-256 AuditTrail, Crash WAL, Lockfiles, WinHTTP/TCP AI & CycloneDX SBOM.',
-    keyModules: 'crates/power_tools/src/{enterprise,ai_agent,converter,spellcheck,ocr}.rs',
+      'MDM policy.json DLP engine, .docx PII Redactor, SHA-256 AuditTrail, Crash WAL, OCR & CycloneDX SBOM.',
+    keyModules: 'crates/power_tools/src/{enterprise,security,converter,spellcheck,ocr}.rs',
   },
   {
     crateName: 'doc_model',
-    layer: 'OpenXML AST & Redline',
-    standard: 'Track Changes + LCS Diff',
+    layer: 'OpenXML AST, Math & Diff',
+    standard: 'Track Changes + Inline Math',
     responsibility:
-      'Document AST, RevisionMeta (<w:ins>/<w:del>), word-level diff_redline, Classification, RTL & Undo.',
-    keyModules: 'crates/doc_model/src/{lib,templates}.rs',
+      'Document AST, 83+ Inline Math templates, RevisionMeta (<w:ins>/<w:del>), smart merge & Undo.',
+    keyModules: 'crates/doc_model/src/{lib,math_library,templates}.rs',
   },
   {
     crateName: 'docx_io',
@@ -534,20 +460,20 @@ export const TOUR_STEPS: TourStep[] = [
   {
     step: '03 / 05',
     targetSelector: '#studio',
-    specimenId: 'word-ai',
+    specimenId: 'word-studio',
     title: 'Live v3.0 Word, Inspector, Forensic PDF & DLP Switchboard',
     body: 'Inspect all 4 v3.0 desktop views: Dark-Mode-Capable Word Studio, Forensic PDF + SHA-256 Seal, Document Security Inspector, and Editorial Hub.',
   },
   {
     step: '04 / 05',
-    targetSelector: '#ai-studio',
-    title: 'Selection AI Polish & Air-Gapped MDM DLP',
-    body: 'Highlight any sentence and click AI Polish to rewrite just that phrase via local Ollama / nour-code or corporate WinHTTP.',
+    targetSelector: '#architecture',
+    title: '9 Pure-Rust Crates & Zero External Dependencies',
+    body: 'Every PKZIP, DEFLATE, XML, TrueType, PNG/JPEG, Inline Math, and PDF 1.7 primitive lives in-tree — verifiable via `rustpad sbom`.',
   },
   {
     step: '05 / 05',
     targetSelector: '#cli',
-    title: '19-Command Headless OOXML, Privacy, Forensic & Batch CLI',
+    title: '18-Command Headless OOXML, Privacy, Forensic & Batch CLI',
     body: 'Automate `rustpad validate`, `repair`, `compare`, `merge`, `redact --pii`, `clean-meta`, `batch`, `sign --pdfa`, and `sbom` in CI.',
   },
 ];

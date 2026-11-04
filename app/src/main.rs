@@ -1,6 +1,6 @@
 #![cfg_attr(all(target_os = "windows", not(test)), windows_subsystem = "windows")]
 //! RustPad v3.0 Enterprise (`rustpad`) — Offline-First Pure-Rust Native Word (`.docx`),
-//! Native Dark Mode, OOXML Intelligence, Forensic PDF (`.pdf`), DLP Local AI & CLI Suite.
+//! Native Dark Mode, Inline Math Library, OOXML Intelligence, Forensic PDF (`.pdf`) & CLI Suite.
 //! Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
 
 pub mod commands;
@@ -27,8 +27,7 @@ use pdf_engine::{
 use power_tools::{
     build_document_a11y_tree, clean_docx_file_metadata, convert_file, detect_broken_links,
     detect_duplicate_paragraphs, extract_text_ocr_or_pdf, generate_cyclonedx_sbom_json,
-    parse_ai_output_to_blocks, redact_docx_file, run_ai_task, run_batch_docx_job, word_to_html,
-    word_to_markdown, word_to_pdf_document, AiAgentConfig, AiProviderPreset, AiTask,
+    redact_docx_file, run_batch_docx_job, word_to_html, word_to_markdown, word_to_pdf_document,
     BatchOperation, EnterprisePolicy, MetadataCleanOptions, RedactionOptions,
 };
 use rustpad_render::{
@@ -113,7 +112,7 @@ impl DesktopAppHandler for NativeAppRunner {
 fn print_help() {
     println!(
         "\
-RustPad v{ver} — Native Dark Mode, OOXML Intelligence, Forensic PDF & Local AI Suite
+RustPad v{ver} — Native Dark Mode, Inline Math Library, OOXML Intelligence & Forensic PDF Suite
 Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
 
 USAGE:
@@ -141,7 +140,6 @@ USAGE:
                                               Offline batch .docx processor across a directory
   rustpad sbom [-o sbom.cdx.json]             Emit CycloneDX 1.5 JSON Software Bill of Materials
   rustpad policy [--init-airgapped <OUT.json>] Inspect MDM DLP policy or generate air-gap profile
-  rustpad ai <FILE> [OPTIONS]                 Run DLP-governed local (Ollama/nour-code) or cloud AI
   rustpad demo-files <OUT_DIR>                Generate enterprise .docx, .pdf, .html & .md samples
   rustpad --render-preview <OUT_DIR>          Render 1440x900 Daylight & Midnight PNG screenshots
   rustpad --version | --help",
@@ -530,111 +528,6 @@ fn run_cli_policy(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn run_cli_ai(args: &[String]) -> Result<(), String> {
-    if args.is_empty() {
-        return Err("Usage: rustpad ai <FILE> [--task summarize] [--provider ollama|nour-code|openai|claude] [--model NAME] [-o OUT]".into());
-    }
-    let input_path = PathBuf::from(&args[0]);
-    let mut cfg = AiAgentConfig::default();
-    let mut task = AiTask::SummarizeDocument;
-    let mut custom_prompt = String::new();
-    let mut out_path: Option<PathBuf> = None;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--task" | "-t" => {
-                i += 1;
-                let v = args.get(i).ok_or("Missing value after --task")?;
-                task = AiTask::from_cli_name(v).ok_or_else(|| {
-                    format!(
-                        "Unknown --task '{v}' (expected grammar, summarize, description, sections, ask)"
-                    )
-                })?;
-            }
-            "--provider" | "-p" => {
-                i += 1;
-                let v = args.get(i).ok_or("Missing value after --provider")?;
-                cfg.apply_preset(AiProviderPreset::from_slug(v));
-            }
-            "--url" => {
-                i += 1;
-                cfg.endpoint_url = args.get(i).ok_or("Missing value after --url")?.clone();
-            }
-            "--model" | "-m" => {
-                i += 1;
-                cfg.model = args.get(i).ok_or("Missing value after --model")?.clone();
-            }
-            "--prompt" => {
-                i += 1;
-                custom_prompt = args.get(i).ok_or("Missing value after --prompt")?.clone();
-            }
-            "-o" | "--out" => {
-                i += 1;
-                out_path = Some(PathBuf::from(args.get(i).ok_or("Missing value after -o")?));
-            }
-            flag => return Err(format!("Unrecognized flag '{flag}' for `rustpad ai`")),
-        }
-        i += 1;
-    }
-
-    let ext = input_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-
-    let (mut maybe_doc, context) = match ext.as_str() {
-        "docx" => {
-            let doc = load_docx_file(&input_path).map_err(|e| e.0)?;
-            let md = word_to_markdown(&doc);
-            (Some(doc), md)
-        }
-        "pdf" => {
-            let (doc, text) = extract_text_ocr_or_pdf(&input_path)?;
-            (Some(doc), text)
-        }
-        _ => {
-            let raw = std::fs::read_to_string(&input_path)
-                .map_err(|e| format!("Failed reading '{}': {e}", input_path.display()))?;
-            (None, raw)
-        }
-    };
-
-    let res = run_ai_task(&cfg, task, &context, &custom_prompt)?;
-    if let Some(out) = out_path {
-        let out_ext = out
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        if out_ext == "docx" {
-            let mut doc = maybe_doc
-                .take()
-                .unwrap_or_else(|| power_tools::markdown_to_word(&context, "AI Document"));
-            doc.blocks.extend(parse_ai_output_to_blocks(&res.content));
-            save_docx_file(&out, &doc).map_err(|e| e.0)?;
-            eprintln!(
-                "AI ({} · {}ms) appended structured sections -> '{}'",
-                res.model_used,
-                res.latency_ms,
-                out.display()
-            );
-        } else {
-            std::fs::write(&out, &res.content).map_err(|e| e.to_string())?;
-            eprintln!(
-                "AI ({} · {}ms) wrote output -> '{}'",
-                res.model_used,
-                res.latency_ms,
-                out.display()
-            );
-        }
-    } else {
-        println!("{}", res.content);
-    }
-    Ok(())
-}
-
 fn generate_demo_files(out_dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
     let welcome = TemplateKind::WelcomeGuide.build();
@@ -686,19 +579,15 @@ fn render_studio_previews(out_dir: &Path) -> Result<(), String> {
     let mut app = RustPadApp::new();
     let mut surface = Surface::new(1440, 900, StudioTheme::desk_bg());
 
-    // 1. Word Studio: Enterprise MSA Legal Redline + Review Comments + Local AI Agent Dock
+    // 1. Word Studio: Enterprise MSA Legal Redline + Review Comments
     let msa_doc = TemplateKind::EnterpriseContract.build();
     app.tabs
         .push(StudioTab::Word(WordTabState::from_doc(msa_doc, None)));
     let msa_tab_idx = app.tabs.len() - 1;
     app.active_tab = msa_tab_idx;
-    app.ai_dock.open = true;
-    app.ai_dock.output_text = "## Redline Risk Review\n- Liability cap increased to 24 months (Section 3, emerald w:ins).\n- Payment window extended Net 30 -> Net 45 (crimson w:del / emerald w:ins).\n- Zero cloud egress: verified via local nour-code / Ollama DLP policy.".into();
-    app.ai_dock.status_line = "Completed via local nour-code (DLP Verified · 162 ms).".into();
     render_app(&mut app, &mut surface);
     std::fs::write(out_dir.join("word-studio.png"), encode_surface_png(&surface))
         .map_err(|e| e.to_string())?;
-    app.ai_dock.open = false;
 
     // 2. Asymmetric Editorial Home Hub Preview
     app.active_tab = 0;
@@ -771,7 +660,6 @@ fn render_studio_previews(out_dir: &Path) -> Result<(), String> {
     set_active_theme_mode(ThemeMode::Midnight);
     app.split_secondary_tab = None;
     app.active_tab = msa_tab_idx;
-    app.ai_dock.open = true;
     render_app(&mut app, &mut surface);
     std::fs::write(
         out_dir.join("word-studio-dark.png"),
@@ -902,7 +790,6 @@ fn attach_parent_console_if_cli(args: &[String]) {
                 | "verify"
                 | "sbom"
                 | "policy"
-                | "ai"
                 | "convert"
                 | "inspect"
                 | "ocr"
@@ -946,7 +833,6 @@ fn run_cli() -> Result<(), String> {
             "verify" => return run_cli_verify(&args[1..]),
             "sbom" => return run_cli_sbom(&args[1..]),
             "policy" => return run_cli_policy(&args[1..]),
-            "ai" => return run_cli_ai(&args[1..]),
             "convert" => {
                 if args.len() < 3 {
                     return Err("Usage: rustpad convert <INPUT> <OUTPUT>".into());
@@ -1118,7 +1004,8 @@ mod tests {
         app.execute_command(CommandId::InsertTable);
         app.execute_command(CommandId::TableAddRow);
         app.execute_command(CommandId::TableAddCol);
-        app.execute_command(CommandId::ToggleAiDock);
+        app.execute_command(CommandId::OpenMathLibrary);
+        app.modal = None;
         app.execute_command(CommandId::ConvertPdfToWord);
         app.execute_command(CommandId::PdfSanitizeRedactions);
         app.execute_command(CommandId::PdfSealDocument);

@@ -562,25 +562,23 @@ fn paint_floating_selection_bar(
         None => w.pending_typing_style.clone().unwrap_or_default(),
     };
 
-    let items: [(&str, FontSlot, bool, bool, CommandId); 7] = [
-        ("B", FontSlot::SansBold, probe_style.bold, false, CommandId::ToggleBold),
-        ("I", FontSlot::SerifItalic, probe_style.italic, false, CommandId::ToggleItalic),
-        ("U", FontSlot::SansBold, probe_style.underline, false, CommandId::ToggleUnderline),
+    let items: [(&str, FontSlot, bool, CommandId); 6] = [
+        ("B", FontSlot::SansBold, probe_style.bold, CommandId::ToggleBold),
+        ("I", FontSlot::SerifItalic, probe_style.italic, CommandId::ToggleItalic),
+        ("U", FontSlot::SansBold, probe_style.underline, CommandId::ToggleUnderline),
         (
             "Highlight",
             FontSlot::SansRegular,
             probe_style.highlight.is_some(),
-            false,
             CommandId::ToggleHighlight,
         ),
-        ("Ink", FontSlot::SansRegular, false, false, CommandId::CycleTextColor),
-        ("+Note", FontSlot::SansRegular, false, false, CommandId::AddReviewComment),
-        ("AI Polish", FontSlot::SansBold, false, true, CommandId::AiRunFixGrammar),
+        ("Ink", FontSlot::SansRegular, false, CommandId::CycleTextColor),
+        ("+Note", FontSlot::SansRegular, false, CommandId::AddReviewComment),
     ];
 
     let mut total_w = pad_x * 2.0;
-    let mut btn_ws = [0.0f32; 7];
-    for (i, (lbl, slot, _, _, _)) in items.iter().enumerate() {
+    let mut btn_ws = [0.0f32; 6];
+    for (i, (lbl, slot, _, _)) in items.iter().enumerate() {
         let tw = fonts.measure_text(*slot, lbl, 11.2 * s);
         let bw = (tw + 14.0 * s).max(26.0 * s).round();
         btn_ws[i] = bw;
@@ -611,22 +609,11 @@ fn paint_floating_selection_bar(
     let by = (pop.y + (bar_h - bh) * 0.5).round();
     let mut bx = pop.x + pad_x;
 
-    for (i, (lbl, slot, active, ai_accent, cmd)) in items.iter().enumerate() {
+    for (i, (lbl, slot, active, cmd)) in items.iter().enumerate() {
         let bw = btn_ws[i];
         let br = Rect::new(bx, by, bw, bh);
         let hov = br.contains(mouse_x, mouse_y);
-        if *ai_accent {
-            surface.fill_rounded_rect(
-                br,
-                4.5,
-                if hov {
-                    StudioTheme::word_accent()
-                } else {
-                    StudioTheme::word_soft()
-                },
-            );
-            surface.stroke_rounded_rect(br, 4.5, 1.0, StudioTheme::word_accent());
-        } else if *active || hov {
+        if *active || hov {
             surface.fill_rounded_rect(
                 br,
                 4.5,
@@ -640,9 +627,7 @@ fn paint_floating_selection_bar(
                 surface.stroke_rounded_rect(br, 4.5, 1.0, StudioTheme::word_accent());
             }
         }
-        let fg = if *ai_accent && hov {
-            StudioTheme::paper()
-        } else if *ai_accent || *active {
+        let fg = if *active {
             StudioTheme::word_accent()
         } else {
             StudioTheme::ink()

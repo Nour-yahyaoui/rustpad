@@ -1,4 +1,4 @@
-# RustPad Studio `v3.0.12` — Native Dark Mode, Inline Math Library & Offline Word/PDF/AI Suite
+# RustPad Studio `v3.0.13` — Native Dark Mode, Inline Math Library & Pure Offline Word/PDF Suite
 
 [![committers.top badge](https://user-badge.committers.top/tunisia/Nour-yahyaoui.svg)](https://user-badge.committers.top/tunisia/Nour-yahyaoui)
 [![Release v3.0.12](https://img.shields.io/badge/release-v3.0.12-A83E26?style=flat-square)](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.12)
@@ -6,11 +6,11 @@
 [![Live Showcase](https://img.shields.io/badge/web-rustpad--studio.vercel.app-1D4E7A?style=flat-square)](https://rustpad-studio.vercel.app/)
 [![Portfolio](https://img.shields.io/badge/portfolio-nour--yahyaoui.vercel.app-1A1917?style=flat-square)](https://nour-yahyaoui.vercel.app/projects/rustpad)
 
-**RustPad Studio (`rustpad`) `v3.0.12`** is a native, sovereign, **zero-dependency (`0` external `crates.io` crates)** desktop & CLI document intelligence engine written in **100% pure Rust**. Built directly on native Win32 GDI + Windows 11 DWM & Linux X11 with a custom TrueType (`.ttf`) 4×4 supersampled rasterizer, non-blocking `LazyZipArchive` 100+ MB `.docx` streaming parser, OOXML validator & corrupt-archive repair engine, character/paragraph redline & conflict-aware 3-way `.docx` smart merger, permanent `.docx` & `.pdf` forensic redactor, pure-Rust offline OCR, and air-gapped Local AI governance — shipping as a **~4.2 MB** standalone native executable (`< 90 ms` cold start, `0` Electron/Chromium/WebView bloat, `0` telemetry).
+**RustPad Studio (`rustpad`) `v3.0.13`** is a native, sovereign, **zero-dependency (`0` external `crates.io` crates)** desktop & CLI document intelligence engine written in **100% pure Rust**. Built directly on native Win32 GDI + Windows 11 DWM & Linux X11 with a custom TrueType (`.ttf`) 4×4 supersampled rasterizer, 83+ classical multi-span inline math templates (`Alt+=` / `/math`), non-blocking `LazyZipArchive` 100+ MB `.docx` streaming parser, OOXML validator & corrupt-archive repair engine, character/paragraph redline & conflict-aware 3-way `.docx` smart merger, permanent `.docx` & `.pdf` forensic redactor, and pure-Rust offline OCR — shipping as a **~4.1 MB** standalone native executable (`< 90 ms` cold start, `0` Electron/Chromium/WebView bloat, `0` AI/network sockets, `0` telemetry).
 
 > **Portfolio Case Study**: [nour-yahyaoui.vercel.app/projects/rustpad](https://nour-yahyaoui.vercel.app/projects/rustpad) · **Interactive Studio Showcase**: [rustpad-studio.vercel.app](https://rustpad-studio.vercel.app/) · **Latest Release (`v3.0.12`)**: [GitHub Releases](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.12)
 
-![RustPad v3.0 Word Studio — Smooth Native Canvas, Dark Mode, Track Changes & Local AI](docs/screenshots/word-studio.png)
+![RustPad v3.0 Word Studio — Smooth Native Canvas, Dark Mode, Inline Math & Track Changes](docs/screenshots/word-studio.png)
 
 ---
 
@@ -21,6 +21,13 @@
 | **Windows 10 / 11** | `x86_64` (Win32 GDI + DWM Dark Titlebar + Zero Console Window + Spooler) | [`rustpad-v3.0.12-windows-x86_64.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.12/rustpad-v3.0.12-windows-x86_64.exe) · [`rustpad.exe`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.12/rustpad.exe) |
 | **Linux Desktop & CLI** | `x86_64` (`dlopen` X11 `_GTK_THEME_VARIANT` + CUPS/LP + Headless CLI) | [`rustpad-v3.0.12-linux-x86_64`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.12/rustpad-v3.0.12-linux-x86_64) |
 | **SHA-256 Checksums** | Cryptographic release manifest (`windows` + `linux`) | [`SHA256SUMS.txt`](https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.12/SHA256SUMS.txt) |
+
+---
+
+## What's New in `v3.0.13` — Pure Offline Document, Math & PDF Engine (Zero AI Agent Integration)
+
+- **100% AI-Free Offline Core**: Removed all AI agent modules (`ai_agent`), HTTP/WinHTTP client bridges, the right-side AI Dock (`Ctrl+J`), floating selection `"AI Polish"`, and `rustpad ai` CLI subcommands so RustPad operates purely as a deterministic, distraction-free Word, Inline Math, and Forensic PDF studio with zero network sockets.
+- **Streamlined Studio Header & Home Launchpad**: Replaced AI controls on the Home Hub with 1-click access to the **Inline Math Library (`Alt+=` / `Ctrl+Shift+L`)** and tightened the contextual selection toolbar to pure typography & review controls (`B`, `I`, `U`, `Highlight`, `Ink`, `+Note`).
 
 ---
 
@@ -87,7 +94,7 @@
 
 ---
 
-## 19-Command Headless Enterprise & Intelligence CLI
+## 18-Command Headless Enterprise & Intelligence CLI
 
 Run `rustpad --help` on Windows, Linux, or macOS for headless CI/CD, legal ops, and CISO automation:
 
@@ -116,10 +123,9 @@ rustpad convert Handbook.docx Handbook.html
 rustpad convert Handbook.docx Handbook.pdf
 rustpad batch pdf ./contracts_dir -o ./pdf_exports
 
-# 6. Supply-Chain SBOM, MDM Air-Gapped Policy & Local AI Inference
-rustpad sbom -o rustpad-v3.0.0.cdx.json
+# 6. Supply-Chain SBOM & MDM Air-Gapped Offline Policy
+rustpad sbom -o rustpad-v3.0.13.cdx.json
 rustpad policy --init-airgapped .rustpad-policy.json
-rustpad ai Redline.docx --provider nour-code --task summarize -o brief.md
 ```
 
 ---
@@ -136,7 +142,7 @@ rustpad ai Redline.docx --provider nour-code --task summarize -o brief.md
 | `crates/power_tools` | `.docx` redactor & metadata cleaner, multi-surface search, batch ops, HTML5 converter, pure-Rust OCR, MDM DLP & SBOM | `0` |
 | `crates/rustpad_render` | `ThemeMode` (`Daylight`/`Midnight`/`HybridDarkDesk`), `StudioTheme`, TrueType 4×4 rasterizer, SDF painter, PNG/JPEG/BMP | `0` |
 | `crates/rustpad_window` | Native Win32 GDI + DWM Dark Titlebar & Linux X11 `_GTK_THEME_VARIANT`, HiDPI, clipboard, file dialogs & print spooler | `0` |
-| `app` (`rustpad`) | Unified 60–120Hz native desktop studio (`103` studio commands) + `19`-command headless CLI | `0` |
+| `app` (`rustpad`) | Unified 60–120Hz native desktop studio (`98` studio commands) + `18`-command headless CLI | `0` |
 
 ### Engineering Assumptions & Transparent Boundaries
 - **Passive Macro & OLE Safety by Design**: Embedded `vbaProject.bin` macros and OLE packages are preserved losslessly on save (or stripped on demand via `CleanDocumentPrivacy` / `clean-meta`) and **never executed**, eliminating macro malware execution vectors.
