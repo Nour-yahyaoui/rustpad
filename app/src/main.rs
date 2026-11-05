@@ -950,7 +950,11 @@ fn run_cli() -> Result<(), String> {
         tick_counter: 0,
     };
     run_native_window(
-        "RustPad v3.0.12 — Native Dark Mode · Inline Math Library · 60–120Hz Pure-Rust Word, PDF & AI Suite",
+        concat!(
+            "RustPad v",
+            env!("CARGO_PKG_VERSION"),
+            " — Native Dark Mode · Inline Math Library · 60–120Hz Pure-Rust Word & PDF Studio"
+        ),
         1380,
         880,
         &mut runner,

@@ -2,6 +2,10 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`) follow our continuous release workflow (`Issue → PR → CI Matrix → GitHub Release`).
 
+## [v3.0.13] - 2026-11-05 — Pure Offline Core: Removed All AI Agent Integration & Network Bridges
+### Removed & Streamlined
+- **Complete AI Agent Removal (`crates/power_tools`, `app/src/*`, `crates/doc_model/src/templates.rs`, Web Showcase)**: Deleted `crates/power_tools/src/ai_agent.rs` (`-1,227` lines), removed all local/cloud AI HTTP/WinHTTP bridges, removed `AiDockState` / `paint_ai_dock` / `ToggleAiDock` (`Ctrl+J`) / `AiRun*` / floating selection `"AI Polish"` / `rustpad ai` CLI subcommand (`-3,150+` lines total), and replaced AI buttons on the Home Launchpad with 1-click **Inline Math Library (`Alt+=` / `Ctrl+Shift+L`)** access.
+
 ## [v3.0.12] - 2026-11-03 — Pure Win32 GUI Subsystem (Zero Console Window) & Linear Algebra / Probability Math Pack
 ### Fixed & Added
 - **Eliminated Background Windows `cmd.exe` Console Window (`app/src/main.rs`, `crates/power_tools`, `crates/rustpad_window`)**: Added `#![cfg_attr(all(target_os = "windows", not(test)), windows_subsystem = "windows")]` so double-clicking `rustpad.exe` opens strictly the native Win32 GUI window with zero persistent terminal window, paired with `AttachConsole(ATTACH_PARENT_PROCESS)` for headless CLI subcommands and `CREATE_NO_WINDOW` (`0x0800_0000`) on background print/OCR/curl helpers.
