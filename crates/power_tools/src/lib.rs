@@ -3,10 +3,8 @@
 //! - Pillar D Security Engine: Permanent `.docx` & PII redaction, Metadata Cleaner, Hidden Stripper & `0600` Atomic I/O
 //! - Pillar E/F Productivity Engine: Multi-Surface Search, Duplicate Paragraph Detector, Broken Link Auditor & Batch Processor
 //! - Enterprise MDM `policy.json` DLP Governance, SHA-256 Hash-Chained Audit Trail & Crash WAL
-//! - Native WinHTTP Schannel / Local TCP Pluggable AI Agent Bridge (`Ollama`, `nour-code`, Cloud)
 //! - Offline Spellchecker, Pure-Rust Bitmap + Tesseract OCR, Semantic Accessibility Tree & CycloneDX 1.5 SBOM
 
-pub mod ai_agent;
 pub mod converter;
 pub mod enterprise;
 pub mod ocr;
@@ -15,11 +13,6 @@ pub mod security;
 pub mod snapshots;
 pub mod spellcheck;
 
-pub use ai_agent::{
-    build_prompts, discover_local_ollama_models, parse_ai_output_to_blocks, run_ai_task,
-    run_ai_task_with_policy, sanitize_model_output, AiAgentConfig, AiProviderPreset, AiResponse,
-    AiTask,
-};
 pub use converter::{
     convert_file, markdown_to_word, pdf_to_word, word_to_html, word_to_markdown,
     word_to_pdf_document,

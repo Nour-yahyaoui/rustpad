@@ -1,5 +1,5 @@
 //! Application State, Multi-Tab Session Controller, Resizable Panels, Interactive Tables,
-//! Non-Blocking Pluggable AI Agent Dock, Clipboard & Hit-Testing Actions.
+//! Inline Math Library, Clipboard & Hit-Testing Actions.
 
 use crate::commands::{filter_commands, CommandId};
 use doc_model::{
@@ -18,11 +18,9 @@ use pdf_engine::{
     PdfAnnotation, PdfDocument,
 };
 use power_tools::{
-    clean_document_metadata, discover_local_ollama_models, markdown_to_word,
-    parse_ai_output_to_blocks, pdf_to_word, run_ai_task_with_policy, word_to_html,
-    word_to_markdown, word_to_pdf_document, write_bytes_secure_atomic, AdvisoryFileLock,
-    AiAgentConfig, AiProviderPreset, AiResponse, AiTask, AuditTrail, EnterprisePolicy,
-    MetadataCleanOptions, SnapshotVault, SpellChecker, WalJournal,
+    clean_document_metadata, markdown_to_word, pdf_to_word, word_to_html, word_to_markdown,
+    word_to_pdf_document, write_bytes_secure_atomic, AdvisoryFileLock, AuditTrail,
+    EnterprisePolicy, MetadataCleanOptions, SnapshotVault, SpellChecker, WalJournal,
 };
 use rustpad_render::{
     active_theme_mode, cycle_theme_mode, decode_any_image_rgba, decode_any_image_thumbnail_rgba,
@@ -772,63 +770,10 @@ impl ToolbarDropdown {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AiInputField {
-    EndpointUrl,
-    Model,
-    ApiKey,
-    CustomPrompt,
-}
-
-pub struct AiDockState {
-    pub open: bool,
-    pub width: f32,
-    pub config: AiAgentConfig,
-    pub selected_task: AiTask,
-    pub focused_field: Option<AiInputField>,
-    pub custom_prompt: String,
-    pub output_text: String,
-    pub status_line: String,
-    pub is_error: bool,
-    pub last_latency_ms: Option<u128>,
-    pub discovered_models: Vec<String>,
-    pub output_scroll_y: f32,
-    pub worker_rx: Option<Receiver<Result<AiResponse, String>>>,
-    pub started_at: Option<Instant>,
-}
-
-impl Default for AiDockState {
-    fn default() -> Self {
-        Self {
-            open: false,
-            width: 344.0,
-            config: AiAgentConfig::default(),
-            selected_task: AiTask::FixGrammar,
-            focused_field: None,
-            custom_prompt: String::new(),
-            output_text: String::new(),
-            status_line: "Ready · Local-first (Ollama / nour-code / Cloud)".into(),
-            is_error: false,
-            last_latency_ms: None,
-            discovered_models: Vec::new(),
-            output_scroll_y: 0.0,
-            worker_rx: None,
-            started_at: None,
-        }
-    }
-}
-
-impl AiDockState {
-    pub fn is_busy(&self) -> bool {
-        self.worker_rx.is_some()
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DragInteraction {
     None,
     WordOutlineSplitter { pane_left: f32 },
-    AiDockSplitter { window_right: f32 },
     PdfLeftSplitter { pane_left: f32 },
     PdfRightSplitter { pane_right: f32 },
     WorkspaceSplit { work_x: f32, work_w: f32 },
@@ -942,17 +887,6 @@ pub enum UiAction {
         pdf_x: f32,
         pdf_y: f32,
     },
-    AiSelectProvider(AiProviderPreset),
-    AiSelectTask(AiTask),
-    AiFocusField(Option<AiInputField>),
-    AiDetectOllamaModels,
-    AiPickDiscoveredModel(String),
-    AiRunCurrentTask,
-    AiCancelTask,
-    AiApplyOutput {
-        replace_current: bool,
-    },
-    AiCopyOutput,
     RestoreSnapshot(u64),
     ModalClose,
     ModalConfirm,
@@ -1024,8 +958,6 @@ pub struct RustPadApp {
     pub pdf_left_w: f32,
     pub pdf_right_open: bool,
     pub pdf_right_w: f32,
-    pub ai_dock: AiDockState,
-    pub ai_dock_rect: Option<Rect>,
     pub open_dropdown: Option<ToolbarDropdown>,
     pub active_drag: DragInteraction,
     pub modal: Option<ActiveModal>,
@@ -1084,8 +1016,6 @@ impl RustPadApp {
             pdf_left_w: 196.0,
             pdf_right_open: true,
             pdf_right_w: 236.0,
-            ai_dock: AiDockState::default(),
-            ai_dock_rect: None,
             open_dropdown: None,
             active_drag: DragInteraction::None,
             modal: None,
@@ -1229,254 +1159,7 @@ impl RustPadApp {
             }
         }
 
-        let Some(rx) = &self.ai_dock.worker_rx else {
-            return needs_repaint;
-        };
-        match rx.try_recv() {
-            Ok(Ok(resp)) => {
-                self.ai_dock.worker_rx = None;
-                self.ai_dock.started_at = None;
-                self.ai_dock.output_text = resp.content;
-                self.ai_dock.output_scroll_y = 0.0;
-                self.ai_dock.last_latency_ms = Some(resp.latency_ms);
-                self.ai_dock.is_error = false;
-                self.ai_dock.status_line = format!(
-                    "Completed via {} ({:.2}s)",
-                    resp.model_used,
-                    resp.latency_ms as f32 / 1000.0
-                );
-                self.status_toast = format!(
-                    "AI Agent finished '{}' in {:.2}s — review & click Insert or Replace",
-                    self.ai_dock.selected_task.short_label(),
-                    resp.latency_ms as f32 / 1000.0
-                );
-                true
-            }
-            Ok(Err(err)) => {
-                self.ai_dock.worker_rx = None;
-                self.ai_dock.started_at = None;
-                self.ai_dock.is_error = true;
-                self.ai_dock.status_line = err.clone();
-                self.status_toast = format!("AI Agent error: {err}");
-                true
-            }
-            Err(TryRecvError::Empty) => {
-                if let Some(t0) = self.ai_dock.started_at {
-                    let secs = t0.elapsed().as_secs_f32();
-                    self.ai_dock.status_line = format!(
-                        "Agent running on {}… ({:.1}s)",
-                        self.ai_dock.config.preset.short_badge(),
-                        secs
-                    );
-                }
-                true
-            }
-            Err(TryRecvError::Disconnected) => {
-                self.ai_dock.worker_rx = None;
-                self.ai_dock.started_at = None;
-                self.ai_dock.is_error = true;
-                self.ai_dock.status_line = "AI worker thread disconnected unexpectedly.".into();
-                true
-            }
-        }
-    }
-
-    pub fn start_ai_task(&mut self, task: AiTask) {
-        self.ai_dock.open = true;
-        self.ai_dock.selected_task = task;
-        self.ai_dock.focused_field = None;
-        self.ai_dock.config.save_non_secret();
-
-        let context = self.extract_active_ai_context(task);
-        if context.trim().is_empty() && self.ai_dock.custom_prompt.trim().is_empty() {
-            self.ai_dock.is_error = true;
-            self.ai_dock.status_line =
-                "Open a Word/PDF document or type an instruction first.".into();
-            return;
-        }
-
-        let cfg = self.ai_dock.config.clone();
-        if let Err(dlp_err) = self.policy.validate_ai_endpoint(&cfg.endpoint_url) {
-            if self.policy.audit_log_enabled {
-                self.audit_trail
-                    .record("AI_DLP_BLOCKED", &cfg.endpoint_url, "PolicyEngine");
-            }
-            self.ai_dock.is_error = true;
-            self.ai_dock.status_line = dlp_err.clone();
-            self.status_toast = dlp_err;
-            return;
-        }
-        if self.policy.audit_log_enabled {
-            self.audit_trail
-                .record("AI_TASK_DISPATCHED", cfg.preset.short_badge(), "Nour Yahyaoui");
-        }
-        let policy_snapshot = self.policy.clone();
-        let prompt = self.ai_dock.custom_prompt.clone();
-        let (tx, rx) = mpsc::channel();
-        self.ai_dock.worker_rx = Some(rx);
-        self.ai_dock.started_at = Some(Instant::now());
-        self.ai_dock.is_error = false;
-        self.ai_dock.status_line = format!(
-            "Connecting to {} ({})…",
-            cfg.preset.short_badge(),
-            cfg.model
-        );
-        self.status_toast = format!(
-            "Running '{}' via {}…",
-            task.label(),
-            cfg.preset.short_badge()
-        );
-
-        std::thread::spawn(move || {
-            let res = run_ai_task_with_policy(&cfg, &policy_snapshot, task, &context, &prompt);
-            let _ = tx.send(res);
-        });
-    }
-
-    fn extract_active_ai_context(&self, task: AiTask) -> String {
-        match self.tabs.get(self.active_tab) {
-            Some(StudioTab::Word(w)) => {
-                if let Some(sel) = w.selected_text() {
-                    if !sel.trim().is_empty() {
-                        return sel;
-                    }
-                }
-                if task == AiTask::FixGrammar {
-                    if let Some((tb_idx, r, c)) = w.active_table_cell {
-                        if let Some(Block::Table(t)) = w.doc.blocks.get(tb_idx) {
-                            if let Some(cell) = t.rows.get(r).and_then(|row| row.get(c)) {
-                                if !cell.text.trim().is_empty() {
-                                    return cell.text.clone();
-                                }
-                            }
-                        }
-                    }
-                    if let Some(Block::Paragraph(p)) = w.doc.blocks.get(w.cursor_block) {
-                        let cur = p.plain_text();
-                        if cur.split_whitespace().count() >= 4 {
-                            return cur;
-                        }
-                    }
-                }
-                word_to_markdown(&w.doc)
-            }
-            Some(StudioTab::Pdf(p)) => p.pdf.extract_all_text(),
-            _ => String::new(),
-        }
-    }
-
-    pub fn apply_ai_output_to_document(&mut self, replace_current: bool) {
-        let out = self.ai_dock.output_text.trim().to_string();
-        if out.is_empty() {
-            self.status_toast = "Run an AI task first to generate content.".into();
-            return;
-        }
-
-        enum ActiveKind {
-            Word,
-            Pdf,
-            HomeOrNone,
-        }
-        let kind = match self.tabs.get(self.active_tab) {
-            Some(StudioTab::Word(_)) => ActiveKind::Word,
-            Some(StudioTab::Pdf(_)) => ActiveKind::Pdf,
-            Some(StudioTab::HomeHub) | None => ActiveKind::HomeOrNone,
-        };
-
-        match kind {
-            ActiveKind::Word => {
-                if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
-                    w.history.record(&w.doc);
-                    w.snapshots.capture(&w.doc, "Before AI Agent apply");
-                    w.dirty = true;
-
-                    if replace_current && w.has_selection() {
-                        w.delete_selection();
-                        let lines: Vec<&str> = out.split('\n').collect();
-                        for (li, line) in lines.iter().enumerate() {
-                            if li > 0 {
-                                let _ = word_enter(w);
-                            }
-                            for ch in line.chars() {
-                                word_insert_char_no_record(w, ch);
-                            }
-                        }
-                        w.scroll_to_caret = true;
-                        self.status_toast =
-                            "Replaced selected text with AI output (Ctrl+Z to undo)".into();
-                        return;
-                    }
-
-                    if replace_current {
-                        if let Some((tb_idx, r, c)) = w.active_table_cell {
-                            if let Some(Block::Table(t)) = w.doc.blocks.get_mut(tb_idx) {
-                                if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.get_mut(c))
-                                {
-                                    cell.text = out.replace('\n', " ");
-                                    w.table_cursor_char = cell.text.chars().count();
-                                    self.status_toast =
-                                        "Replaced active table cell with AI output (Ctrl+Z to undo)"
-                                            .into();
-                                    return;
-                                }
-                            }
-                        }
-                        if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(w.cursor_block) {
-                            let first_line = out.lines().next().unwrap_or(&out);
-                            if out.lines().count() <= 1 {
-                                let st = p
-                                    .spans
-                                    .first()
-                                    .map(|s| s.style.clone())
-                                    .unwrap_or_default();
-                                p.spans = vec![TextSpan::styled(first_line, st)];
-                                w.cursor_char = first_line.chars().count();
-                                self.status_toast =
-                                    "Replaced paragraph with AI revision (Ctrl+Z to undo)".into();
-                                return;
-                            }
-                        }
-                        let new_blocks = parse_ai_output_to_blocks(&out);
-                        if !new_blocks.is_empty() {
-                            let at = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
-                            w.doc.blocks.remove(at);
-                            for (offset, b) in new_blocks.into_iter().enumerate() {
-                                w.doc.blocks.insert(at + offset, b);
-                            }
-                            self.status_toast =
-                                "Replaced section with AI output (Ctrl+Z to undo)".into();
-                        }
-                    } else {
-                        let new_blocks = parse_ai_output_to_blocks(&out);
-                        let count = new_blocks.len();
-                        let insert_at = (w.cursor_block + 1).min(w.doc.blocks.len());
-                        for (offset, b) in new_blocks.into_iter().enumerate() {
-                            w.doc.blocks.insert(insert_at + offset, b);
-                        }
-                        w.cursor_block = (insert_at + count.saturating_sub(1))
-                            .min(w.doc.blocks.len().saturating_sub(1));
-                        w.cursor_char = 0;
-                        w.active_table_cell = None;
-                        w.scroll_to_caret = true;
-                        self.status_toast =
-                            format!("Inserted {count} AI-drafted block(s) (Ctrl+Z to undo)");
-                    }
-                }
-            }
-            ActiveKind::Pdf => {
-                // Convert active PDF + AI blocks into a fresh editable Word Studio tab
-                self.execute_command(CommandId::ConvertPdfToWord);
-                self.apply_ai_output_to_document(false);
-            }
-            ActiveKind::HomeOrNone => {
-                let mut doc = markdown_to_word(&out, "AI Drafted Document");
-                doc.author = "Nour Yahyaoui".into();
-                self.tabs
-                    .push(StudioTab::Word(WordTabState::from_doc(doc, None)));
-                self.active_tab = self.tabs.len() - 1;
-                self.status_toast = "Opened AI output in a new Word (.docx) tab".into();
-            }
-        }
+        needs_repaint
     }
 
     /// Non-blocking interactive file opener: streams any `.docx >= 256 KiB` on a dedicated
@@ -2136,24 +1819,6 @@ impl RustPadApp {
                     }
                 }
             }
-            CommandId::ToggleAiDock => {
-                self.ai_dock.open = !self.ai_dock.open;
-                if self.ai_dock.open && self.ai_dock.discovered_models.is_empty() {
-                    if self.ai_dock.config.preset == AiProviderPreset::OllamaLocal {
-                        self.ai_dock.discovered_models =
-                            discover_local_ollama_models(&self.ai_dock.config.endpoint_url);
-                    }
-                }
-                self.status_toast = if self.ai_dock.open {
-                    "Opened Pluggable AI Agent Studio Dock (drag edge to resize)".into()
-                } else {
-                    "Closed AI Agent Dock".into()
-                };
-            }
-            CommandId::AiRunFixGrammar => self.start_ai_task(AiTask::FixGrammar),
-            CommandId::AiRunSummarize => self.start_ai_task(AiTask::SummarizeDocument),
-            CommandId::AiRunDescribe => self.start_ai_task(AiTask::WriteDescription),
-            CommandId::AiRunAddSections => self.start_ai_task(AiTask::AddSections),
             CommandId::OpenTableCreator => {
                 if !matches!(self.tabs.get(self.active_tab), Some(StudioTab::Word(_))) {
                     self.execute_command(CommandId::NewWordBlank);
@@ -2530,11 +2195,10 @@ impl RustPadApp {
             }
             CommandId::ToggleAirGappedDlp => {
                 self.policy.air_gapped_mode = !self.policy.air_gapped_mode;
-                self.policy.allow_cloud_ai = !self.policy.air_gapped_mode;
                 let mode_str = if self.policy.air_gapped_mode {
-                    "STRICT AIR-GAPPED (Cloud AI Locked)"
+                    "STRICT AIR-GAPPED (100% Offline Workstation)"
                 } else {
-                    "STANDARD HYBRID (Local + Allowlisted Cloud)"
+                    "STANDARD WORKSTATION (Local Offline Studio)"
                 };
                 self.audit_trail
                     .record("DLP_MODE_SWITCHED", mode_str, "EnterpriseAdmin");
@@ -3402,7 +3066,6 @@ impl RustPadApp {
             }
             UiAction::SelectWordImage { tab_idx, block_idx } => {
                 self.open_dropdown = None;
-                self.ai_dock.focused_field = None;
                 self.active_tab = tab_idx;
                 let now = Instant::now();
                 let is_double_click = self
@@ -3444,7 +3107,6 @@ impl RustPadApp {
                 char_idx,
             } => {
                 self.open_dropdown = None;
-                self.ai_dock.focused_field = None;
                 self.active_tab = tab_idx;
                 let now = Instant::now();
                 let is_double_click = self
@@ -3546,7 +3208,6 @@ impl RustPadApp {
                 char_idx,
             } => {
                 self.open_dropdown = None;
-                self.ai_dock.focused_field = None;
                 self.active_tab = tab_idx;
                 if let Some(StudioTab::Word(w)) = self.tabs.get_mut(tab_idx) {
                     w.cursor_block = block_idx;
@@ -3656,7 +3317,6 @@ impl RustPadApp {
                 page_idx,
                 item_id,
             } => {
-                self.ai_dock.focused_field = None;
                 self.active_tab = tab_idx;
                 if let Some(StudioTab::Pdf(p)) = self.tabs.get_mut(tab_idx) {
                     p.current_page = page_idx;
@@ -3670,7 +3330,6 @@ impl RustPadApp {
                 pdf_x,
                 pdf_y,
             } => {
-                self.ai_dock.focused_field = None;
                 self.active_tab = tab_idx;
                 if let Some(StudioTab::Pdf(p)) = self.tabs.get_mut(tab_idx) {
                     p.current_page = page_idx;
@@ -3724,72 +3383,6 @@ impl RustPadApp {
                             }
                         }
                     }
-                }
-            }
-            UiAction::AiSelectProvider(preset) => {
-                self.ai_dock.config.apply_preset(preset);
-                self.ai_dock.config.save_non_secret();
-                if preset == AiProviderPreset::OllamaLocal {
-                    self.ai_dock.discovered_models =
-                        discover_local_ollama_models(&self.ai_dock.config.endpoint_url);
-                    if let Some(first) = self.ai_dock.discovered_models.first() {
-                        self.ai_dock.config.model = first.clone();
-                    }
-                } else {
-                    self.ai_dock.discovered_models.clear();
-                }
-                self.ai_dock.is_error = false;
-                self.ai_dock.status_line = format!("Switched to {}", preset.label());
-            }
-            UiAction::AiSelectTask(task) => {
-                self.ai_dock.selected_task = task;
-                if task == AiTask::AddSections || task == AiTask::CustomPrompt {
-                    self.ai_dock.focused_field = Some(AiInputField::CustomPrompt);
-                }
-            }
-            UiAction::AiFocusField(field) => {
-                self.ai_dock.focused_field = field;
-            }
-            UiAction::AiDetectOllamaModels => {
-                let found = discover_local_ollama_models(&self.ai_dock.config.endpoint_url);
-                if found.is_empty() {
-                    self.ai_dock.is_error = true;
-                    self.ai_dock.status_line =
-                        "No local Ollama models detected on :11434 (run `ollama serve`).".into();
-                } else {
-                    let count = found.len();
-                    if let Some(first) = found.first() {
-                        self.ai_dock.config.model = first.clone();
-                    }
-                    self.ai_dock.discovered_models = found;
-                    self.ai_dock.is_error = false;
-                    self.ai_dock.status_line =
-                        format!("Detected {count} local model(s) on Ollama");
-                }
-            }
-            UiAction::AiPickDiscoveredModel(m) => {
-                self.ai_dock.config.model = m.clone();
-                self.ai_dock.config.save_non_secret();
-                self.ai_dock.status_line = format!("Selected local model '{m}'");
-            }
-            UiAction::AiRunCurrentTask => {
-                let task = self.ai_dock.selected_task;
-                self.start_ai_task(task);
-            }
-            UiAction::AiCancelTask => {
-                self.ai_dock.worker_rx = None;
-                self.ai_dock.started_at = None;
-                self.ai_dock.is_error = false;
-                self.ai_dock.status_line = "Cancelled in-flight AI request.".into();
-                self.status_toast = "Cancelled AI Agent request".into();
-            }
-            UiAction::AiApplyOutput { replace_current } => {
-                self.apply_ai_output_to_document(replace_current);
-            }
-            UiAction::AiCopyOutput => {
-                if !self.ai_dock.output_text.is_empty() {
-                    set_clipboard_text(&self.ai_dock.output_text);
-                    self.status_toast = "Copied AI Agent output to clipboard".into();
                 }
             }
             UiAction::RestoreSnapshot(id) => {
@@ -4089,7 +3682,6 @@ impl RustPadApp {
             self.dispatch_ui_action(hit.action);
         } else {
             self.open_dropdown = None;
-            self.ai_dock.focused_field = None;
             if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
                 w.selection_anchor = None;
             }
@@ -4118,11 +3710,6 @@ impl RustPadApp {
         match self.active_drag {
             DragInteraction::WordOutlineSplitter { pane_left } => {
                 self.word_sidebar_w = ((x - pane_left) / self.ui_scale).clamp(168.0, 440.0);
-                self.desired_cursor = CursorShape::ResizeEW;
-                return true;
-            }
-            DragInteraction::AiDockSplitter { window_right } => {
-                self.ai_dock.width = ((window_right - x) / self.ui_scale).clamp(268.0, 500.0);
                 self.desired_cursor = CursorShape::ResizeEW;
                 return true;
             }
@@ -4363,13 +3950,6 @@ impl RustPadApp {
             self.adjust_zoom(if delta_y < 0.0 { 0.08 } else { -0.08 });
             return;
         }
-        if let Some(dock_r) = self.ai_dock_rect {
-            if self.ai_dock.open && dock_r.contains(self.mouse_x, self.mouse_y) {
-                self.ai_dock.output_scroll_y =
-                    (self.ai_dock.output_scroll_y + delta_y).clamp(0.0, 2400.0);
-                return;
-            }
-        }
         match self.tabs.get_mut(self.active_tab) {
             Some(StudioTab::Word(w)) => {
                 w.target_scroll_y =
@@ -4417,7 +3997,7 @@ impl RustPadApp {
     }
 
     pub fn handle_key_down(&mut self, key: Key, mods: Modifiers) {
-        // Global Escape closes dropdowns, modals, background loader, AI input focus, active selection, or Focus Mode
+        // Global Escape closes dropdowns, modals, background loader, active selection, or Focus Mode
         if key == Key::Escape {
             if self.open_dropdown.is_some() {
                 self.open_dropdown = None;
@@ -4430,10 +4010,6 @@ impl RustPadApp {
             if let Some(load) = self.pending_doc_load.take() {
                 self.status_toast =
                     format!("Cancelled background open for '{}'", load.path.display());
-                return;
-            }
-            if self.ai_dock.focused_field.is_some() {
-                self.ai_dock.focused_field = None;
                 return;
             }
             if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
@@ -4540,10 +4116,9 @@ impl RustPadApp {
             }
         }
 
-        // Clipboard Paste (`Ctrl+V`) works for Screenshots/Images, Modals, AI Dock inputs, Table cells, and Prose!
+        // Clipboard Paste (`Ctrl+V`) works for Screenshots/Images, Modals, Table cells, and Prose!
         if mods.ctrl && key == Key::Char('v') {
             if self.modal.is_none()
-                && self.ai_dock.focused_field.is_none()
                 && matches!(self.tabs.get(self.active_tab), Some(StudioTab::Word(_)))
             {
                 if let Some(img_bytes) = get_clipboard_image_bytes() {
@@ -4557,7 +4132,6 @@ impl RustPadApp {
             }
             if let Some(clip) = get_clipboard_text() {
                 if self.modal.is_none()
-                    && self.ai_dock.focused_field.is_none()
                     && matches!(self.tabs.get(self.active_tab), Some(StudioTab::Word(_)))
                 {
                     let trimmed_path = clip.trim().trim_matches('"');
@@ -4598,10 +4172,6 @@ impl RustPadApp {
                 }
                 Key::Char('j') if mods.shift => {
                     self.execute_command(CommandId::OpenDocumentInspector);
-                    return;
-                }
-                Key::Char('j') => {
-                    self.execute_command(CommandId::ToggleAiDock);
                     return;
                 }
                 Key::Char('n') => {
@@ -4652,7 +4222,7 @@ impl RustPadApp {
                     self.execute_command(CommandId::OpenFindReplace);
                     return;
                 }
-                Key::Char('a') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                Key::Char('a') if self.modal.is_none() => {
                     self.execute_command(CommandId::SelectAll);
                     return;
                 }
@@ -4696,23 +4266,23 @@ impl RustPadApp {
                     self.copy_selection_or_block(true);
                     return;
                 }
-                Key::Char('b') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                Key::Char('b') if self.modal.is_none() => {
                     self.execute_command(CommandId::ToggleBold);
                     return;
                 }
-                Key::Char('i') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                Key::Char('i') if self.modal.is_none() => {
                     self.execute_command(CommandId::ToggleItalic);
                     return;
                 }
-                Key::Char('u') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                Key::Char('u') if self.modal.is_none() => {
                     self.execute_command(CommandId::ToggleUnderline);
                     return;
                 }
-                Key::Char('z') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                Key::Char('z') if self.modal.is_none() => {
                     self.execute_command(CommandId::Undo);
                     return;
                 }
-                Key::Char('y') if self.modal.is_none() && self.ai_dock.focused_field.is_none() => {
+                Key::Char('y') if self.modal.is_none() => {
                     self.execute_command(CommandId::Redo);
                     return;
                 }
@@ -4840,44 +4410,6 @@ impl RustPadApp {
                 ModalKeyFollowUp::ReplaceAll => self.dispatch_ui_action(UiAction::FindReplaceAll),
             }
             return;
-        }
-
-        // AI Dock text field editing
-        if let Some(field) = self.ai_dock.focused_field {
-            match key {
-                Key::Backspace => {
-                    match field {
-                        AiInputField::EndpointUrl => {
-                            self.ai_dock.config.endpoint_url.pop();
-                        }
-                        AiInputField::Model => {
-                            self.ai_dock.config.model.pop();
-                        }
-                        AiInputField::ApiKey => {
-                            self.ai_dock.config.api_key.pop();
-                        }
-                        AiInputField::CustomPrompt => {
-                            self.ai_dock.custom_prompt.pop();
-                        }
-                    }
-                    return;
-                }
-                Key::Tab => {
-                    self.ai_dock.focused_field = Some(match field {
-                        AiInputField::EndpointUrl => AiInputField::Model,
-                        AiInputField::Model => AiInputField::ApiKey,
-                        AiInputField::ApiKey => AiInputField::CustomPrompt,
-                        AiInputField::CustomPrompt => AiInputField::EndpointUrl,
-                    });
-                    return;
-                }
-                Key::Enter => {
-                    let task = self.ai_dock.selected_task;
-                    self.start_ai_task(task);
-                    return;
-                }
-                _ => return,
-            }
         }
 
         // Selected figure or `/image` slash command handling before mutable borrow of `self.tabs`
@@ -5197,9 +4729,6 @@ impl RustPadApp {
     }
 
     fn copy_selection_or_block(&mut self, cut: bool) {
-        if self.ai_dock.open && !self.ai_dock.output_text.is_empty() && self.ai_dock.focused_field.is_none() {
-            // If on HomeHub, copy AI output; in Word/PDF, copy active block unless empty
-        }
         match self.tabs.get_mut(self.active_tab) {
             Some(StudioTab::Word(w)) => {
                 if let Some(sel) = w.selected_text() {
@@ -5304,19 +4833,6 @@ impl RustPadApp {
                     }
                 }
                 _ => {}
-            }
-            return;
-        }
-
-        if let Some(field) = self.ai_dock.focused_field {
-            let single = cleaned.lines().next().unwrap_or("").trim();
-            match field {
-                AiInputField::EndpointUrl => self.ai_dock.config.endpoint_url.push_str(single),
-                AiInputField::Model => self.ai_dock.config.model.push_str(single),
-                AiInputField::ApiKey => self.ai_dock.config.api_key.push_str(single),
-                AiInputField::CustomPrompt => {
-                    self.ai_dock.custom_prompt.push_str(&cleaned.replace('\n', " "));
-                }
             }
             return;
         }
@@ -5432,16 +4948,6 @@ impl RustPadApp {
             }
             if matches!(self.modal, Some(ActiveModal::FindReplace { .. })) {
                 self.refresh_find_matches_and_jump();
-            }
-            return;
-        }
-
-        if let Some(field) = self.ai_dock.focused_field {
-            match field {
-                AiInputField::EndpointUrl => self.ai_dock.config.endpoint_url.push(ch),
-                AiInputField::Model => self.ai_dock.config.model.push(ch),
-                AiInputField::ApiKey => self.ai_dock.config.api_key.push(ch),
-                AiInputField::CustomPrompt => self.ai_dock.custom_prompt.push(ch),
             }
             return;
         }
@@ -6162,12 +5668,9 @@ mod tests {
             assert_eq!(w.doc.to_plain_text().trim(), "Net 45");
         }
 
-        // Verify Strict Air-Gapped DLP blocks external cloud endpoint & logs to SHA-256 Audit Chain
+        // Verify Strict Air-Gapped DLP toggles offline workstation mode & logs to SHA-256 Audit Chain
         app.execute_command(CommandId::ToggleAirGappedDlp);
-        app.ai_dock.config.endpoint_url = "https://api.openai.com/v1/chat/completions".into();
-        app.start_ai_task(AiTask::SummarizeDocument);
-        assert!(app.ai_dock.is_error);
-        assert!(app.ai_dock.status_line.contains("DLP POLICY BLOCKED"));
+        assert!(app.policy.air_gapped_mode);
         assert!(app.audit_trail.verify_chain().is_ok());
     }
 

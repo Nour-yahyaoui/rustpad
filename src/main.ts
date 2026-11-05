@@ -1,6 +1,5 @@
 import './styles/main.css';
 import {
-  AI_PROVIDERS,
   CLI_RECIPES,
   CRAFT_PILLARS,
   CRATE_LEDGER,
@@ -250,63 +249,6 @@ function renderCraftPillars(): void {
   ).join('');
 }
 
-function initAiProviderConsole(): void {
-  const tabsEl = document.getElementById('ai-provider-tabs');
-  const modePill = document.getElementById('ai-mode-pill');
-  const modelTag = document.getElementById('ai-model-tag');
-  const nameEl = document.getElementById('ai-provider-name');
-  const notesEl = document.getElementById('ai-provider-notes');
-  const endpointEl = document.getElementById('ai-endpoint-val');
-  const transportEl = document.getElementById('ai-transport-val');
-  const cliCodeEl = document.getElementById('ai-cli-code');
-  const copyBtn = document.querySelector<HTMLButtonElement>('#ai-copy-btn');
-
-  const selectProvider = (id: string) => {
-    const p = AI_PROVIDERS.find((item) => item.id === id) ?? AI_PROVIDERS[0];
-    if (!p) return;
-
-    tabsEl?.querySelectorAll<HTMLButtonElement>('.ai-tab-btn').forEach((btn) => {
-      btn.setAttribute('aria-selected', btn.dataset.provider === p.id ? 'true' : 'false');
-    });
-
-    if (modePill) modePill.textContent = p.mode;
-    if (modelTag) modelTag.textContent = `Default model: ${p.defaultModel}`;
-    if (nameEl) nameEl.textContent = p.name;
-    if (notesEl) notesEl.textContent = p.notes;
-    if (endpointEl) endpointEl.textContent = p.endpoint;
-    if (transportEl) transportEl.textContent = p.transport;
-    if (cliCodeEl) cliCodeEl.textContent = `$ ${p.cliExample}`;
-    if (copyBtn) {
-      copyBtn.dataset.copy = p.cliExample;
-      copyBtn.textContent = 'Copy Command';
-    }
-  };
-
-  if (tabsEl) {
-    tabsEl.innerHTML = AI_PROVIDERS.map(
-      (p, idx) => `
-        <button
-          type="button"
-          role="tab"
-          class="ai-tab-btn"
-          data-provider="${escapeHtml(p.id)}"
-          aria-selected="${idx === 0 ? 'true' : 'false'}"
-        >
-          ${escapeHtml(p.name)}
-        </button>
-      `,
-    ).join('');
-
-    tabsEl.querySelectorAll<HTMLButtonElement>('.ai-tab-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        if (btn.dataset.provider) selectProvider(btn.dataset.provider);
-      });
-    });
-  }
-
-  selectProvider(AI_PROVIDERS[0].id);
-}
-
 function renderCrateArchitecture(): void {
   const mobileWrap = document.getElementById('crate-cards-mobile');
   const tableBody = document.getElementById('crate-table-body');
@@ -486,7 +428,6 @@ function initUxSandbox(): void {
   const fmtBtns = Array.from(
     shell.querySelectorAll<HTMLButtonElement>('[data-ux-fmt]'),
   );
-  const aiPolishBtn = document.getElementById('ux-ai-polish');
   const focusToggleBtn = document.getElementById('ux-focus-toggle');
   const exitFocusBtn = document.getElementById('ux-exit-focus') as HTMLButtonElement | null;
   const acceptBtn = document.getElementById('ux-accept-clause') as HTMLButtonElement | null;
@@ -500,17 +441,6 @@ function initUxSandbox(): void {
 
   let activeIdx = 0;
   let focusMode = false;
-  const polishedAlts: [string, string][] = [
-    [
-      'sub-millisecond native TrueType sheets',
-      'zero-jitter 120Hz subpixel TrueType pages',
-    ],
-    [
-      'every AI prompt strictly air-gapped on localhost',
-      '100% sovereign inference locked to 127.0.0.1',
-    ],
-  ];
-  const toggleIdx = [0, 0];
 
   const syncToolbarState = () => {
     const active = phraseBtns[activeIdx];
@@ -555,20 +485,6 @@ function initUxSandbox(): void {
         toastEl.textContent = `Applied ${fmt?.toUpperCase()} strictly to selected substring (Paragraph::transform_range)`;
       }
     });
-  });
-
-  aiPolishBtn?.addEventListener('click', () => {
-    const active = phraseBtns[activeIdx];
-    if (!active) return;
-    toggleIdx[activeIdx] = toggleIdx[activeIdx] === 0 ? 1 : 0;
-    const pair = polishedAlts[activeIdx];
-    if (pair) {
-      active.textContent = pair[toggleIdx[activeIdx]];
-    }
-    if (toastEl) {
-      toastEl.textContent =
-        'Polished selected substring via local nour-code / Ollama (0 cloud bytes)';
-    }
   });
 
   const setFocus = (next: boolean) => {
@@ -1095,7 +1011,6 @@ function bootstrap(): void {
   renderEnterpriseMatrix();
   const selectSpecimen = initStudioSwitchboard();
   renderCraftPillars();
-  initAiProviderConsole();
   renderCrateArchitecture();
   renderCliAndScope();
   initCopyButtons();

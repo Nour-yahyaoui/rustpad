@@ -139,9 +139,9 @@ fn build_welcome_guide() -> Document {
         TableCell::plain("Ctrl+Shift+E"),
     ];
     table.rows[4] = vec![
-        TableCell::plain("Air-Gapped AI + DLP Policy"),
-        TableCell::plain("Selection AI Polish via Ollama / nour-code + MDM policy.json cloud lockout"),
-        TableCell::plain("Ctrl+J / policy"),
+        TableCell::plain("Inline Math & DLP Policy"),
+        TableCell::plain("83+ inline math formulas (/math, Alt+=) + offline MDM policy.json governance"),
+        TableCell::plain("Ctrl+Shift+L"),
     ];
 
     Document {
@@ -157,7 +157,7 @@ fn build_welcome_guide() -> Document {
             )),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Subtitle,
-                "v3.0 Lossless OOXML Intelligence · Native Dark Mode · 60–120Hz UX · Zero Dependencies",
+                "v3.0 Lossless OOXML Intelligence · Inline Math Library · Native Dark Mode · Zero Dependencies",
             )),
             Block::Paragraph(intro),
             Block::Paragraph(Paragraph::new(
@@ -166,7 +166,7 @@ fn build_welcome_guide() -> Document {
             )),
             bullet("Lossless OpenXML (.docx) passthrough preserves corporate themes, customXml schemas, Track Changes (<w:ins>/<w:del>), and threaded review comments."),
             bullet("Forensic PDF sanitization strips underlying glyph streams inside redaction bounds, exports archival PDF/A-2b, and embeds verifiable SHA-256 document seals."),
-            bullet("IT MDM policy.json governance locks AI tasks strictly to on-prem / localhost endpoints (Ollama, nour-code, vLLM) with hash-chained audit logging."),
+            bullet("IT MDM policy.json governance enforces strict offline workstation compliance with SHA-256 hash-chained audit logging and zero external network egress."),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Heading2,
                 "2. Subsystem Capability Matrix",
@@ -178,7 +178,7 @@ fn build_welcome_guide() -> Document {
             )),
             checklist("Toggle Track Changes (Ctrl+Shift+E) to inspect live legal redline insertions & deletions", true),
             checklist("Click inside any table cell to wrap multi-line text or drag column dividers", true),
-            checklist("Open the AI Dock (Ctrl+J) or Governance Policy inspector (Ctrl+K -> Policy)", false),
+            checklist("Open the Inline Math Library (Ctrl+Shift+L / Alt+=) or Governance Policy inspector (Ctrl+K -> Policy)", false),
         ],
         comments: vec![DocComment {
             id: 1,
@@ -245,7 +245,7 @@ fn build_enterprise_contract() -> Document {
                 date_iso: "2026-10-27T11:42:00Z".into(),
             },
         ),
-        TextSpan::plain(" with external public cloud AI endpoints disabled via MDM policy.json."),
+        TextSpan::plain(" with zero external telemetry or third-party network egress permitted under MDM policy.json."),
     ];
 
     let mut sla_table = TableBlock::new(4, 3);
@@ -265,8 +265,8 @@ fn build_enterprise_contract() -> Document {
         TableCell::plain("Forensic Sanitize Report"),
     ];
     sla_table.rows[3] = vec![
-        TableCell::plain("AI Data Loss Prevention"),
-        TableCell::plain("Hard-locked to local Ollama / vLLM endpoints"),
+        TableCell::plain("Data Loss Prevention"),
+        TableCell::plain("100% offline air-gapped workstation operation"),
         TableCell::plain("SHA-256 Chained Audit Log"),
     ];
 
@@ -300,7 +300,7 @@ fn build_enterprise_contract() -> Document {
             Block::Paragraph(clause_payment),
             Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Heading1,
-                "3. AI Data Loss Prevention & Auditability",
+                "3. Data Loss Prevention & Auditability",
             )),
             Block::Paragraph(clause_dlp),
             Block::Table(sla_table),
@@ -319,7 +319,7 @@ fn build_enterprise_contract() -> Document {
                 block_index: 7,
                 author: "CISO Office".into(),
                 date_iso: "2026-10-27T11:44:00Z".into(),
-                text: "Confirmed `allow_cloud_ai: false` in enterprise policy.json blocks external egress.".into(),
+                text: "Confirmed `air_gapped_mode: true` in enterprise policy.json enforces 100% offline execution.".into(),
                 resolved: false,
             },
         ],
@@ -372,7 +372,7 @@ fn build_modern_resume() -> Document {
                 "RustPad v2.0 — Enterprise Offline Word & PDF Desktop Suite",
             )),
             bullet("Architected a 9-crate zero-dependency Rust workspace for lossless OpenXML (.docx) redlining and forensic PDF (.pdf) sanitization."),
-            bullet("Engineered MDM DLP policy governance, SHA-256 document sealing, and local/cloud AI orchestration."),
+            bullet("Engineered MDM DLP policy governance, SHA-256 document sealing, and inline mathematical & code authoring tools."),
         ],
         comments: Vec::new(),
         passthrough_parts: BTreeMap::new(),
