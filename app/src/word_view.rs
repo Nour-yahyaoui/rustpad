@@ -7,7 +7,7 @@ use crate::state::{
 };
 use doc_model::{
     probe_media_dimensions, Alignment, Block, FontFamily, ListKind, Paragraph, ParagraphStyle,
-    RevisionKind, SharedBytes,
+    RevisionKind, RgbColor, SharedBytes, HIGHLIGHT_PALETTE,
 };
 use power_tools::SpellChecker;
 use rustpad_render::{
@@ -32,6 +32,8 @@ pub fn paint_word_tab(
     ui_scale: f32,
     sidebar_open: bool,
     sidebar_w: f32,
+    active_highlight_color: RgbColor,
+    open_dropdown: Option<ToolbarDropdown>,
     area: Rect,
     w: &mut WordTabState,
 ) {
@@ -85,6 +87,8 @@ pub fn paint_word_tab(
                 mouse_y,
                 s,
                 sidebar_open,
+                active_highlight_color,
+                open_dropdown,
                 ribbon_rect,
                 w,
             );
@@ -550,8 +554,8 @@ fn paint_floating_selection_bar(
     sel_r: Rect,
     w: &WordTabState,
 ) {
-    let bar_h = (34.0 * s).round();
-    let pad_x = (6.0 * s).round();
+    let bar_h = (36.0 * s).round();
+    let pad_x = (7.0 * s).round();
     let gap = (3.0 * s).round();
 
     let probe_style = match w.ordered_selection() {
@@ -562,28 +566,57 @@ fn paint_floating_selection_bar(
         None => w.pending_typing_style.clone().unwrap_or_default(),
     };
 
-    let items: [(&str, FontSlot, bool, CommandId); 6] = [
+    let left_items: [(&str, FontSlot, bool, CommandId); 3] = [
         ("B", FontSlot::SansBold, probe_style.bold, CommandId::ToggleBold),
         ("I", FontSlot::SerifItalic, probe_style.italic, CommandId::ToggleItalic),
         ("U", FontSlot::SansBold, probe_style.underline, CommandId::ToggleUnderline),
-        (
-            "Highlight",
-            FontSlot::SansRegular,
-            probe_style.highlight.is_some(),
-            CommandId::ToggleHighlight,
-        ),
+    ];
+    let right_items: [(&str, FontSlot, bool, CommandId); 2] = [
         ("Ink", FontSlot::SansRegular, false, CommandId::CycleTextColor),
         ("+Note", FontSlot::SansRegular, false, CommandId::AddReviewComment),
     ];
 
+    // 5 instant 1-click pastel swatches + `▾` full palette trigger (+ `✕` clear when highlighted)
+    let quick_swatches = &HIGHLIGHT_PALETTE[..5];
+    let sw_btn_w = (20.0 * s).round();
+    let more_w = (19.0 * s).round();
+    let clear_w = if probe_style.highlight.is_some() {
+        (20.0 * s).round()
+    } else {
+        0.0
+    };
+    let sep_space = (9.0 * s).round();
+
+    let mut left_ws = [0.0f32; 3];
+    let mut right_ws = [0.0f32; 2];
     let mut total_w = pad_x * 2.0;
-    let mut btn_ws = [0.0f32; 6];
-    for (i, (lbl, slot, _, _)) in items.iter().enumerate() {
+
+    for (i, (lbl, slot, _, _)) in left_items.iter().enumerate() {
         let tw = fonts.measure_text(*slot, lbl, 11.2 * s);
-        let bw = (tw + 14.0 * s).max(26.0 * s).round();
-        btn_ws[i] = bw;
+        let bw = (tw + 13.0 * s).max(25.0 * s).round();
+        left_ws[i] = bw;
         total_w += bw;
-        if i + 1 < items.len() {
+        if i + 1 < left_items.len() {
+            total_w += gap;
+        }
+    }
+
+    total_w += sep_space;
+    total_w += (quick_swatches.len() as f32) * sw_btn_w
+        + ((quick_swatches.len() - 1) as f32) * gap
+        + gap
+        + more_w;
+    if clear_w > 0.0 {
+        total_w += gap + clear_w;
+    }
+    total_w += sep_space;
+
+    for (i, (lbl, slot, _, _)) in right_items.iter().enumerate() {
+        let tw = fonts.measure_text(*slot, lbl, 11.2 * s);
+        let bw = (tw + 13.0 * s).max(26.0 * s).round();
+        right_ws[i] = bw;
+        total_w += bw;
+        if i + 1 < right_items.len() {
             total_w += gap;
         }
     }
@@ -609,8 +642,8 @@ fn paint_floating_selection_bar(
     let by = (pop.y + (bar_h - bh) * 0.5).round();
     let mut bx = pop.x + pad_x;
 
-    for (i, (lbl, slot, active, cmd)) in items.iter().enumerate() {
-        let bw = btn_ws[i];
+    for (i, (lbl, slot, active, cmd)) in left_items.iter().enumerate() {
+        let bw = left_ws[i];
         let br = Rect::new(bx, by, bw, bh);
         let hov = br.contains(mouse_x, mouse_y);
         if *active || hov {
@@ -626,6 +659,139 @@ fn paint_floating_selection_bar(
             if *active {
                 surface.stroke_rounded_rect(br, 4.5, 1.0, StudioTheme::word_accent());
             }
+        }
+        let fg = if *active {
+            StudioTheme::word_accent()
+        } else {
+            StudioTheme::ink()
+        };
+        let tw = fonts.measure_text(*slot, lbl, 11.2 * s);
+        surface.draw_text(
+            fonts,
+            *slot,
+            11.2 * s,
+            br.x + (bw - tw) * 0.5,
+            br.y + bh * 0.70,
+            fg,
+            lbl,
+        );
+        hit_regions.push(HitRegion::button(br, UiAction::ExecCommand(*cmd)));
+        bx += bw + gap;
+    }
+
+    // Divider 1
+    let div1_x = (bx - gap + sep_space * 0.5).round();
+    surface.fill_rect(
+        Rect::new(div1_x, pop.y + 8.0 * s, 1.0, bar_h - 16.0 * s),
+        StudioTheme::border(),
+    );
+    bx = bx - gap + sep_space;
+
+    // 5 colorful marker highlight swatch pills
+    for sw in quick_swatches {
+        let br = Rect::new(bx, by, sw_btn_w, bh);
+        let hov = br.contains(mouse_x, mouse_y);
+        let is_cur = probe_style.highlight == Some(sw.color);
+        if hov || is_cur {
+            surface.fill_rounded_rect(
+                br,
+                5.0,
+                if is_cur {
+                    StudioTheme::word_soft()
+                } else {
+                    StudioTheme::hover()
+                },
+            );
+        }
+        let chip_sz = (13.0 * s).round();
+        let chip = Rect::new(
+            (br.x + (sw_btn_w - chip_sz) * 0.5).round(),
+            (br.y + (bh - chip_sz) * 0.5).round(),
+            chip_sz,
+            chip_sz,
+        );
+        let sw_col = Color::rgb(sw.color.r, sw.color.g, sw.color.b);
+        surface.fill_rounded_rect(chip, 3.8, sw_col);
+        surface.stroke_rounded_rect(
+            chip,
+            3.8,
+            if is_cur { 1.5 } else { 1.0 },
+            if is_cur {
+                StudioTheme::word_accent()
+            } else {
+                Color::rgba(15, 23, 42, 72)
+            },
+        );
+        // Clicking an already-applied swatch toggles it off; otherwise applies that exact color!
+        let next_col = if is_cur { None } else { Some(sw.color) };
+        hit_regions.push(HitRegion::button(br, UiAction::SelectHighlightColor(next_col)));
+        bx += sw_btn_w + gap;
+    }
+
+    // `▾` More Swatches button (opens full 8-color HighlightPicker anchored below the selection bar)
+    {
+        let br = Rect::new(bx, by, more_w, bh);
+        let hov = br.contains(mouse_x, mouse_y);
+        if hov {
+            surface.fill_rounded_rect(br, 4.5, StudioTheme::hover());
+        }
+        surface.draw_icon(
+            UiIcon::ChevronDown,
+            br.x + more_w * 0.5,
+            br.y + bh * 0.52,
+            8.5 * s,
+            StudioTheme::ink_sub(),
+        );
+        hit_regions.push(HitRegion::button(
+            br,
+            UiAction::ToggleDropdown(ToolbarDropdown::HighlightPicker {
+                anchor_x: (br.x - 90.0 * s).max(16.0) as i32,
+                anchor_y: (pop.y + pop.h + 2.0) as i32,
+            }),
+        ));
+        bx += more_w + gap;
+    }
+
+    // `×` Clear Highlight button (visible whenever selection has a highlight)
+    if clear_w > 0.0 {
+        let br = Rect::new(bx, by, clear_w, bh);
+        let hov = br.contains(mouse_x, mouse_y);
+        if hov {
+            surface.fill_rounded_rect(br, 4.5, StudioTheme::hover());
+        }
+        surface.draw_icon(
+            UiIcon::Close,
+            br.x + clear_w * 0.5,
+            br.y + bh * 0.50,
+            8.5 * s,
+            StudioTheme::ink_sub(),
+        );
+        hit_regions.push(HitRegion::button(br, UiAction::SelectHighlightColor(None)));
+        bx += clear_w + gap;
+    }
+
+    // Divider 2
+    let div2_x = (bx - gap + sep_space * 0.5).round();
+    surface.fill_rect(
+        Rect::new(div2_x, pop.y + 8.0 * s, 1.0, bar_h - 16.0 * s),
+        StudioTheme::border(),
+    );
+    bx = bx - gap + sep_space;
+
+    for (i, (lbl, slot, active, cmd)) in right_items.iter().enumerate() {
+        let bw = right_ws[i];
+        let br = Rect::new(bx, by, bw, bh);
+        let hov = br.contains(mouse_x, mouse_y);
+        if *active || hov {
+            surface.fill_rounded_rect(
+                br,
+                4.5,
+                if *active {
+                    StudioTheme::word_soft()
+                } else {
+                    StudioTheme::hover()
+                },
+            );
         }
         let fg = if *active {
             StudioTheme::word_accent()
@@ -2268,7 +2434,7 @@ fn paint_paragraph_block(
                     draw_x,
                     baseline_y,
                     StudioTheme::sheet_ink_muted(),
-                    "Start writing on this A4 sheet, double-click/drag to style words, or press Ctrl+J for AI…",
+                    "Start writing on this A4 sheet, type / for Math (/sum, /quad), or select words to highlight…",
                 );
             }
 
@@ -2646,6 +2812,8 @@ fn paint_word_ribbon(
     mouse_y: f32,
     s: f32,
     sidebar_open: bool,
+    active_highlight_color: RgbColor,
+    open_dropdown: Option<ToolbarDropdown>,
     bar: Rect,
     w: &WordTabState,
 ) {
@@ -2845,7 +3013,117 @@ fn paint_word_ribbon(
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "I", FontSlot::SerifItalic, is_italic, false, CommandId::ToggleItalic);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "U", FontSlot::SansRegular, is_under, false, CommandId::ToggleUnderline);
     bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Ink", FontSlot::SansRegular, false, false, CommandId::CycleTextColor);
-    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Mark", FontSlot::SansRegular, has_hl, false, CommandId::ToggleHighlight);
+
+    // Split `Mark | ▾` button with live active marker color indicator bar
+    {
+        let mark_lbl = "Mark";
+        let tw = fonts.measure_text(FontSlot::SansRegular, mark_lbl, 11.5 * s);
+        let left_w = (tw + 14.0 * s).round();
+        let right_w = (18.0 * s).round();
+        let total_mark_w = left_w + right_w;
+        if bx + total_mark_w <= max_x {
+            let group_r = Rect::new(bx, by, total_mark_w, bh);
+            let left_r = Rect::new(bx, by, left_w, bh);
+            let right_r = Rect::new(bx + left_w, by, right_w, bh);
+            let picker_open = matches!(open_dropdown, Some(ToolbarDropdown::HighlightPicker { .. }));
+            let hov_l = left_r.contains(mouse_x, mouse_y);
+            let hov_r = right_r.contains(mouse_x, mouse_y);
+
+            surface.fill_rounded_rect(group_r, 5.0, StudioTheme::paper());
+            if has_hl || hov_l {
+                surface.fill_rounded_rect(
+                    left_r,
+                    5.0,
+                    if has_hl {
+                        StudioTheme::word_soft()
+                    } else {
+                        StudioTheme::hover()
+                    },
+                );
+            }
+            if picker_open || hov_r {
+                surface.fill_rounded_rect(
+                    right_r,
+                    5.0,
+                    if picker_open {
+                        StudioTheme::word_soft()
+                    } else {
+                        StudioTheme::hover()
+                    },
+                );
+            }
+            surface.stroke_rounded_rect(
+                group_r,
+                5.0,
+                1.0,
+                if has_hl || picker_open {
+                    StudioTheme::word_accent()
+                } else {
+                    StudioTheme::border()
+                },
+            );
+            surface.fill_rect(
+                Rect::new(bx + left_w, by + 5.0 * s, 1.0, bh - 10.0 * s),
+                StudioTheme::border(),
+            );
+
+            let fg = if has_hl {
+                StudioTheme::word_accent()
+            } else {
+                StudioTheme::ink()
+            };
+            surface.draw_text(
+                fonts,
+                FontSlot::SansRegular,
+                11.5 * s,
+                left_r.x + (left_w - tw) * 0.5,
+                left_r.y + bh * 0.59,
+                fg,
+                mark_lbl,
+            );
+
+            // Live marker swatch bar beneath "Mark"
+            let bar_col = active_sp_style.highlight.unwrap_or(active_highlight_color);
+            let bar_h_px = (3.5 * s).round().max(3.0);
+            let swatch_bar = Rect::new(
+                left_r.x + 6.0 * s,
+                left_r.y + bh - bar_h_px - 3.0 * s,
+                left_w - 12.0 * s,
+                bar_h_px,
+            );
+            surface.fill_rounded_rect(
+                swatch_bar,
+                1.8,
+                Color::rgb(bar_col.r, bar_col.g, bar_col.b),
+            );
+            surface.stroke_rounded_rect(swatch_bar, 1.8, 0.8, Color::rgba(15, 23, 42, 55));
+
+            surface.draw_icon(
+                UiIcon::ChevronDown,
+                right_r.x + right_w * 0.5,
+                right_r.y + bh * 0.52,
+                8.5 * s,
+                if picker_open {
+                    StudioTheme::word_accent()
+                } else {
+                    StudioTheme::ink_muted()
+                },
+            );
+
+            hit_regions.push(HitRegion::button(
+                left_r,
+                UiAction::ExecCommand(CommandId::ToggleHighlight),
+            ));
+            hit_regions.push(HitRegion::button(
+                right_r,
+                UiAction::ToggleDropdown(ToolbarDropdown::HighlightPicker {
+                    anchor_x: group_r.x as i32,
+                    anchor_y: (bar.y + bar.h) as i32,
+                }),
+            ));
+            bx += total_mark_w + 4.0 * s;
+        }
+    }
 
     bx = draw_divider(surface, bx, bar.y, bar.h, s);
 

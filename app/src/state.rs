@@ -3,11 +3,11 @@
 
 use crate::commands::{filter_commands, CommandId};
 use doc_model::{
-    filter_math_templates, find_math_template, next_word_char_idx, parse_slash_math_command,
-    prev_word_char_idx, word_range_at_char, Alignment, Block, Document, DocumentStats, FontFamily,
-    ImageBlock, ListKind, MathSlashAction, OutlineItem, PaperSize, Paragraph, ParagraphStyle,
-    RevisionKind, RevisionMeta, RgbColor, SectionBreakKind, SharedBytes, SpanStyle, TableBlock,
-    TablePreset, TableTheme, TemplateKind, TextSpan, UndoHistory,
+    filter_math_templates, find_math_template, highlight_color_label, next_word_char_idx,
+    parse_slash_math_command, prev_word_char_idx, word_range_at_char, Alignment, Block, Document,
+    DocumentStats, FontFamily, ImageBlock, ListKind, MathSlashAction, OutlineItem, PaperSize,
+    Paragraph, ParagraphStyle, RevisionKind, RevisionMeta, RgbColor, SectionBreakKind, SharedBytes,
+    SpanStyle, TableBlock, TablePreset, TableTheme, TemplateKind, TextSpan, UndoHistory,
 };
 use docx_io::{
     load_docx_file, load_docx_shared_with_progress, repair_docx_bytes, save_docx_bytes,
@@ -629,6 +629,16 @@ impl WordTabState {
         self.pending_typing_style = Some(st.clone());
         Some(st)
     }
+
+    pub fn active_typing_style_for(&self, idx: usize) -> SpanStyle {
+        if let Some(st) = &self.pending_typing_style {
+            return st.clone();
+        }
+        match self.doc.blocks.get(idx) {
+            Some(Block::Paragraph(p)) => p.style_at_char(self.cursor_char),
+            _ => SpanStyle::default(),
+        }
+    }
 }
 
 pub struct PdfTabState {
@@ -751,6 +761,7 @@ pub enum ActiveModal {
 pub enum ToolbarDropdown {
     ParagraphStyle { anchor_x: i32, anchor_y: i32 },
     FontFamily { anchor_x: i32, anchor_y: i32 },
+    HighlightPicker { anchor_x: i32, anchor_y: i32 },
     TableCreator {
         anchor_x: i32,
         anchor_y: i32,
@@ -765,6 +776,7 @@ impl ToolbarDropdown {
             (self, other),
             (Self::ParagraphStyle { .. }, Self::ParagraphStyle { .. })
                 | (Self::FontFamily { .. }, Self::FontFamily { .. })
+                | (Self::HighlightPicker { .. }, Self::HighlightPicker { .. })
                 | (Self::TableCreator { .. }, Self::TableCreator { .. })
         )
     }
@@ -816,6 +828,7 @@ pub enum UiAction {
     CloseDropdown,
     SelectParagraphStyle(ParagraphStyle),
     SelectFontFamily(FontFamily),
+    SelectHighlightColor(Option<RgbColor>),
     InsertTableCustom { rows: usize, cols: usize },
     InsertTablePreset(TablePreset),
     CreateFromTemplate(TemplateKind),
@@ -958,6 +971,7 @@ pub struct RustPadApp {
     pub pdf_left_w: f32,
     pub pdf_right_open: bool,
     pub pdf_right_w: f32,
+    pub active_highlight_color: RgbColor,
     pub open_dropdown: Option<ToolbarDropdown>,
     pub active_drag: DragInteraction,
     pub modal: Option<ActiveModal>,
@@ -1016,6 +1030,7 @@ impl RustPadApp {
             pdf_left_w: 196.0,
             pdf_right_open: true,
             pdf_right_w: 236.0,
+            active_highlight_color: RgbColor::AMBER_HIGHLIGHT,
             open_dropdown: None,
             active_drag: DragInteraction::None,
             modal: None,
@@ -1864,6 +1879,47 @@ impl RustPadApp {
                     self.status_toast = "Open a Word (.docx) tab to edit figure captions".into();
                 }
             }
+            CommandId::OpenHighlightPicker => {
+                self.ensure_active_word_tab();
+                let ax = if self.mouse_x > 40.0 {
+                    (self.mouse_x as i32 - 80).max(24)
+                } else {
+                    520
+                };
+                let ay = if self.focus_mode { 28 } else { 88 };
+                self.open_dropdown = Some(ToolbarDropdown::HighlightPicker {
+                    anchor_x: ax,
+                    anchor_y: ay,
+                });
+                self.status_toast =
+                    "Choose a marker highlight swatch (8 colors) or clear highlight".into();
+            }
+            CommandId::ClearHighlight => {
+                self.apply_highlight_color(None);
+            }
+            CommandId::ToggleHighlight => {
+                let active_col = self.active_highlight_color;
+                let cur_hl = match self.tabs.get(self.active_tab) {
+                    Some(StudioTab::Word(w)) => {
+                        if let Some(((b0, c0), _)) = w.ordered_selection() {
+                            w.doc.blocks.get(b0).and_then(|blk| match blk {
+                                Block::Paragraph(p) => p.style_at_char(c0 + 1).highlight,
+                                _ => None,
+                            })
+                        } else {
+                            let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+                            w.active_typing_style_for(idx).highlight
+                        }
+                    }
+                    _ => None,
+                };
+                let next = if cur_hl == Some(active_col) {
+                    None
+                } else {
+                    Some(active_col)
+                };
+                self.apply_highlight_color(next);
+            }
             CommandId::ToggleBold
             | CommandId::ToggleItalic
             | CommandId::ToggleUnderline
@@ -1873,7 +1929,6 @@ impl RustPadApp {
             | CommandId::FontSizeUp
             | CommandId::FontSizeDown
             | CommandId::CycleTextColor
-            | CommandId::ToggleHighlight
             | CommandId::AlignLeft
             | CommandId::AlignCenter
             | CommandId::AlignRight
@@ -2409,6 +2464,97 @@ impl RustPadApp {
             {
                 self.status_toast = format!("Font Family: {}", fam.label());
             }
+        }
+    }
+
+    pub fn apply_highlight_color(&mut self, color: Option<RgbColor>) {
+        if let Some(c) = color {
+            self.active_highlight_color = c;
+        }
+        match self.tabs.get_mut(self.active_tab) {
+            Some(StudioTab::Word(w)) => {
+                if let Some(((b0, c0), (b1, c1))) = w.ordered_selection() {
+                    w.history.record(&w.doc);
+                    w.dirty = true;
+                    for bi in b0..=b1.min(w.doc.blocks.len().saturating_sub(1)) {
+                        if let Some(Block::Paragraph(p)) = w.doc.blocks.get_mut(bi) {
+                            let len = p.plain_text().chars().count();
+                            let s = if bi == b0 { c0.min(len) } else { 0 };
+                            let e = if bi == b1 { c1.min(len) } else { len };
+                            p.transform_range(s, e, |st| st.highlight = color);
+                        }
+                    }
+                    self.status_toast = match color {
+                        Some(c) => format!(
+                            "Highlighted selection in {} (#{})",
+                            highlight_color_label(c),
+                            c.to_hex()
+                        ),
+                        None => "Cleared marker highlight from selection".into(),
+                    };
+                    return;
+                }
+
+                let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+                if color.is_none() {
+                    // When clearing with no selection, erase highlight on the word under the cursor if highlighted
+                    let mut cleared_word = false;
+                    if let Some(Block::Paragraph(p)) = w.doc.blocks.get(idx) {
+                        let plain = p.plain_text();
+                        let len = plain.chars().count();
+                        let has_adj_hl = p.style_at_char(w.cursor_char).highlight.is_some()
+                            || (w.cursor_char < len
+                                && p.style_at_char(w.cursor_char + 1).highlight.is_some());
+                        if has_adj_hl {
+                            let probe = if w.cursor_char < len
+                                && p.style_at_char(w.cursor_char + 1).highlight.is_some()
+                            {
+                                w.cursor_char
+                            } else {
+                                w.cursor_char.saturating_sub(1)
+                            };
+                            let (ws, we) = word_range_at_char(&plain, probe);
+                            if we > ws {
+                                w.history.record(&w.doc);
+                                if let Some(Block::Paragraph(pm)) = w.doc.blocks.get_mut(idx) {
+                                    pm.transform_range(ws, we, |st| st.highlight = None);
+                                }
+                                w.dirty = true;
+                                cleared_word = true;
+                            }
+                        }
+                    }
+                    let _ = w.apply_cursor_typing_style(idx, |st| st.highlight = None);
+                    self.status_toast = if cleared_word {
+                        "Cleared marker highlight from word".into()
+                    } else {
+                        "Marker highlight turned off".into()
+                    };
+                    return;
+                }
+
+                let _ = w.apply_cursor_typing_style(idx, |st| st.highlight = color);
+                if let Some(c) = color {
+                    self.status_toast = format!(
+                        "Marker pen active · {} (#{}) — type or select text",
+                        highlight_color_label(c),
+                        c.to_hex()
+                    );
+                }
+            }
+            Some(StudioTab::Pdf(p)) => {
+                if let Some(c) = color {
+                    p.tool = PdfTool::Highlight;
+                    self.status_toast = format!(
+                        "PDF Highlight tool · {} — click page to mark",
+                        highlight_color_label(c)
+                    );
+                } else {
+                    p.tool = PdfTool::SelectEdit;
+                    self.status_toast = "Switched PDF tool to Select / Edit".into();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -3003,6 +3149,10 @@ impl RustPadApp {
                 self.open_dropdown = None;
                 self.apply_font_family(fam);
             }
+            UiAction::SelectHighlightColor(color) => {
+                self.open_dropdown = None;
+                self.apply_highlight_color(color);
+            }
             UiAction::InsertTableCustom { rows, cols } => {
                 self.open_dropdown = None;
                 let r = rows.clamp(1, 24);
@@ -3354,15 +3504,19 @@ impl RustPadApp {
                                     "Inserted PDF Text Box — type to customize".into();
                             }
                             PdfTool::Highlight => {
+                                let hl_col = self.active_highlight_color;
                                 page.annotations.push(PdfAnnotation::Highlight {
                                     x: pdf_x,
                                     y: (pdf_y - 4.0).max(8.0),
                                     w: 175.0,
                                     h: 18.0,
-                                    color: RgbColor::AMBER_HIGHLIGHT,
+                                    color: hl_col,
                                 });
                                 p.dirty = true;
-                                self.status_toast = "Added PDF highlight annotation".into();
+                                self.status_toast = format!(
+                                    "Added PDF highlight annotation ({})",
+                                    highlight_color_label(hl_col)
+                                );
                             }
                             PdfTool::StickyNote => {
                                 page.annotations.push(PdfAnnotation::StickyNote {
@@ -4168,6 +4322,10 @@ impl RustPadApp {
                 }
                 Key::Char('l') if mods.shift => {
                     self.execute_command(CommandId::OpenMathLibrary);
+                    return;
+                }
+                Key::Char('h') if mods.shift => {
+                    self.execute_command(CommandId::ToggleHighlight);
                     return;
                 }
                 Key::Char('j') if mods.shift => {
@@ -5902,6 +6060,111 @@ mod tests {
             assert!(!last_span.style.italic);
         } else {
             panic!("expected Word tab");
+        }
+    }
+
+    #[test]
+    fn colorful_marker_highlights_palette_selection_and_docx_html_roundtrip() {
+        assert_eq!(doc_model::HIGHLIGHT_PALETTE.len(), 8);
+        for sw in &doc_model::HIGHLIGHT_PALETTE {
+            assert_eq!(highlight_color_label(sw.color), sw.label);
+        }
+
+        let mut app = RustPadApp::new();
+        app.execute_command(CommandId::NewWordBlank);
+
+        for ch in "alpha beta gamma".chars() {
+            app.handle_text_input(ch);
+        }
+
+        // 1. Highlight "alpha" (0..5) in Mint Emerald
+        if let Some(StudioTab::Word(w)) = app.tabs.get_mut(app.active_tab) {
+            w.selection_anchor = Some((0, 0));
+            w.cursor_block = 0;
+            w.cursor_char = 5;
+        }
+        app.dispatch_ui_action(UiAction::SelectHighlightColor(Some(
+            RgbColor::MINT_HIGHLIGHT,
+        )));
+        assert_eq!(app.active_highlight_color, RgbColor::MINT_HIGHLIGHT);
+
+        // 2. Highlight "beta" (6..10) in Soft Lavender
+        if let Some(StudioTab::Word(w)) = app.tabs.get_mut(app.active_tab) {
+            w.selection_anchor = Some((0, 6));
+            w.cursor_block = 0;
+            w.cursor_char = 10;
+        }
+        app.dispatch_ui_action(UiAction::SelectHighlightColor(Some(
+            RgbColor::LAVENDER_HIGHLIGHT,
+        )));
+        assert_eq!(app.active_highlight_color, RgbColor::LAVENDER_HIGHLIGHT);
+
+        // 3. Highlight "gamma" (11..16) in Warm Peach
+        if let Some(StudioTab::Word(w)) = app.tabs.get_mut(app.active_tab) {
+            w.selection_anchor = Some((0, 11));
+            w.cursor_block = 0;
+            w.cursor_char = 16;
+        }
+        app.dispatch_ui_action(UiAction::SelectHighlightColor(Some(
+            RgbColor::PEACH_HIGHLIGHT,
+        )));
+
+        // Paint full frame with active selection + open HighlightPicker to exercise all new UI controls
+        app.execute_command(CommandId::OpenHighlightPicker);
+        assert!(matches!(
+            app.open_dropdown,
+            Some(ToolbarDropdown::HighlightPicker { .. })
+        ));
+        let mut surface =
+            rustpad_render::Surface::new(1280, 800, rustpad_render::Color::rgb(248, 250, 252));
+        crate::ui_paint::render_app(&mut app, &mut surface);
+
+        // 4. Verify lossless .docx 24-bit RGB round-trip + HTML5 <mark> export
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            let docx_bytes = save_docx_bytes(&w.doc);
+            let reloaded = docx_io::load_docx_bytes(&docx_bytes).expect("reload docx");
+            let Block::Paragraph(rp) = &reloaded.blocks[0] else {
+                panic!("expected paragraph");
+            };
+            assert_eq!(rp.style_at_char(3).highlight, Some(RgbColor::MINT_HIGHLIGHT));
+            assert_eq!(rp.style_at_char(6).highlight, None);
+            assert_eq!(
+                rp.style_at_char(8).highlight,
+                Some(RgbColor::LAVENDER_HIGHLIGHT)
+            );
+            assert_eq!(rp.style_at_char(11).highlight, None);
+            assert_eq!(
+                rp.style_at_char(14).highlight,
+                Some(RgbColor::PEACH_HIGHLIGHT)
+            );
+
+            let html = word_to_html(&w.doc, false);
+            assert!(html.contains(&format!("background-color:#{}", RgbColor::LAVENDER_HIGHLIGHT.to_hex())));
+            assert!(html.contains(&format!("background-color:#{}", RgbColor::PEACH_HIGHLIGHT.to_hex())));
+        } else {
+            panic!("expected Word tab");
+        }
+
+        // 5. Place cursor inside "alpha" with NO selection and invoke ClearHighlight
+        if let Some(StudioTab::Word(w)) = app.tabs.get_mut(app.active_tab) {
+            w.selection_anchor = None;
+            w.cursor_block = 0;
+            w.cursor_char = 2;
+        }
+        app.execute_command(CommandId::ClearHighlight);
+        if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
+            let Block::Paragraph(p) = &w.doc.blocks[0] else {
+                panic!("expected paragraph");
+            };
+            assert_eq!(p.style_at_char(2).highlight, None);
+            assert_eq!(
+                p.style_at_char(8).highlight,
+                Some(RgbColor::LAVENDER_HIGHLIGHT)
+            );
+            assert_eq!(
+                p.style_at_char(13).highlight,
+                Some(RgbColor::PEACH_HIGHLIGHT)
+            );
         }
     }
 

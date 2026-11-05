@@ -2,6 +2,15 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`) follow our continuous release workflow (`Issue → PR → CI Matrix → GitHub Release`).
 
+## [v3.0.14] - 2026-11-05 — Colorful Marker Highlights (`8` Curated Swatches + Split `Mark | ▾` Ribbon + Floating Selection Dots)
+### Added & Upgraded
+- **Curated 8-Color Marker Highlight Palette (`crates/doc_model/src/lib.rs`)**: Added `LAVENDER_HIGHLIGHT` (`#DDD6FE`), `PEACH_HIGHLIGHT` (`#FED7AA`), `LIME_HIGHLIGHT` (`#D9F99D`), and `STONE_HIGHLIGHT` (`#E7E5E4`) alongside `AMBER_HIGHLIGHT`, `MINT_HIGHLIGHT`, `SKY_HIGHLIGHT`, and `ROSE_HIGHLIGHT`, exported via `HighlightSwatch`, `HIGHLIGHT_PALETTE`, and `highlight_color_label`.
+- **1-Click Floating Selection Swatch Dots & Split `Mark | ▾` Ribbon Control (`app/src/word_view.rs`, `app/src/ui_paint.rs`, `app/src/state.rs`, `app/src/commands.rs`)**:
+  - Upgraded the Word Ribbon `Mark` button into a split `Mark | ▾` control displaying a live color underline bar (`active_highlight_color`) and opening the **Marker Highlight Palette** popover (`ToolbarDropdown::HighlightPicker`) with `"Aa"` live sample chips, all 8 swatch names, active checkmarks, and `No Highlight (Clear)`.
+  - Upgraded the Floating Contextual Selection Mini-Toolbar with **5 instant 1-click marker color chips** (Sunbeam Yellow, Mint Emerald, Sky Cyan, Coral Rose, Soft Lavender), a `▾` palette button, and a `×` clear button when selected text is highlighted.
+  - Added `Ctrl+Shift+H` (`ToggleHighlight`), `OpenHighlightPicker`, `ClearHighlight` (erasing highlight across a selection or on the word under the caret with full Undo support), and synchronized active swatch colors with PDF Studio's `Highlight` annotation tool.
+- **Lossless `.docx` & HTML5 `<mark>` Export (`crates/docx_io/src/reader.rs`, `crates/power_tools/src/converter.rs`)**: Expanded legacy OOXML `<w:highlight w:val="..."/>` color mapping alongside exact 24-bit `<w:shd w:fill="RRGGBB"/>` serialization, and added semantic `<mark style="background-color:#RRGGBB;...">` rendering in `word_to_html`.
+
 ## [v3.0.13] - 2026-11-05 — Pure Offline Core: Removed All AI Agent Integration & Network Bridges
 ### Removed & Streamlined
 - **Complete AI Agent Removal (`crates/power_tools`, `app/src/*`, `crates/doc_model/src/templates.rs`, Web Showcase)**: Deleted `crates/power_tools/src/ai_agent.rs` (`-1,227` lines), removed all local/cloud AI HTTP/WinHTTP bridges, removed `AiDockState` / `paint_ai_dock` / `ToggleAiDock` (`Ctrl+J`) / `AiRun*` / floating selection `"AI Polish"` / `rustpad ai` CLI subcommand (`-3,150+` lines total), and replaced AI buttons on the Home Launchpad with 1-click **Inline Math Library (`Alt+=` / `Ctrl+Shift+L`)** access.

@@ -534,6 +534,12 @@ pub fn word_to_html(doc: &Document, dark_mode_default: bool) -> String {
                     } else if sp.style.subscript {
                         chunk = format!("<sub>{chunk}</sub>");
                     }
+                    if let Some(hl) = sp.style.highlight {
+                        chunk = format!(
+                            "<mark style=\"background-color:#{};color:#0F172A;padding:0 2px;border-radius:2px;\">{chunk}</mark>",
+                            hl.to_hex()
+                        );
+                    }
                     if let Some(url) = &sp.style.hyperlink {
                         chunk = format!(
                             "<a href=\"{}\" rel=\"noopener noreferrer\">{}</a>",

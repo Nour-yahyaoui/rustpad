@@ -36,8 +36,12 @@ impl RgbColor {
     pub const EMERALD: Self = Self::new(5, 150, 105);
     pub const AMBER_HIGHLIGHT: Self = Self::new(254, 240, 138);
     pub const MINT_HIGHLIGHT: Self = Self::new(187, 247, 208);
-    pub const SKY_HIGHLIGHT: Self = Self::new(191, 219, 254);
+    pub const SKY_HIGHLIGHT: Self = Self::new(186, 230, 253);
     pub const ROSE_HIGHLIGHT: Self = Self::new(254, 205, 211);
+    pub const LAVENDER_HIGHLIGHT: Self = Self::new(221, 214, 254);
+    pub const PEACH_HIGHLIGHT: Self = Self::new(254, 215, 170);
+    pub const LIME_HIGHLIGHT: Self = Self::new(217, 249, 157);
+    pub const STONE_HIGHLIGHT: Self = Self::new(231, 229, 228);
     pub const MUTED_GRAY: Self = Self::new(100, 116, 139);
     pub const TABLE_BORDER: Self = Self::new(210, 205, 196);
     pub const TABLE_HEADER_BG: Self = Self::new(244, 241, 235);
@@ -69,6 +73,66 @@ impl RgbColor {
         let b = u8::from_str_radix(&s[4..6], 16).ok()?;
         Some(Self { r, g, b })
     }
+}
+
+/// Curated pastel marker highlight swatch for Word Studio & PDF annotations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HighlightSwatch {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub color: RgbColor,
+}
+
+pub const HIGHLIGHT_PALETTE: [HighlightSwatch; 8] = [
+    HighlightSwatch {
+        id: "amber",
+        label: "Sunbeam Yellow",
+        color: RgbColor::AMBER_HIGHLIGHT,
+    },
+    HighlightSwatch {
+        id: "mint",
+        label: "Mint Emerald",
+        color: RgbColor::MINT_HIGHLIGHT,
+    },
+    HighlightSwatch {
+        id: "sky",
+        label: "Sky Cyan",
+        color: RgbColor::SKY_HIGHLIGHT,
+    },
+    HighlightSwatch {
+        id: "rose",
+        label: "Coral Rose",
+        color: RgbColor::ROSE_HIGHLIGHT,
+    },
+    HighlightSwatch {
+        id: "lavender",
+        label: "Soft Lavender",
+        color: RgbColor::LAVENDER_HIGHLIGHT,
+    },
+    HighlightSwatch {
+        id: "peach",
+        label: "Warm Peach",
+        color: RgbColor::PEACH_HIGHLIGHT,
+    },
+    HighlightSwatch {
+        id: "lime",
+        label: "Spring Lime",
+        color: RgbColor::LIME_HIGHLIGHT,
+    },
+    HighlightSwatch {
+        id: "stone",
+        label: "Warm Stone",
+        color: RgbColor::STONE_HIGHLIGHT,
+    },
+];
+
+pub fn highlight_color_label(color: RgbColor) -> &'static str {
+    for sw in &HIGHLIGHT_PALETTE {
+        if sw.color == color {
+            return sw.label;
+        }
+    }
+    "Custom Marker"
 }
 
 /// Enterprise data-governance classification banner & metadata level.
