@@ -1,4 +1,4 @@
-# RustPad Studio `v3.0.13` — Native Dark Mode, Inline Math Library & Pure Offline Word/PDF Suite
+# RustPad Studio `v3.0.13` — Native, Inline Math Library & Pure Offline Word/PDF Suite
 
 
 [![committers.top badge](https://user-badge.committers.top/tunisia/Nour-yahyaoui.svg)](https://user-badge.committers.top/tunisia/Nour-yahyaoui)
