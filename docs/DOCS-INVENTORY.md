@@ -1,6 +1,8 @@
 # Documentation Inventory — RustPad (`Nour-yahyaoui/rustpad`)
 
-- **Project Type**: Dual surface — (1) Cross-platform Pure-Rust Native Desktop Application & CLI (`rustpad` v1.0.0) and (2) Root Vite Static Project Landing Page deployed on Vercel.
+> Snapshot for `v3.0.13`. Line ranges and feature counts are approximate; the current `Cargo.toml`, source tree, README, and changelog are authoritative.
+
+- **Project Type**: Dual surface — (1) Cross-platform Pure-Rust Native Desktop Application & CLI (`rustpad` v3.0.13) and (2) Root Vite Static Project Landing Page deployed on Vercel.
 - **Primary Audience**: Developers, technical writers, students, and privacy-conscious desktop users who want a fast, offline `3.3 MB` Word (`.docx`) and PDF (`.pdf`) desktop suite without WebView bloat or cloud lock-in.
 - **Author**: Nour Yahyaoui (`https://github.com/Nour-yahyaoui`, `nourryahyaoui@gmail.com`)
 - **License**: MIT (`LICENSE`)
@@ -9,7 +11,7 @@
 
 | Crate / Component | Verified Path | Responsibility |
 |---|---|---|
-| Workspace Root | `Cargo.toml:1-26` | 9-member pure-Rust Cargo workspace (`version = "1.0.0"`, `lto = "thin"`, `strip = "symbols"`) |
+| Workspace Root | `Cargo.toml:1-26` | 9-member pure-Rust Cargo workspace (`version = "3.0.13"`, `lto = "thin"`, `strip = true`) |
 | Desktop & CLI Entrypoint | `app/src/main.rs:26-79`, `app/src/main.rs:236-352` | Launches native GUI window (`NativeAppRunner`) or executes CLI subcommands (`convert`, `inspect`, `ocr`, `merge`, `demo-files`, `--render-preview`, `--version`, `--help`) |
 | Command Registry (`Ctrl+K`) | `app/src/commands.rs:7-134` | 49 typed `CommandId` actions with keyboard shortcuts and fuzzy multi-token filtering (`filter_commands`) |
 | Unified Studio State | `app/src/state.rs:95-210`, `app/src/state.rs:640-1927` | Multi-tab `StudioTab` (`HomeHub`, `Word`, `Pdf`), 50/50 Split Workspace, 7 modal dialogs, mouse/scroll/signature-stroke/keyboard dispatch |

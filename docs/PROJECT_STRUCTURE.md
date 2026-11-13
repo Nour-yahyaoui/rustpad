@@ -1,6 +1,6 @@
 # Planned Project Structure (Pure Rust Cargo Workspace)
 
-> **Status:** Planning Blueprint Only — **No Rust code or `Cargo.toml` files are created yet.**  
+> **Status:** Historical planning draft, superseded by the implemented `v3.0.13` workspace. Use the repository root and `Cargo.toml` for current paths and crates.
 > **Toolchain:** 100% Pure Rust (`cargo`) — Zero `node_modules`, Zero `package.json`, Zero Web Files  
 > **Author:** Nour Yahyaoui ([GitHub](https://github.com/Nour-yahyaoui) · [nourryahyaoui@gmail.com](mailto:nourryahyaoui@gmail.com))
 
@@ -14,7 +14,7 @@ When coding starts (incrementally across tagged releases), the repository will b
 word/
 ├── README.md                          # Project vision, Pure-Rust stack summary & author info
 ├── LICENSE                            # MIT Open-Source License (Nour Yahyaoui)
-├── CHANGELOG.md                       # Release-by-release history (v0.0.1 → v1.0.0)
+├── CHANGELOG.md                       # Release history (see current entries in CHANGELOG.md)
 │
 ├── docs/                              # Complete Planning Blueprints (Current Phase)
 │   ├── TECH_STACK.md                  # Pure-Rust GUI (Iced + wgpu) & engine crates

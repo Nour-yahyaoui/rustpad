@@ -1,5 +1,5 @@
 # Copy this file to `.github/workflows/release.yml` on your machine (or via the GitHub Web UI -> Actions -> New workflow)
-# Whenever you push a tag like `v1.2.0` (or click "Run workflow" manually), GitHub automatically builds
+# Whenever you push a version tag (or click "Run workflow" manually), GitHub automatically builds
 # `rustpad.exe` (Windows x64) + `rustpad-linux-x86_64` and attaches them to your GitHub Release!
 
 name: Build & Publish RustPad Binaries (.exe + Linux)
@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing or new release tag to attach binaries to (e.g. v1.0.0)"
+        description: "Existing or new release tag to attach binaries to (e.g. v3.0.13)"
         required: true
-        default: "v1.0.0"
+        default: "v3.0.13"
   push:
     tags:
       - "v*"

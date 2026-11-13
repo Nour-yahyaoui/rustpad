@@ -8,7 +8,7 @@
 [![Portfolio](https://img.shields.io/badge/portfolio-nour--yahyaoui.vercel.app-1A1917?style=flat-square)](https://nour-yahyaoui.vercel.app/projects/rustpad)
 
 
-**RustPad Studio (`rustpad`) `v3.0.13`** is a native, sovereign, **zero-dependency (`0` external `crates.io` crates)** desktop & CLI document intelligence engine written in **100% pure Rust**. Built directly on native Win32 GDI + Windows 11 DWM & Linux X11 with a custom TrueType (`.ttf`) 4×4 supersampled rasterizer, 83+ classical multi-span inline math templates (`Alt+=` / `/math`), non-blocking `LazyZipArchive` 100+ MB `.docx` streaming parser, OOXML validator & corrupt-archive repair engine, character/paragraph redline & conflict-aware 3-way `.docx` smart merger, permanent `.docx` & `.pdf` forensic redactor, and pure-Rust offline OCR — shipping as a **~4.1 MB** standalone native executable (`< 90 ms` cold start, `0` Electron/Chromium/WebView bloat, `0` AI/network sockets, `0` telemetry).
+**RustPad Studio (`rustpad`) `v3.0.13`** is a native, sovereign, **zero-dependency (`0` external `crates.io` crates)** desktop & CLI document intelligence engine written in **100% pure Rust**. Built directly on native Win32 GDI + Windows 11 DWM & Linux X11 with a custom TrueType (`.ttf`) 4×4 supersampled rasterizer, 83+ classical multi-span inline math templates (`Alt+=` / `/math`), non-blocking `LazyZipArchive` 100+ MB `.docx` streaming parser, OOXML validator & corrupt-archive repair engine, character/paragraph redline & conflict-aware 3-way `.docx` smart merger, permanent `.docx` redactor plus modeled-content PDF redaction tools, and pure-Rust offline OCR — shipping as a **~4.1 MB** standalone native executable (`< 90 ms` cold start, `0` Electron/Chromium/WebView bloat, no bundled AI agent, no telemetry).
 
 > **Portfolio Case Study**: [nour-yahyaoui.vercel.app/projects/rustpad](https://nour-yahyaoui.vercel.app/projects/rustpad) · **Interactive Studio Showcase**: [rustpad-studio.vercel.app](https://rustpad-studio.vercel.app/) · **Latest Release (`v3.0.13`)**: [GitHub Releases](https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.13)
 
@@ -28,14 +28,7 @@
 
 ## What's New in `v3.0.13` — Pure Offline Document, Math & PDF Engine (Zero AI Agent Integration)
 
-- **100% AI-Free Offline Core**: Removed all AI agent modules (`ai_agent`), HTTP/WinHTTP client bridges, the right-side AI Dock (`Ctrl+J`), floating selection `"AI Polish"`, and `rustpad ai` CLI subcommands so RustPad operates purely as a deterministic, distraction-free Word, Inline Math, and Forensic PDF studio with zero network sockets.
-- **Streamlined Studio Header & Home Launchpad**: Replaced AI controls on the Home Hub with 1-click access to the **Inline Math Library (`Alt+=` / `Ctrl+Shift+L`)** and tightened the contextual selection toolbar to pure typography & review controls (`B`, `I`, `U`, `Highlight`, `Ink`, `+Note`).
-
----
-
-## What's New in `v3.0.13` — Pure Offline Document, Math & PDF Engine (Zero AI Agent Integration)
-
-- **100% AI-Free Offline Core**: Removed all AI agent modules (`ai_agent`), HTTP/WinHTTP client bridges, the right-side AI Dock (`Ctrl+J`), floating selection `"AI Polish"`, and `rustpad ai` CLI subcommands so RustPad operates purely as a deterministic, distraction-free Word, Inline Math, and Forensic PDF studio with zero network sockets.
+- **100% AI-Free Offline Core**: Removed all AI agent modules (`ai_agent`), HTTP/WinHTTP client bridges, the right-side AI Dock (`Ctrl+J`), floating selection `"AI Polish"`, and `rustpad ai` CLI subcommands so RustPad operates without the bundled AI agent or its HTTP/WinHTTP integration. Core document editing is local/offline; operating-system services (for example printing) may still use system facilities.
 - **Streamlined Studio Header & Home Launchpad**: Replaced AI controls on the Home Hub with 1-click access to the **Inline Math Library (`Alt+=` / `Ctrl+Shift+L`)** and tightened the contextual selection toolbar to pure typography & review controls (`B`, `I`, `U`, `Highlight`, `Ink`, `+Note`).
 
 ---
@@ -122,10 +115,10 @@ rustpad merge Merged.docx Base_v1.docx Counsel_A.docx Counsel_B.docx
 rustpad redact Deal.docx -o Deal_Redacted.docx --pii --term "Project Falcon"
 rustpad clean-meta Deal_Redacted.docx -o Deal_Clean.docx
 
-# 4. Forensic PDF Redaction Sanitization, PDF/A-2b Export & SHA-256 Tamper Seal
+# 4. Modeled PDF text redaction, PDF/A-2b metadata & unkeyed SHA-256 integrity digest
 rustpad sanitize Exhibit_A.pdf -o Exhibit_Clean.pdf
-rustpad sign Exhibit_Clean.pdf -o Exhibit_Sealed.pdf --pdfa
-rustpad verify Exhibit_Sealed.pdf
+rustpad sign Exhibit_Clean.pdf -o Exhibit_Sealed.pdf --pdfa  # Adds unkeyed content digest, not a digital signature
+rustpad verify Exhibit_Sealed.pdf                    # Checks modeled-content digest only
 
 # 5. Bidirectional Format Conversion (.docx / .pdf / .html / .md / .txt) & Batch Processing
 rustpad convert Handbook.docx Handbook.html
@@ -147,16 +140,20 @@ rustpad policy --init-airgapped .rustpad-policy.json
 | `crates/doc_model` | OpenXML AST (`DocNote`, `SectionBreak`, `DocMetadata`), char/paragraph `compare` & 3-way `smart_merge_documents` | `0` |
 | `crates/docx_io` | Streaming `<w:body>` reader, lossless `SharedBytes` writer, footnotes/endnotes/hyperlinks, OOXML `intelligence` & repair | `0` |
 | `crates/pdf_create` | ISO 32000 PDF 1.7 & PDF/A-2b vector generator, section breaks, footnotes/endnotes, hidden-span suppression, XMP | `0` |
-| `crates/pdf_engine` | PDF 1.5+ `/ObjStm` parser, forensic `sanitize_redactions`, SHA-256 `/RustPadSeal` signer & verifier | `0` |
+| `crates/pdf_engine` | Limited PDF object/text parser, modeled text/annotation redaction, unkeyed SHA-256 `/RustPadSeal` integrity digest | `0` |
 | `crates/power_tools` | `.docx` redactor & metadata cleaner, multi-surface search, batch ops, HTML5 converter, pure-Rust OCR, MDM DLP & SBOM | `0` |
 | `crates/rustpad_render` | `ThemeMode` (`Daylight`/`Midnight`/`HybridDarkDesk`), `StudioTheme`, TrueType 4×4 rasterizer, SDF painter, PNG/JPEG/BMP | `0` |
 | `crates/rustpad_window` | Native Win32 GDI + DWM Dark Titlebar & Linux X11 `_GTK_THEME_VARIANT`, HiDPI, clipboard, file dialogs & print spooler | `0` |
 | `app` (`rustpad`) | Unified 60–120Hz native desktop studio (`98` studio commands) + `18`-command headless CLI | `0` |
 
 ### Engineering Assumptions & Transparent Boundaries
+
+See the [Security Review](docs/SECURITY_REVIEW.md) for priority-by-priority status and remaining validation work.
 - **Passive Macro & OLE Safety by Design**: Embedded `vbaProject.bin` macros and OLE packages are preserved losslessly on save (or stripped on demand via `CleanDocumentPrivacy` / `clean-meta`) and **never executed**, eliminating macro malware execution vectors.
 - **Offline OCR Scope**: The built-in pure-Rust bitmap OCR engine recognizes clean high-contrast Latin/ASCII printed bitmaps (`BMP`/`PNG`/`PGM`) with zero external dependencies; skewed multi-language camera scans automatically delegate to a local offline `tesseract` binary when installed.
-- **Deterministic Integrity Seals**: PDF signing embeds RFC 6234 SHA-256 `/Type /RustPadSeal` cryptographic digests (`rustpad verify`); hardware PKCS#11 smartcard X.509 certificate chains remain an explicit non-goal of the zero-dependency core.
+- **PDF digest is not a digital signature**: `/RustPadSeal` stores an unkeyed SHA-256 digest of the parser's modeled page geometry, text, and vector rectangles. It can detect changes against a trusted copy, but it does not authenticate the named signer, and an attacker who can rewrite the file can recompute the digest. Use a standards-based certificate-backed PDF digital signature when identity, non-repudiation, or legal signature validation is required.
+- **PDF redaction boundary**: `sanitize_redactions` removes intersecting modeled text runs and overlapping modeled annotations. This parser does not model arbitrary image content, form XObjects, or every PDF layer/filter. Do not rely on this feature alone to sanitize arbitrary third-party PDFs for sensitive disclosure; independently inspect/validate the output with a full-featured forensic PDF tool.
+- **RTL / Arabic boundary**: RTL detection and right alignment exist, but full Unicode Bidirectional Algorithm handling, Arabic contextual shaping, and complete Arabic glyph coverage are not guaranteed by the bundled renderer. Review Arabic output in the target application before publication.
 
 ---
 
@@ -177,7 +174,7 @@ Windows Authenticode code signing for **`rustpad-studio` / `rustpad`** is manage
 
 - **Committers, Reviewers & Approvers**: [Nour Yahyaoui (`@Nour-yahyaoui`)](https://github.com/Nour-yahyaoui)
 - **Reproducible CI Pipeline**: Release artifacts are built exclusively from public source commits via GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)) with `0` third-party `crates.io` runtime dependencies. Local/HSM Authenticode signing is also supported via [`scripts/sign-windows.ps1`](scripts/sign-windows.ps1).
-- **Privacy Policy**: *This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.* RustPad operates 100% offline with zero telemetry, analytics, or background network calls (optional AI features connect only when explicitly invoked by the user and governed by local `policy.json`).
+- **Privacy Policy**: The v3.0.13 application source removes the bundled AI agent and its HTTP/WinHTTP bridges. Core document editing is local; this statement does not imply that operating-system services such as printing are network-free.
 
 ---
 

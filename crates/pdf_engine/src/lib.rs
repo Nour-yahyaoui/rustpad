@@ -1,5 +1,5 @@
 //! Pure-Rust PDF 1.4–1.7 (`/ObjStm` aware) Parser, Visual Page Model, Forensic Sanitizer,
-//! PDF/A-2b Exporter, and Cryptographic SHA-256 Tamper-Evident Document Sealer.
+//! PDF/A-2b Exporter, and an unkeyed SHA-256 modeled-content integrity digest (not a digital signature).
 
 pub mod parser;
 pub mod writer;
@@ -92,6 +92,17 @@ pub enum PdfAnnotation {
     },
 }
 
+fn finite_rect((x0, y0, x1, y1): (f32, f32, f32, f32)) -> bool {
+    [x0, y0, x1, y1].iter().all(|v| v.is_finite())
+}
+
+fn rectangles_overlap(
+    (ax0, ay0, ax1, ay1): (f32, f32, f32, f32),
+    (bx0, by0, bx1, by1): (f32, f32, f32, f32),
+) -> bool {
+    ax0 < bx1 && ax1 > bx0 && ay0 < by1 && ay1 > by0
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PdfPage {
     pub width_pt: f32,
@@ -152,6 +163,16 @@ impl PdfPage {
     /// Permanently removes underlying text items overlapping the redaction rectangle
     /// and records an opaque redaction block.
     pub fn apply_redaction(&mut self, rx: f32, ry: f32, rw: f32, rh: f32) -> usize {
+        // NaN/Inf coordinates can bypass ordinary overlap comparisons and leave text visible.
+        // Refuse malformed geometry rather than recording a redaction that looks successful.
+        if ![rx, ry, rw, rh, rx + rw, ry + rh]
+            .iter()
+            .all(|v| v.is_finite())
+            || rw == 0.0
+            || rh == 0.0
+        {
+            return 0;
+        }
         let x0 = rx.min(rx + rw);
         let x1 = rx.max(rx + rw);
         let y0 = ry.min(ry + rh);
@@ -321,14 +342,27 @@ impl PdfDocument {
             .join("\n\n")
     }
 
-    /// Forensically scrubs all underlying text runs and overlapping notes/highlights beneath
-    /// every `PdfAnnotation::Redaction` region across all pages (FOIA / HIPAA / Legal Discovery).
+    /// Removes modeled text items and overlapping annotations beneath redaction regions.
+    /// This page model does not represent arbitrary PDF image/form layers; callers must not treat
+    /// this helper alone as a universal forensic sanitizer for arbitrary third-party PDFs.
     pub fn sanitize_redactions(&mut self, scrub_metadata: bool) -> ForensicSanitizeReport {
         let mut redaction_boxes = 0usize;
         let mut purged_text_runs = 0usize;
         let mut purged_annotations = 0usize;
 
         for page in &mut self.pages {
+            // Invalid redaction geometry is not a redaction. Drop it so it cannot be
+            // serialized as a misleading visual mark or enter later geometry calculations.
+            page.annotations.retain(|annot| match annot {
+                PdfAnnotation::Redaction { x, y, w, h } => {
+                    [*x, *y, *w, *h, *x + *w, *y + *h]
+                        .iter()
+                        .all(|v| v.is_finite())
+                        && *w != 0.0
+                        && *h != 0.0
+                }
+                _ => true,
+            });
             let boxes: Vec<(f32, f32, f32, f32)> = page
                 .annotations
                 .iter()
@@ -344,19 +378,37 @@ impl PdfDocument {
                 continue;
             }
             redaction_boxes += boxes.len();
+            // Watermarks have no stored bounds in this model, so remove them page-wide rather
+            // than risk retaining text drawn through a redacted region.
+            page.watermark = None;
 
             let before_txt = page.text_items.len();
             page.text_items.retain(|item| {
+                // Treat malformed item geometry conservatively: remove the item whenever
+                // there is any redaction on its page rather than let NaN bypass intersection.
+                if ![item.x, item.y, item.font_size]
+                    .iter()
+                    .all(|v| v.is_finite())
+                    || item.font_size <= 0.0
+                {
+                    return false;
+                }
                 let approx_w = pdf_create::estimate_styled_text_width(
                     &item.text,
                     item.font_size,
                     item.font_family,
                     item.bold,
                 );
+                if !approx_w.is_finite() || approx_w < 0.0 {
+                    return false;
+                }
                 let ix0 = item.x;
                 let ix1 = item.x + approx_w;
                 let iy0 = item.y - 2.0;
                 let iy1 = item.y + item.font_size;
+                if ![ix1, iy0, iy1].iter().all(|v| v.is_finite()) {
+                    return false;
+                }
                 !boxes
                     .iter()
                     .any(|&(rx0, ry0, rx1, ry1)| ix0 < rx1 && ix1 > rx0 && iy0 < ry1 && iy1 > ry0)
@@ -365,21 +417,86 @@ impl PdfDocument {
 
             let before_ann = page.annotations.len();
             page.annotations.retain(|annot| match annot {
-                PdfAnnotation::StickyNote { x, y, .. } => !boxes.iter().any(|&(rx0, ry0, rx1, ry1)| {
-                    *x < rx1 && (*x + 20.0) > rx0 && *y < ry1 && (*y + 20.0) > ry0
-                }),
-                PdfAnnotation::Highlight { x, y, w, h, .. } => {
-                    !boxes.iter().any(|&(rx0, ry0, rx1, ry1)| {
-                        *x < rx1 && (*x + *w) > rx0 && *y < ry1 && (*y + *h) > ry0
-                    })
+                // The redaction marks themselves must remain in the output.
+                PdfAnnotation::Redaction { .. } => true,
+                PdfAnnotation::StickyNote { x, y, note, .. } => {
+                    let preview: String = note.chars().take(28).collect();
+                    let preview_w = pdf_create::estimate_styled_text_width(
+                        &preview,
+                        8.0,
+                        FontFamily::Sans,
+                        false,
+                    );
+                    let bounds = (*x, *y - 2.0, *x + 24.0 + preview_w, *y + 18.0);
+                    finite_rect(bounds) && !boxes.iter().any(|b| rectangles_overlap(bounds, *b))
                 }
-                _ => true,
+                PdfAnnotation::Highlight { x, y, w, h, .. } => {
+                    if ![*x, *y, *w, *h, *x + *w, *y + *h]
+                        .iter()
+                        .all(|v| v.is_finite())
+                        || *w == 0.0
+                        || *h == 0.0
+                    {
+                        return false;
+                    }
+                    let bounds = (
+                        (*x).min(*x + *w),
+                        (*y).min(*y + *h),
+                        (*x).max(*x + *w),
+                        (*y).max(*y + *h),
+                    );
+                    !boxes.iter().any(|b| rectangles_overlap(bounds, *b))
+                }
+                PdfAnnotation::Stamp { x, y, label, .. } => {
+                    let width = (label.chars().count() as f32 * 8.5 + 20.0).max(80.0);
+                    let bounds = (*x, *y, *x + width, *y + 26.0);
+                    finite_rect(bounds) && !boxes.iter().any(|b| rectangles_overlap(bounds, *b))
+                }
+                PdfAnnotation::Signature { strokes, signer, .. } => {
+                    let mut points = strokes.iter().flatten();
+                    let Some(&(first_x, first_y)) = points.next() else {
+                        return true;
+                    };
+                    if !first_x.is_finite() || !first_y.is_finite() {
+                        return false;
+                    }
+                    let (mut min_x, mut max_x, mut min_y, mut max_y) =
+                        (first_x, first_x, first_y, first_y);
+                    for &(x, y) in points {
+                        if !x.is_finite() || !y.is_finite() {
+                            return false;
+                        }
+                        min_x = min_x.min(x);
+                        max_x = max_x.max(x);
+                        min_y = min_y.min(y);
+                        max_y = max_y.max(y);
+                    }
+                    let label_width = if signer.trim().is_empty() {
+                        0.0
+                    } else {
+                        pdf_create::estimate_styled_text_width(
+                            &format!("Signed by {signer}"),
+                            8.5,
+                            FontFamily::Sans,
+                            false,
+                        )
+                    };
+                    let bounds = (
+                        min_x - 2.0,
+                        min_y - if label_width > 0.0 { 19.0 } else { 2.0 },
+                        max_x + 2.0,
+                        max_y + 2.0,
+                    );
+                    let bounds = (bounds.0, bounds.1, bounds.2.max(min_x + label_width + 2.0), bounds.3);
+                    finite_rect(bounds) && !boxes.iter().any(|b| rectangles_overlap(bounds, *b))
+                }
             });
             purged_annotations += before_ann - page.annotations.len();
         }
 
         if scrub_metadata {
             self.author = "REDACTED".into();
+            self.title = "REDACTED".into();
         }
 
         ForensicSanitizeReport {
@@ -390,8 +507,9 @@ impl PdfDocument {
         }
     }
 
-    /// Computes a deterministic SHA-256 content hash over all page dimensions, canonical text items,
-    /// and vector rect regions so tampering with any saved PDF stream is cryptographically detectable.
+    /// Computes an unkeyed SHA-256 digest over modeled page dimensions, text, and vector rectangles.
+    /// This detects accidental changes when compared with a trusted digest, but is not a digital
+    /// signature: anyone able to rewrite the PDF can also replace the embedded digest and signer label.
     pub fn canonical_content_sha256(&self) -> String {
         let mut canon = String::with_capacity(1024);
         let _ = writeln!(canon, "rustpad-seal-v2|pages={}", self.pages.len());
@@ -492,6 +610,30 @@ mod tests {
     use rustpad_zip::zlib_compress;
 
     #[test]
+    fn test_truncated_and_malformed_pdf_inputs_fail_without_panicking() {
+        assert!(load_pdf_bytes(b"").is_err());
+        assert!(load_pdf_bytes(b"%PDF-1.7\n").is_err());
+
+        let valid = save_pdf_bytes(
+            &PdfDocument::new_blank("Corruption test", 1, PaperSize::A4),
+            true,
+        );
+        let cut_points = [1, 5, 9, 20, valid.len() / 2, valid.len().saturating_sub(1)];
+        for end in cut_points {
+            let end = end.min(valid.len());
+            let result = std::panic::catch_unwind(|| load_pdf_bytes(&valid[..end]));
+            assert!(result.is_ok(), "truncated PDF at byte {end} panicked");
+        }
+
+        let mut damaged = valid;
+        if let Some(stream) = damaged.windows(6).position(|w| w == b"stream") {
+            damaged[stream..stream + 6].fill(0xFF);
+        }
+        let result = std::panic::catch_unwind(|| load_pdf_bytes(&damaged));
+        assert!(result.is_ok(), "damaged PDF stream marker panicked");
+    }
+
+    #[test]
     fn test_parse_edit_merge_split_sign_redact_compress_pdf() {
         let doc = TemplateKind::WelcomeGuide.build();
         let raw_pdf = export_document_to_pdf_bytes(&doc, &PdfCreateOptions::default());
@@ -536,6 +678,49 @@ mod tests {
         assert!(after < before);
         let reloaded = load_pdf_bytes(&comp).expect("reload compressed pdf");
         assert_eq!(reloaded.pages.len(), 2);
+    }
+
+    #[test]
+    fn test_redaction_rejects_invalid_geometry_and_purges_overlapping_layers() {
+        let mut doc = PdfDocument::new_blank("Redaction test", 1, PaperSize::A4);
+        let page = &mut doc.pages[0];
+        page.text_items.clear();
+        page.add_text_box(12.0, 18.0, "secret", 12.0, RgbColor::INK_SLATE);
+        page.annotations.push(PdfAnnotation::Redaction {
+            x: 10.0,
+            y: 10.0,
+            w: 30.0,
+            h: 24.0,
+        });
+        page.annotations.push(PdfAnnotation::Stamp {
+            x: 12.0,
+            y: 12.0,
+            label: "SECRET STAMP".into(),
+            color: RgbColor::EMERALD,
+        });
+        page.annotations.push(PdfAnnotation::Signature {
+            strokes: vec![vec![(14.0, 14.0), (28.0, 25.0)]],
+            signer: "Secret Signer".into(),
+            color: RgbColor::COBALT,
+        });
+        page.annotations.push(PdfAnnotation::StickyNote {
+            x: 200.0,
+            y: 200.0,
+            author: "Reviewer".into(),
+            note: "Unrelated note".into(),
+        });
+        page.watermark = Some("Confidential watermark".into());
+
+        assert_eq!(page.apply_redaction(f32::NAN, 0.0, 10.0, 10.0), 0);
+        assert_eq!(page.apply_redaction(0.0, 0.0, 0.0, 10.0), 0);
+        let report = doc.sanitize_redactions(false);
+        assert_eq!(report.redaction_boxes, 1);
+        assert_eq!(report.purged_text_runs, 1);
+        assert_eq!(report.purged_annotations, 2);
+        assert!(doc.pages[0].annotations.iter().any(|a| matches!(a, PdfAnnotation::Redaction { .. })));
+        assert!(doc.pages[0].annotations.iter().any(|a| matches!(a, PdfAnnotation::StickyNote { .. })));
+        assert!(doc.pages[0].text_items.is_empty());
+        assert!(doc.pages[0].watermark.is_none());
     }
 
     #[test]
@@ -594,6 +779,7 @@ mod tests {
         assert_eq!(report.purged_text_runs, 1);
         assert!(!loaded.extract_all_text().contains("SSN 999-00-1234"));
         assert_eq!(loaded.author, "REDACTED");
+        assert_eq!(loaded.title, "REDACTED");
 
         // 3. Add public summary text, seal with SHA-256 + PDF/A-2b, and verify tamper detection
         loaded.pages[0].add_text_box(

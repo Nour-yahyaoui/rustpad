@@ -1,6 +1,6 @@
 # Security Policy & Enterprise Threat Model
 
-**Project:** RustPad Enterprise Suite (`v2.3.0`)  
+**Project:** RustPad Studio (`v3.0.13`)
 **Maintainer:** Nour Yahyaoui (<nourryahyaoui@gmail.com>)  
 **Repository:** <https://github.com/Nour-yahyaoui/rustpad>
 
@@ -8,29 +8,26 @@
 
 ## 1. Supported Versions
 
-| Version | Status | Supply-Chain Posture | Security Advisories |
-| :--- | :--- | :--- | :--- |
-| **`2.2.x`** | **Active LTS** | `0` third-party `crates.io` runtime dependencies | Bounded PNG/JPEG/BMP image decoders (`64 MiB`), full parser hardening, DLP policy, forensic PDF sanitize & SHA-256 seals |
-| `2.0.x` – `2.1.x` | Supported | `0` third-party `crates.io` runtime dependencies | Full parser hardening, DLP policy, forensic PDF sanitize & SHA-256 seals |
-| `1.3.x` | Maintenance | `0` third-party `crates.io` runtime dependencies | Upgrade to `2.0.0` recommended for zip-bomb & XML depth limits |
-| `< 1.3.0` | End of Life | — | Unsupported |
-
+| Version | Status | Notes |
+| :--- | :--- | :--- |
+| **`3.0.13`** | Current documented release | Zero external `crates.io` dependencies; see parser and PDF security boundaries below |
+| `< 3.0.13` | Older release | Update to the current release and review its release-specific notes |
 ---
 
 ## 2. Zero-Dependency Supply-Chain Architecture
 
 Enterprise desktop document editors routinely pull **300–900 transitive open-source packages** (C/C++ codec bindings, Electron/Chromium runtimes, third-party HTTP/TLS stacks, XML parsers, and ZIP extractors). Every transitive dependency represents an upstream supply-chain vector.
 
-RustPad `v2.0` eliminates third-party package supply-chain risk at the root:
+RustPad `v3.0.13` has no external `crates.io` dependencies in its Rust workspace (this does not eliminate all software or operating-system risk):
 - **`Cargo.lock` contains `0` external `crates.io` dependencies.** Every line of PKZIP, RFC 1951 DEFLATE/Inflate, RFC 6234 SHA-256, ECMA-376 OpenXML, ISO 32000 PDF 1.7 / PDF/A-2b, TrueType `.ttf` glyph rasterization, Win32 GDI/WinHTTP, and Linux X11 protocol framing lives in-tree across 9 auditable workspace crates.
 - **Machine-Readable SBOM:** Security teams can generate a standards-compliant **CycloneDX 1.5 JSON Software Bill of Materials** offline at any time:
   ```bash
-  rustpad sbom -o rustpad-v2.0.0.cdx.json
+  rustpad sbom -o rustpad-v3.0.13.cdx.json
   ```
 
 ---
 
-## 3.Untrusted Document Parser Defenses (`v2.0` Hardening)
+## 3. Untrusted Document Parser Defenses
 
 Opening untrusted `.docx` and `.pdf` attachments is one of the highest-risk workflows in legal, financial, and government environments. RustPad enforces deterministic memory and recursion ceilings:
 
@@ -39,22 +36,21 @@ Opening untrusted `.docx` and `.pdf` attachments is one of the highest-risk work
 | **DEFLATE / Zlib Zip Bombs** | `deflate_decompress_bounded` & `ArchiveSecurityLimits` abort decompression mid-stream when output bytes or compression ratio exceed thresholds | `crates/rustpad_zip` | `64 MiB` / entry · `256 MiB` total · `200:1` max ratio |
 | **ZIP Path Traversal (`ZipSlip`)** | Rejects archive entries containing `..` parent segments, leading `/`, drive prefixes, or NUL bytes | `crates/rustpad_zip` | Strict zero-tolerance |
 | **Billion-Laughs / Deep XML Nesting** | `parse_xml` enforces `MAX_XML_DEPTH = 128` to prevent stack exhaustion on adversarial `word/document.xml` payloads | `crates/docx_io` | `128` nested elements |
-| **Residual Redacted PDF Text Leaks** | `PdfDocument::sanitize_redactions` physically purges intersecting underlying glyph runs and annotations from PDF content streams instead of drawing black rectangles over selectable text | `crates/pdf_engine` | Physical stream purge + metadata scrub |
-| **Post-Signature PDF Tampering** | `/Type /RustPadSeal` embeds a canonical RFC 6234 SHA-256 content & geometry digest verified via `rustpad verify <file.pdf>` | `crates/pdf_engine` | `256-bit` SHA-256 |
+| **PDF redaction scope** | Removes intersecting modeled text items and overlapping modeled annotations; the parser does not model arbitrary images, form XObjects, or every PDF layer/filter | `crates/pdf_engine` | Limited model-only cleanup; not a universal forensic sanitizer |
+| **PDF integrity digest** | `/Type /RustPadSeal` contains an unkeyed SHA-256 digest of selected modeled content. Verification detects mismatches against the embedded digest but does not authenticate the signer; an editor can recompute it | `crates/pdf_engine` | Integrity check only; not a digital signature |
 
 ---
 
-## 4. Air-Gapped Operation & Enterprise AI Data Loss Prevention (DLP)
+## 4. Offline Behavior and Trust Boundaries
 
-- **100% Offline Core:** Launching `rustpad`, editing `.docx` / `.pdf` files, running legal redlines, sanitizing PDFs, and printing make **zero network calls** — no telemetry, no analytics beacons, no license pings, and no auto-updater background daemons.
-- **MDM `policy.json` AI Lockout:** IT administrators can bind `/etc/rustpad/policy.json` (Linux) or `%ProgramData%\RustPad\policy.json` (Windows) with `"air_gapped_mode": true` and `"allow_cloud_ai": false`. Any attempt to invoke a non-loopback AI endpoint is blocked **before DNS resolution or socket creation** and logged to the SHA-256 hash-chained `AuditTrail`.
-- **Corporate TLS Proxy & Root CA Trust:** On Windows workstations where outbound HTTPS is allowed through enterprise inspection proxies (Zscaler, Netskope, Cloudflare Gateway), RustPad uses native **`winhttp.dll` (`WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY`)**, delegating TLS 1.2/1.3 validation directly to Windows Schannel and the OS Enterprise Root Certificate Store.
-
----
+- **No bundled AI agent in v3.0.13:** the AI modules and their HTTP/WinHTTP bridges were removed. Core editing and parsing are local. This is not a blanket guarantee that OS services (for example, network printing) never use network facilities.
+- **Do not use `/RustPadSeal` as proof of identity or consent.** The seal is an unkeyed checksum with a display-only signer label. For identity, non-repudiation, or legal signature validation, use a standards-based certificate-backed PDF digital signature and validate the certificate chain separately.
+- **Do not treat PDF modeled-text redaction as complete for arbitrary PDFs.** Inspect the output with a full-featured forensic PDF tool; raster images, form XObjects, and unsupported layers are outside the current page model.
+- **Arabic/RTL note:** RTL detection and alignment do not establish full Unicode bidi or Arabic contextual-shaping support. Validate the rendered/exported document in the intended viewer.
 
 ## 5. Windows Publisher Identity, PE Resources & SmartScreen / AV Guidance
 
-Starting in `v2.2.0`, `app/build.rs` embeds native Win32 PE `.rsrc` metadata directly into `rustpad.exe` with zero external crates:
+In the `v3.0.13` codebase, `app/build.rs` embeds native Win32 PE `.rsrc` metadata directly into `rustpad.exe` with zero external crates:
 - **Embedded Multi-Frame App Icon (`RT_GROUP_ICON` ID `1`):** Crisp `16×16`, `32×32`, `48×48`, `64×64` 32-bpp DIB frames + `256×256` lossless PNG for File Explorer, Titlebar, Alt+Tab, and Windows 11 Taskbar.
 - **Publisher & Version Metadata (`VS_VERSION_INFO`):**
   - `CompanyName`: `Nour Yahyaoui - RustPad Studio`
