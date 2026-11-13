@@ -1,4 +1,4 @@
-//! Pure-Rust PDF 1.7 / PDF-A-2b Serializer, Stream Optimizer & SHA-256 Tamper-Evident Sealer.
+//! Pure-Rust PDF 1.7 / PDF-A-2b Serializer, Stream Optimizer & unkeyed SHA-256 integrity digest.
 
 use crate::parser::scan_and_expand_objects;
 use crate::{load_pdf_bytes, PdfAnnotation, PdfDocument, PdfPage, PdfSealManifest};
@@ -34,7 +34,8 @@ pub fn save_pdf_bytes(doc: &PdfDocument, compress: bool) -> Vec<u8> {
     save_pdf_bytes_ext(doc, compress, false, None)
 }
 
-/// Seals a `PdfDocument` with a canonical RFC 6234 SHA-256 digest and optional PDF/A-2b XMP conformance.
+/// Embeds an unkeyed canonical RFC 6234 SHA-256 integrity digest and optional PDF/A-2b XMP metadata.
+/// The `/Signer` field is an informational label, not a cryptographically authenticated identity.
 pub fn seal_pdf_bytes(
     doc: &PdfDocument,
     signer: &str,

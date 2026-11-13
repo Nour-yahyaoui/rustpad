@@ -1,5 +1,7 @@
 # Micro-Release Strategy & Step-by-Step Roadmap
 
+> **Status:** Historical planning document; its proposed milestones stop at v1.0.0 and are not the current roadmap. RustPad's latest documented release is `v3.0.13`; consult `CHANGELOG.md` and the repository `README.md` for current release information.
+>
 > **Core Workflow Rule:** *Every small thing added = 1 Focused Commit + 1 SemVer Git Tag + 1 GitHub Release.*  
 > **Toolchain:** 100% Pure Rust (`Cargo` Workspace → Standalone `.exe` / `.dmg` / `.AppImage` Releases)  
 > **Author:** Nour Yahyaoui ([GitHub](https://github.com/Nour-yahyaoui) · [nourryahyaoui@gmail.com](mailto:nourryahyaoui@gmail.com))

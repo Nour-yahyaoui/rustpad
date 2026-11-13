@@ -4,7 +4,7 @@ set -euo pipefail
 # Cross-compile standalone Windows 64-bit rustpad.exe from Linux / WSL
 # Author: Nour Yahyaoui <nourryahyaoui@gmail.com>
 
-RELEASE_TAG="${1:-v1.0.0}"
+RELEASE_TAG="${1:-v3.0.13}"
 UPLOAD_FLAG="${2:-}"
 TARGET="x86_64-pc-windows-gnu"
 OUT_DIR="target/dist"

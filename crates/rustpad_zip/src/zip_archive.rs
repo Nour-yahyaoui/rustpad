@@ -757,6 +757,31 @@ mod tests {
     }
 
     #[test]
+    fn test_truncated_and_malformed_zip_inputs_fail_without_panicking() {
+        assert!(ZipArchive::from_bytes(&[]).is_err());
+        assert!(LazyZipArchive::from_bytes(&[]).is_err());
+
+        let mut writer = ZipWriter::new();
+        writer.add_file("word/document.xml", b"<document>safe</document>".to_vec());
+        let valid = writer.finish();
+        let cut_points = [1, 4, 18, 30, valid.len() / 2, valid.len().saturating_sub(1)];
+        for end in cut_points {
+            let end = end.min(valid.len());
+            assert!(std::panic::catch_unwind(|| ZipArchive::from_bytes(&valid[..end])).is_ok());
+            assert!(std::panic::catch_unwind(|| LazyZipArchive::from_bytes(&valid[..end])).is_ok());
+        }
+
+        // Corrupt the local-header length fields to exercise checked range arithmetic.
+        let mut oversized = valid;
+        if oversized.len() >= 30 {
+            oversized[26..28].copy_from_slice(&u16::MAX.to_le_bytes());
+            oversized[28..30].copy_from_slice(&u16::MAX.to_le_bytes());
+        }
+        assert!(std::panic::catch_unwind(|| ZipArchive::from_bytes(&oversized)).is_ok());
+        assert!(std::panic::catch_unwind(|| LazyZipArchive::from_bytes(&oversized)).is_ok());
+    }
+
+    #[test]
     fn test_security_rejects_path_traversal_and_zip_bomb_ratio() {
         let mut evil = ZipWriter::new();
         evil.add_file("../../etc/passwd", b"root:x:0:0".to_vec());
