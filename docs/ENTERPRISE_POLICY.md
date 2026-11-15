@@ -1,90 +1,66 @@
-# Enterprise Deployment, MDM Policy & Compliance Guide
+# Enterprise Deployment and Governance Notes — RustPad `v3.0.13`
 
-RustPad `v2.0` is built for regulated legal, financial, healthcare, defense, and engineering organizations that require **100% offline desktop sovereignty**, **air-gapped Data Loss Prevention (DLP)**, and **zero third-party open-source dependency sprawl**.
+This page describes the governance features present in the current source. It is not a certification, network-firewall guarantee, or substitute for an organization's document-handling controls.
 
----
+## 1. Workstation policy
 
-## 1. MDM / Group Policy Configuration (`policy.json`)
+RustPad reads a policy file from the first available location:
 
-RustPad automatically loads an enterprise governance policy at startup using the following precedence order:
-1. Path specified in environment variable `RUSTPAD_POLICY_PATH`
-2. Workspace-local `.rustpad-policy.json`
-3. **Linux system-wide MDM path:** `/etc/rustpad/policy.json` (deployable via Ansible, Puppet, Salt, or `.deb`/`.rpm` config management)
-4. **Windows system-wide MDM path:** `%ProgramData%\RustPad\policy.json` (deployable via Microsoft Intune, GPO, or SCCM)
+1. `RUSTPAD_POLICY_PATH`
+2. `.rustpad-policy.json` in the working directory
+3. `/etc/rustpad/policy.json` on Linux
+4. `%ProgramData%\RustPad\policy.json` on Windows
 
-### Strict Air-Gapped Policy Example
+Generate a policy template with:
 
-Generate a strict air-gapped policy template directly from the binary:
 ```bash
-rustpad policy --init-airgapped /etc/rustpad/policy.json
+rustpad policy --init-airgapped ./rustpad-policy.json
 ```
+
+The current schema contains organization, `air_gapped_mode`, default classification, `require_redaction_sanitization`, and `audit_log_enabled` fields. For example:
 
 ```json
 {
-  "organization": "Sovereign Legal & Engineering Corp",
+  "organization": "Example Organization",
   "air_gapped_mode": true,
-  "allow_cloud_ai": false,
-  "allowed_ai_hosts": ["127.0.0.1", "localhost", "::1"],
   "default_classification": "confidential",
   "require_redaction_sanitization": true,
   "audit_log_enabled": true
 }
 ```
 
-### Hybrid On-Premises VPC AI Gateway Example
+The AI-agent integration and its endpoint allowlist/network controls described in older documentation were removed before v3.0.13. The policy setting is application-level governance; it is **not** a host firewall and does not prove that OS services (such as network printing) are offline.
 
-Organizations running an internal vLLM / Ollama / TGI inference cluster inside a private VPC can allowlist only their internal inference hostname while keeping public SaaS AI (`api.openai.com`, `api.anthropic.com`, etc.) hard-blocked:
-
-```json
-{
-  "organization": "Regulated Financial Services",
-  "air_gapped_mode": false,
-  "allow_cloud_ai": false,
-  "allowed_ai_hosts": ["127.0.0.1", "localhost", "llm-gateway.internal.corp"],
-  "default_classification": "internal",
-  "require_redaction_sanitization": true,
-  "audit_log_enabled": true
-}
-```
-
-On Windows 10/11 workstations, HTTPS requests to `llm-gateway.internal.corp` automatically use native **`winhttp.dll`** (`WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY`), honoring corporate PAC/WPAD proxies and Enterprise Root CAs installed in the Windows Certificate Store.
-
----
-
-## 2. Headless Compliance & Legal Ops CLI Pipelines
-
-Every capability in the RustPad desktop GUI is exposed as a deterministic, scriptable CLI command suitable for CI/CD, e-discovery, and document-management pipelines:
+## 2. Useful CLI workflows
 
 ```bash
-# 1. Automated Legal Contract Redline (Offline Word-Level ECMA-376 <w:ins>/<w:del>)
-rustpad redline Master_MSA_v1.docx Counterparty_Markup_v2.docx \
-  -o MSA_Redline_Comparison.docx --author "Legal Ops"
+# Validate or attempt recovery of a DOCX package
+rustpad validate Contract.docx
+rustpad repair Damaged.docx -o Recovered.docx
 
-# 2. Forensic PDF Redaction Sanitization (Purges underlying text streams + scrubs metadata)
-rustpad sanitize Discovery_Exhibit_Marked.pdf -o Discovery_Exhibit_Sanitized.pdf
+# Redact a DOCX; scrub hidden/revision content as configured by the command
+rustpad redact Contract.docx -o Contract_Redacted.docx --term "Project Falcon" --pii
+rustpad clean-meta Contract_Redacted.docx -o Contract_Clean.docx
 
-# 3. Archival PDF/A-2b Conformance + Cryptographic SHA-256 Tamper Seal
-rustpad sign Discovery_Exhibit_Sanitized.pdf \
-  -o Discovery_Exhibit_Final.pdf --signer "Compliance Officer" --pdfa
+# PDF sanitation applies only to redaction marks and content represented by RustPad's PDF model.
+# It does not inspect arbitrary raster images, form XObjects, or every PDF layer/filter.
+rustpad sanitize Marked.pdf -o Sanitized.pdf
 
-# 4. Tamper Verification (Returns non-zero exit code if any text/page byte was altered)
-rustpad verify Discovery_Exhibit_Final.pdf
+# `/RustPadSeal` is an unkeyed modeled-content digest, not a certificate-backed signature.
+rustpad sign Sanitized.pdf -o Digest_Checked.pdf --signer "Records Officer" --pdfa
+rustpad verify Digest_Checked.pdf
 
-# 5. CycloneDX 1.5 Software Bill of Materials for CISO / Procurement Review
-rustpad sbom -o rustpad-sbom.cdx.json
-
-# 6. UIA / AT-SPI Semantic Accessibility Tree Export
-rustpad inspect --a11y MSA_Redline_Comparison.docx
+# Generate a CycloneDX SBOM and inspect document information
+rustpad sbom -o rustpad-v3.0.13.cdx.json
+rustpad inspect --security Contract.docx
 ```
 
----
+Use a full-featured forensic PDF tool to independently validate files before sensitive disclosure. Use a standards-based certificate-backed PDF digital signature when signer identity or legal signature validation is required; RustPad's signer string is not authenticated.
 
-## 3. Tamper-Evident SHA-256 Audit Trail
+## 3. Audit trail
 
-When `"audit_log_enabled": true` is active, RustPad records security-relevant operations (`STUDIO_BOOT`, `DOC_OPENED`, `DOC_SAVED`, `TRACK_CHANGES_TOGGLED`, `REVISIONS_ACCEPTED_ALL`, `PDF_FORENSIC_SANITIZE`, `PDF_SHA256_SEALED`, `AI_DLP_BLOCKED`, `OS_PRINT_SPOOL`) into a **cryptographically hash-chained ledger**:
+When `audit_log_enabled` is enabled, the application records selected events in a SHA-256 hash-chained audit trail. The chain can reveal changes relative to a trusted copy, but the hash chain is unkeyed and does not by itself establish who produced or approved the log. Store and protect audit records according to organizational policy.
 
-```text
-entry_sha256 = SHA256(seq | timestamp_epoch_s | action | subject | actor | prev_sha256)
-```
+## 4. Further security review
 
-Users and compliance auditors can inspect and verify chain integrity live inside the desktop studio via the **Status Bar DLP Pill** (`Ctrl+K` -> `Open Enterprise DLP Policy & SHA-256 Audit Chain Inspector`).
+See [Security Policy](../SECURITY.md) and the [priority-by-priority review](SECURITY_REVIEW.md) for parser limits, PDF trust boundaries, test status, and known RTL limitations.

@@ -1,6 +1,6 @@
 # System Architecture Blueprint (Pure Rust Native Desktop)
 
-> **Status:** Planning Phase (Zero Code)  
+> **Status:** Historical planning draft; does not describe the current implementation. For the current version (`v3.0.13`) and architecture, use the repository `README.md`, `Cargo.toml`, and source tree.
 > **Runtime Model:** Single Standalone Native Desktop Executable (`Rust` + `Iced` + `wgpu`) — Zero Web Server, Zero Browser/WebView  
 > **Author:** Nour Yahyaoui ([GitHub](https://github.com/Nour-yahyaoui) · [nourryahyaoui@gmail.com](mailto:nourryahyaoui@gmail.com))
 

@@ -5,11 +5,11 @@
     Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
 .EXAMPLE
     .\scripts\build-windows-exe.ps1
-    .\scripts\build-windows-exe.ps1 -ReleaseTag v1.0.0 -Upload
+    .\scripts\build-windows-exe.ps1 -ReleaseTag v3.0.13 -Upload
 #>
 
 param(
-    [string]$ReleaseTag = "v1.0.0",
+    [string]$ReleaseTag = "v3.0.13",
     [switch]$Upload
 )
 

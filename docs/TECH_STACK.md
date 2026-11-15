@@ -1,6 +1,6 @@
 # Technology Stack Blueprint (100% Pure Rust Native Desktop)
 
-> **Status:** Planning Phase (Zero Code — Architecture & Stack Lock)  
+> **Status:** Historical planning draft; does not describe the current implementation. For the current version (`v3.0.13`) and dependencies, use the repository `README.md`, `Cargo.toml`, and source tree.
 > **Architecture:** 100% Standalone Compiled Native Desktop App (**Zero Web Server · Zero HTML/CSS/JS · Zero WebView**)  
 > **Author:** Nour Yahyaoui ([GitHub](https://github.com/Nour-yahyaoui) · [nourryahyaoui@gmail.com](mailto:nourryahyaoui@gmail.com))
 

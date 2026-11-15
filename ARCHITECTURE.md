@@ -1,4 +1,5 @@
 # RustPad v2.2 Enterprise — Systems Architecture
+(outdated for 3.0.1)
 
 RustPad is a **pure-Rust, offline-first native desktop document and PDF suite** engineered with **zero third-party `crates.io` runtime dependencies**. It compiles into a single self-contained native executable (`rustpad` / `rustpad.exe`) for Windows (`Win32 GDI + WinHTTP`) and Linux (`X11`).
 

@@ -82,6 +82,28 @@ mod tests {
     }
 
     #[test]
+    fn test_truncated_and_malformed_docx_inputs_fail_without_panicking() {
+        assert!(load_docx_bytes(&[]).is_err());
+        assert!(load_docx_bytes(b"PK\x03\x04").is_err());
+
+        let valid = save_docx_bytes(&TemplateKind::WelcomeGuide.build());
+        let cut_points = [1, 4, 18, 30, valid.len() / 2, valid.len().saturating_sub(1)];
+        for end in cut_points {
+            let end = end.min(valid.len());
+            let result = std::panic::catch_unwind(|| load_docx_bytes(&valid[..end]));
+            assert!(result.is_ok(), "truncated DOCX at byte {end} panicked");
+        }
+
+        let mut damaged = valid;
+        let len = damaged.len();
+        if len >= 4 {
+            damaged[len - 4..].fill(0xFF);
+        }
+        let result = std::panic::catch_unwind(|| load_docx_bytes(&damaged));
+        assert!(result.is_ok(), "damaged DOCX trailer panicked");
+    }
+
+    #[test]
     fn test_xml_depth_limit_rejects_adversarial_nesting() {
         let mut deep = String::new();
         for _ in 0..200 {

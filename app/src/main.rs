@@ -126,12 +126,13 @@ USAGE:
   rustpad merge <OUT.pdf> <IN1.pdf> <IN2.pdf>...
                                               Smart 2/3-way .docx merge OR multi-PDF vector merge
   rustpad redact <IN.docx|.pdf> -o <OUT> [--term TEXT]... [--pii]
-                                              Permanent .docx PII/text redaction or PDF sanitize
+                                              Redact DOCX content or modeled PDF text under redaction marks
   rustpad clean-meta <IN.docx> -o <OUT.docx>  Scrub metadata, hidden text, comments & remote links
-  rustpad sanitize <IN.pdf> -o <OUT.pdf>      Forensically purge redacted PDF text & metadata
+  rustpad sanitize <IN.pdf> -o <OUT.pdf>      Remove modeled PDF text/annotations under redaction marks
+                                              (not a full image/form-layer forensic sanitizer)
   rustpad sign <IN.pdf> -o <OUT.pdf> [--signer NAME] [--pdfa]
-                                              Embed SHA-256 tamper-evident seal & PDF/A-2b XMP
-  rustpad verify <FILE.pdf>                   Verify cryptographic SHA-256 PDF seal integrity
+                                              Embed unkeyed SHA-256 integrity digest (not a digital signature)
+  rustpad verify <FILE.pdf>                   Verify modeled-content digest only; signer is not authenticated
   rustpad convert <INPUT> <OUTPUT>            Convert between .docx, .pdf, .html, .md, and .txt
   rustpad inspect [--a11y|--security|--quality] <FILE>
                                               Inspect metrics, security/hidden layers, quality, or a11y
@@ -320,10 +321,11 @@ fn run_cli_redact(args: &[String]) -> Result<(), String> {
         let r = pdf.sanitize_redactions(true);
         save_pdf_file(&out, &pdf, true)?;
         println!(
-            "Forensic PDF redaction complete ({} text runs purged) -> '{}'",
+            "PDF modeled-text redaction saved ({} text runs purged) -> '{}'",
             r.purged_text_runs,
             out.display()
         );
+        println!("WARNING: This parser does not inspect arbitrary image, form XObject, or unsupported PDF layers. Independently validate the output before relying on it for sensitive disclosure.");
     } else {
         let r = redact_docx_file(&in_p, &out, &opts)?;
         println!(
@@ -437,11 +439,15 @@ fn run_cli_sanitize(args: &[String]) -> Result<(), String> {
     let report = pdf.sanitize_redactions(true);
     save_pdf_file(&out, &pdf, true)?;
     println!(
-        "Forensic PDF Sanitize complete: {} redaction box(es), {} underlying text run(s) purged -> '{}'",
+        "PDF modeled-content sanitize saved: {} redaction box(es), {} text run(s) purged -> '{}'",
         report.redaction_boxes,
         report.purged_text_runs,
         out.display()
     );
+    if report.redaction_boxes == 0 {
+        println!("WARNING: No valid redaction marks were found; no content was redacted.");
+    }
+    println!("WARNING: Arbitrary image, form XObject, and unsupported PDF layers are not inspected by this parser. Independently validate the output before sensitive disclosure.");
     Ok(())
 }
 
@@ -492,8 +498,9 @@ fn run_cli_verify(args: &[String]) -> Result<(), String> {
         .ok_or("Usage: rustpad verify <SEALED.pdf>")?;
     let raw = std::fs::read(path).map_err(|e| format!("Failed reading '{path}': {e}"))?;
     let manifest = verify_pdf_seal_bytes(&raw)?;
-    println!("STATUS:      VALID (Untampered SHA-256 Content Digest)");
-    println!("Signer:      {}", manifest.signer);
+    println!("STATUS:      CONTENT DIGEST MATCHES (modeled PDF content only)");
+    println!("Signature:   NOT a digital signature; signer identity is not authenticated");
+    println!("Signer label (unverified): {}", manifest.signer);
     println!("Timestamp:   {}", manifest.date_iso);
     println!("PDF/A-2b:    {}", manifest.pdfa_conformance);
     println!("SHA-256:     {}", manifest.content_sha256);
@@ -744,7 +751,7 @@ fn inspect_file(path: &Path, mode_flag: Option<&str>) -> Result<(), String> {
             let pdf = load_pdf_file(path)?;
             let raw = std::fs::read(path).unwrap_or_default();
             let seal_state = match verify_pdf_seal_bytes(&raw) {
-                Ok(m) => format!("VALID SHA-256 ({}…)", &m.content_sha256[..16]),
+                Ok(m) => format!("DIGEST MATCH ({}…; signer unverified)", &m.content_sha256[..16]),
                 Err(_) => "Unsigned".into(),
             };
             let text_blocks: usize = pdf.pages.iter().map(|p| p.text_items.len()).sum();
