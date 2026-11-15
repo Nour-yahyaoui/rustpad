@@ -11,6 +11,7 @@ use crate::state::{
 use crate::word_view::paint_word_tab;
 use doc_model::{
     filter_math_templates, FontFamily, MathCategory, ParagraphStyle, TablePreset, TemplateKind,
+    HIGHLIGHT_PALETTE,
 };
 use docx_io::{
     inspect_formatting_consistency, inspect_security_and_hidden, save_docx_bytes,
@@ -235,6 +236,8 @@ fn paint_tab_pane(
     let p_l_w = app.pdf_left_w;
     let p_r_open = app.pdf_right_open;
     let p_r_w = app.pdf_right_w;
+    let active_hl_col = app.active_highlight_color;
+    let cur_dropdown = app.open_dropdown;
 
     let recent = app.recent_files.clone();
     let (fonts, spell, hits, line_boxes, tabs) = (
@@ -268,6 +271,8 @@ fn paint_tab_pane(
                 s,
                 w_sb_open,
                 w_sb_w,
+                active_hl_col,
+                cur_dropdown,
                 area,
                 w,
             );
@@ -1079,6 +1084,175 @@ fn paint_toolbar_dropdown(
                 app.hit_regions
                     .push(HitRegion::button(r, UiAction::SelectFontFamily(*fam)));
             }
+        }
+        ToolbarDropdown::HighlightPicker { anchor_x, anchor_y } => {
+            let mw = (228.0 * s).round();
+            let hdr_h = (26.0 * s).round();
+            let row_h = (28.0 * s).round();
+            let mh = (hdr_h + (HIGHLIGHT_PALETTE.len() as f32) * row_h + 10.0 * s + row_h + 8.0 * s)
+                .round();
+            let mx = (anchor_x as f32).min(win_w - mw - 12.0).max(8.0);
+            let my = (anchor_y as f32 + 4.0).min(win_h - mh - 12.0).max(8.0);
+            let card = Rect::new(mx, my, mw, mh);
+
+            surface.draw_paper_shadow(card, 7.0, 14.0, 26);
+            surface.fill_rounded_rect(card, 7.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(card, 7.0, 1.0, StudioTheme::border_strong());
+
+            // Determine active highlight at caret/selection (if any) so we can badge it cleanly
+            let cur_doc_hl = match app.tabs.get(app.active_tab) {
+                Some(StudioTab::Word(w)) => {
+                    if let Some(((b0, c0), _)) = w.ordered_selection() {
+                        w.doc.blocks.get(b0).and_then(|blk| match blk {
+                            doc_model::Block::Paragraph(p) => p.style_at_char(c0 + 1).highlight,
+                            _ => None,
+                        })
+                    } else {
+                        let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
+                        w.active_typing_style_for(idx).highlight
+                    }
+                }
+                _ => None,
+            };
+
+            surface.draw_text(
+                &mut app.fonts,
+                FontSlot::SansBold,
+                9.8 * s,
+                card.x + 12.0 * s,
+                card.y + 18.0 * s,
+                StudioTheme::ink_muted(),
+                "MARKER HIGHLIGHT PALETTE",
+            );
+
+            let mut ry = card.y + hdr_h;
+            for sw in &HIGHLIGHT_PALETTE {
+                let r = Rect::new(card.x + 6.0 * s, ry, mw - 12.0 * s, row_h);
+                let hov = r.contains(app.mouse_x, app.mouse_y);
+                let is_applied = cur_doc_hl == Some(sw.color);
+                let is_armed = app.active_highlight_color == sw.color;
+
+                if is_applied || hov {
+                    surface.fill_rounded_rect(
+                        r,
+                        5.0,
+                        if is_applied {
+                            StudioTheme::word_soft()
+                        } else {
+                            StudioTheme::hover()
+                        },
+                    );
+                }
+
+                // Live "Aa" highlighted sample chip
+                let chip_w = (28.0 * s).round();
+                let chip_h = (19.0 * s).round();
+                let chip = Rect::new(
+                    r.x + 8.0 * s,
+                    (r.y + (row_h - chip_h) * 0.5).round(),
+                    chip_w,
+                    chip_h,
+                );
+                surface.fill_rounded_rect(
+                    chip,
+                    4.0,
+                    Color::rgb(sw.color.r, sw.color.g, sw.color.b),
+                );
+                surface.stroke_rounded_rect(
+                    chip,
+                    4.0,
+                    if is_armed { 1.4 } else { 1.0 },
+                    if is_armed {
+                        StudioTheme::word_accent()
+                    } else {
+                        Color::rgba(15, 23, 42, 65)
+                    },
+                );
+                let aa_w = app.fonts.measure_text(FontSlot::SansBold, "Aa", 10.6 * s);
+                surface.draw_text(
+                    &mut app.fonts,
+                    FontSlot::SansBold,
+                    10.6 * s,
+                    chip.x + (chip_w - aa_w) * 0.5,
+                    chip.y + chip_h * 0.72,
+                    Color::rgb(15, 23, 42),
+                    "Aa",
+                );
+
+                surface.draw_text(
+                    &mut app.fonts,
+                    if is_applied || is_armed {
+                        FontSlot::SansBold
+                    } else {
+                        FontSlot::SansRegular
+                    },
+                    11.8 * s,
+                    chip.x + chip_w + 10.0 * s,
+                    r.y + row_h * 0.66,
+                    if is_applied {
+                        StudioTheme::word_accent()
+                    } else {
+                        StudioTheme::ink()
+                    },
+                    sw.label,
+                );
+
+                if is_applied || is_armed {
+                    let cx = r.x + r.w - 14.0 * s;
+                    let cy = r.y + row_h * 0.52;
+                    let ck = StudioTheme::word_accent();
+                    surface.draw_line(
+                        cx - 4.0 * s,
+                        cy,
+                        cx - 1.2 * s,
+                        cy + 3.0 * s,
+                        1.7 * s,
+                        ck,
+                    );
+                    surface.draw_line(
+                        cx - 1.2 * s,
+                        cy + 3.0 * s,
+                        cx + 4.5 * s,
+                        cy - 3.2 * s,
+                        1.7 * s,
+                        ck,
+                    );
+                }
+
+                app.hit_regions
+                    .push(HitRegion::button(r, UiAction::SelectHighlightColor(Some(sw.color))));
+                ry += row_h;
+            }
+
+            // Divider + Clear Highlight row
+            surface.fill_rect(
+                Rect::new(card.x + 10.0 * s, ry + 4.0 * s, mw - 20.0 * s, 1.0),
+                StudioTheme::border(),
+            );
+            ry += 9.0 * s;
+
+            let clear_r = Rect::new(card.x + 6.0 * s, ry, mw - 12.0 * s, row_h);
+            if clear_r.contains(app.mouse_x, app.mouse_y) {
+                surface.fill_rounded_rect(clear_r, 5.0, StudioTheme::hover());
+            }
+            surface.draw_icon(
+                UiIcon::Close,
+                clear_r.x + 22.0 * s,
+                clear_r.y + row_h * 0.50,
+                9.5 * s,
+                StudioTheme::ink_sub(),
+            );
+            surface.draw_text(
+                &mut app.fonts,
+                FontSlot::SansRegular,
+                11.8 * s,
+                clear_r.x + 46.0 * s,
+                clear_r.y + row_h * 0.66,
+                StudioTheme::ink_sub(),
+                "No Highlight (Clear)",
+            );
+            app.hit_regions
+                .push(HitRegion::button(clear_r, UiAction::SelectHighlightColor(None)));
         }
         ToolbarDropdown::TableCreator {
             anchor_x,

@@ -105,11 +105,11 @@
             GitHub ↗
           </a>
           <a
-            href="https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.13"
+            href="https://github.com/Nour-yahyaoui/rustpad/releases/tag/v3.0.15"
             class="desktop-dl-btn"
             id="header-download-cta"
           >
-            Download v3.0.13
+            Download v3.0.15
           </a>
 
           <!-- Mobile Top Menu Trigger (< 1024px) -->
@@ -174,15 +174,15 @@
 
           <div class="mobile-menu-actions">
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.13/rustpad-v3.0.13-windows-x86_64.exe"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.15/rustpad-v3.0.15-windows-x86_64.exe"
               class="btn btn-primary btn-block"
               id="mobile-primary-dl"
             >
-              Download Windows x64 (.exe) — v3.0.13
+              Download Windows x64 (.exe) — v3.0.15
             </a>
             <div class="mobile-menu-subgrid">
               <a
-                href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.13/rustpad-v3.0.13-linux-x86_64"
+                href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.15/rustpad-v3.0.15-linux-x86_64"
                 class="btn btn-secondary"
               >
                 Linux x86_64
@@ -211,7 +211,7 @@
           <div class="hero-eyebrow-row">
             <span class="eyebrow-pill">
               <span class="pulse-dot" aria-hidden="true"></span>
-              <span>RUSTPAD v3.0 · NATIVE DARK MODE · OOXML INTELLIGENCE · 100+ MB ASYNC ENGINE · 0 DEPS</span>
+              <span>RUSTPAD v3.0.15 · 8-COLOR MARKER HIGHLIGHTS · CID PDF TEXT FIX · NATIVE DARK MODE · 0 DEPS</span>
             </span>
           </div>
 
@@ -224,12 +224,13 @@
             <strong>Human UX and zero-freeze responsiveness are the #1 feature of RustPad — even on 30–100+ MB multi-screenshot <code>.docx</code> files.</strong>
             Stream giant archives off the UI thread via a 32 MiB-stack worker, zero-copy <code>LazyZipArchive</code> (ZIP64),
             pull-streamed OOXML &amp; MCU-row JPEG/PNG thumbnailing, author 83+ inline math formulas &amp; 8×8 visual tables,
-            and work 100% offline in one <strong>~4.1 MB</strong> binary with <strong>0 crates.io dependencies</strong>.
+            highlight prose in <strong>8 curated marker colors</strong>, and read Word-exported PDFs cleanly via <strong>/ToUnicode CID decoding</strong> —
+            all 100% offline in one <strong>~4.1 MB</strong> binary with <strong>0 crates.io dependencies</strong>.
           </p>
 
           <div class="hero-cta-group">
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.13/rustpad-v3.0.13-windows-x86_64.exe"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.15/rustpad-v3.0.15-windows-x86_64.exe"
               class="btn btn-primary btn-lg"
               id="hero-primary-dl"
             >
@@ -237,11 +238,11 @@
                 <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M4 19h16" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
               <span id="hero-primary-dl-label">Download Windows x64 (.exe)</span>
-              <span class="btn-tag">v3.0.13</span>
+              <span class="btn-tag">v3.0.15</span>
             </a>
 
             <a
-              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.13/rustpad-v3.0.13-linux-x86_64"
+              href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.15/rustpad-v3.0.15-linux-x86_64"
               class="btn btn-secondary btn-lg"
               id="hero-secondary-dl"
             >
@@ -274,7 +275,7 @@
           </div>
 
           <div class="hero-meta-links">
-            <a href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.13/SHA256SUMS.txt">SHA256SUMS.txt</a>
+            <a href="https://github.com/Nour-yahyaoui/rustpad/releases/download/v3.0.15/SHA256SUMS.txt">SHA256SUMS.txt</a>
             <span aria-hidden="true">·</span>
             <a href="https://github.com/Nour-yahyaoui/rustpad/blob/main/SECURITY.md" target="_blank" rel="noopener noreferrer">SECURITY.md</a>
             <span aria-hidden="true">·</span>
@@ -405,8 +406,15 @@
                 <button type="button" class="ux-pop-btn" data-ux-fmt="underline" aria-pressed="false" title="Toggle Underline (Ctrl+U)">
                   <span style="text-decoration: underline">U</span>
                 </button>
-                <button type="button" class="ux-pop-btn" data-ux-fmt="highlight" aria-pressed="true" title="Cycle Marker Highlight">
-                  Highlight
+                <span class="ux-pop-sep" aria-hidden="true"></span>
+                <button type="button" class="ux-hl-swatch is-active" data-ux-hl="#fef08a" data-ux-hl-name="Sunbeam Yellow" aria-label="Highlight Sunbeam Yellow" title="Sunbeam Yellow (#FEF08A)"></button>
+                <button type="button" class="ux-hl-swatch" data-ux-hl="#bbf7d0" data-ux-hl-name="Mint Emerald" aria-label="Highlight Mint Emerald" title="Mint Emerald (#BBF7D0)"></button>
+                <button type="button" class="ux-hl-swatch" data-ux-hl="#bae6fd" data-ux-hl-name="Sky Cyan" aria-label="Highlight Sky Cyan" title="Sky Cyan (#BAE6FD)"></button>
+                <button type="button" class="ux-hl-swatch" data-ux-hl="#fecdd3" data-ux-hl-name="Coral Rose" aria-label="Highlight Coral Rose" title="Coral Rose (#FECDD3)"></button>
+                <button type="button" class="ux-hl-swatch" data-ux-hl="#ddd6fe" data-ux-hl-name="Soft Lavender" aria-label="Highlight Soft Lavender" title="Soft Lavender (#DDD6FE)"></button>
+                <button type="button" class="ux-hl-swatch" data-ux-hl="#fed7aa" data-ux-hl-name="Warm Peach" aria-label="Highlight Warm Peach" title="Warm Peach (#FED7AA)"></button>
+                <button type="button" class="ux-pop-btn" data-ux-hl="" data-ux-hl-name="None" title="Clear Marker Highlight">
+                  ✕
                 </button>
               </div>
 
@@ -710,7 +718,7 @@
         </div>
 
         <div class="footer-bottom">
-          <span>MIT License · RustPad v3.0.13 · Windows code signing via <a href="https://signpath.io/" target="_blank" rel="noopener noreferrer">SignPath.io</a> (<a href="https://signpath.org/" target="_blank" rel="noopener noreferrer">SignPath Foundation</a>) · Zero Telemetry</span>
+          <span>MIT License · RustPad v3.0.15 · Windows code signing via <a href="https://signpath.io/" target="_blank" rel="noopener noreferrer">SignPath.io</a> (<a href="https://signpath.org/" target="_blank" rel="noopener noreferrer">SignPath Foundation</a>) · Zero Telemetry</span>
           <a href="#hero">Back to top ↑</a>
         </div>
       </div>

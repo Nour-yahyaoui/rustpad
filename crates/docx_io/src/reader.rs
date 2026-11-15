@@ -854,8 +854,12 @@ fn parse_run(
             style.highlight = match hl_name {
                 "yellow" => Some(RgbColor::AMBER_HIGHLIGHT),
                 "green" => Some(RgbColor::MINT_HIGHLIGHT),
-                "cyan" | "blue" => Some(RgbColor::SKY_HIGHLIGHT),
-                "magenta" | "red" => Some(RgbColor::ROSE_HIGHLIGHT),
+                "cyan" | "blue" | "darkCyan" | "darkBlue" => Some(RgbColor::SKY_HIGHLIGHT),
+                "magenta" | "red" | "darkRed" => Some(RgbColor::ROSE_HIGHLIGHT),
+                "darkMagenta" | "violet" => Some(RgbColor::LAVENDER_HIGHLIGHT),
+                "darkYellow" | "orange" => Some(RgbColor::PEACH_HIGHLIGHT),
+                "darkGreen" => Some(RgbColor::LIME_HIGHLIGHT),
+                "lightGray" | "darkGray" => Some(RgbColor::STONE_HIGHLIGHT),
                 _ => None,
             };
         }

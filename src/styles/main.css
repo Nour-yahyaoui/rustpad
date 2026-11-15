@@ -1843,7 +1843,36 @@ pre {
 }
 
 .ux-span-chip.is-hl {
-  background: #fef08a;
+  background: var(--hl-bg, #fef08a);
+  color: #0f172a;
+}
+
+.ux-pop-sep {
+  width: 1px;
+  height: 16px;
+  background: rgba(148, 163, 184, 0.38);
+  margin: 0 2px;
+}
+
+.ux-hl-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 1px solid rgba(15, 23, 42, 0.24);
+  background: var(--swatch-color, #fef08a);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.ux-hl-swatch:hover {
+  transform: translateY(-1px) scale(1.06);
+}
+
+.ux-hl-swatch.is-active {
+  box-shadow: 0 0 0 2px #235cb8;
+  border-color: #235cb8;
 }
 
 .ux-span-chip.is-hl.is-selected {

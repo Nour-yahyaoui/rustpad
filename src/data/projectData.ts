@@ -50,7 +50,7 @@ export interface TourStep {
   body: string;
 }
 
-export const RELEASE_VERSION = 'v3.0.13';
+export const RELEASE_VERSION = 'v3.0.15';
 export const REPO_URL = 'https://github.com/Nour-yahyaoui/rustpad';
 export const RELEASE_TAG_URL = `${REPO_URL}/releases/tag/${RELEASE_VERSION}`;
 
@@ -173,11 +173,15 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
     image: '/screenshots/word-studio.png',
     alt: 'RustPad v3.0 Word Studio showing Native Dark Mode, 60–120Hz smooth sheet rendering, async streaming 100+ MB large-doc engine, inline math formulas, footnotes/endnotes, and ECMA-376 Track Changes legal redlines.',
     summary:
-      'Switch seamlessly between Daylight, Midnight Dark Mode, and Hybrid Dark Desk (Ctrl+Shift+D) with zero-mutation render-time ink adaptation, inspect OOXML security & hidden text (Ctrl+Shift+J), and review legal redlines in 1 click.',
+      'Switch seamlessly between Daylight, Midnight Dark Mode, and Hybrid Dark Desk (Ctrl+Shift+D) with zero-mutation render-time ink adaptation, highlight prose in 8 curated marker colors (Ctrl+Shift+H), inspect OOXML security & hidden text (Ctrl+Shift+J), and review legal redlines in 1 click.',
     highlights: [
       {
         tag: '3-Mode Dark Studio',
         detail: 'Daylight, Midnight & Hybrid Dark Desk + native Win11 DWMWA_USE_IMMERSIVE_DARK_MODE titlebars',
+      },
+      {
+        tag: '8-Color Marker Highlights',
+        detail: 'Split Mark | ▾ ribbon picker + 1-click floating swatches, lossless .docx/HTML round-trip',
       },
       {
         tag: 'OOXML Intelligence',
@@ -199,8 +203,12 @@ export const STUDIO_SPECIMENS: StudioSpecimen[] = [
     image: '/screenshots/pdf-studio.png',
     alt: 'RustPad v3.0.0 Forensic PDF Studio with Sanitize Redactions, SHA-256 Tamper Seal, Bezier ink signature, stamp, and PDF 1.5+ ObjStm parser.',
     summary:
-      'Glide through multi-page PDFs with 60Hz kinetic spring scrolling, physically purge redacted underlying glyph runs, export archival PDF/A-2b XMP packets, and embed verifiable SHA-256 tamper seals.',
+      'Glide through multi-page PDFs with 60Hz kinetic spring scrolling, read Word-exported CID/Type0 PDFs cleanly via /ToUnicode CMap decoding, physically purge redacted underlying glyph runs, export archival PDF/A-2b XMP packets, and embed verifiable SHA-256 tamper seals.',
     highlights: [
+      {
+        tag: 'ToUnicode CID Decoding',
+        detail: 'Word-exported Aptos/SymbolMT PDFs extract as clean text — no more scattered symbols',
+      },
       {
         tag: 'Forensic Sanitize',
         detail: 'Physically deletes underlying text runs & metadata inside redaction rectangles',
@@ -358,7 +366,7 @@ export const CRATE_LEDGER: CrateSpec[] = [
     layer: 'Forensic PDF & Seals',
     standard: 'ISO 32000 ObjStm + SHA-256',
     responsibility:
-      'PDF 1.5+ /ObjStm & PNG predictor unpacker, forensic sanitize_redactions, /RustPadSeal signer & verifier.',
+      'PDF 1.5+ /ObjStm & PNG predictor unpacker, /ToUnicode CMap CID text decoding, forensic sanitize_redactions, /RustPadSeal signer & verifier.',
     keyModules: 'crates/pdf_engine/src/{parser,writer,lib}.rs',
   },
   {

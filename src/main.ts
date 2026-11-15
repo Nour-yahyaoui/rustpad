@@ -428,6 +428,9 @@ function initUxSandbox(): void {
   const fmtBtns = Array.from(
     shell.querySelectorAll<HTMLButtonElement>('[data-ux-fmt]'),
   );
+  const hlBtns = Array.from(
+    shell.querySelectorAll<HTMLButtonElement>('[data-ux-hl]'),
+  );
   const focusToggleBtn = document.getElementById('ux-focus-toggle');
   const exitFocusBtn = document.getElementById('ux-exit-focus') as HTMLButtonElement | null;
   const acceptBtn = document.getElementById('ux-accept-clause') as HTMLButtonElement | null;
@@ -452,11 +455,15 @@ function initUxSandbox(): void {
       bold: active.classList.contains('is-bold'),
       italic: active.classList.contains('is-italic'),
       underline: active.classList.contains('is-under'),
-      highlight: active.classList.contains('is-hl'),
     };
     fmtBtns.forEach((btn) => {
       const k = btn.dataset.uxFmt || '';
       btn.setAttribute('aria-pressed', map[k] ? 'true' : 'false');
+    });
+    const curHl = (active.dataset.hlColor || (active.classList.contains('is-hl') ? '#fef08a' : '')).toLowerCase();
+    hlBtns.forEach((sw) => {
+      const col = (sw.dataset.uxHl || '').toLowerCase();
+      sw.classList.toggle('is-active', col !== '' && col === curHl);
     });
   };
 
@@ -479,11 +486,38 @@ function initUxSandbox(): void {
       if (fmt === 'bold') active.classList.toggle('is-bold');
       if (fmt === 'italic') active.classList.toggle('is-italic');
       if (fmt === 'underline') active.classList.toggle('is-under');
-      if (fmt === 'highlight') active.classList.toggle('is-hl');
       syncToolbarState();
       if (toastEl) {
         toastEl.textContent = `Applied ${fmt?.toUpperCase()} strictly to selected substring (Paragraph::transform_range)`;
       }
+    });
+  });
+
+  hlBtns.forEach((sw) => {
+    const swHex = sw.dataset.uxHl || '';
+    if (swHex) {
+      sw.style.setProperty('--swatch-color', swHex);
+    }
+    sw.addEventListener('click', () => {
+      const active = phraseBtns[activeIdx];
+      if (!active) return;
+      const cur = (active.dataset.hlColor || (active.classList.contains('is-hl') ? '#fef08a' : '')).toLowerCase();
+      if (!swHex || cur === swHex.toLowerCase()) {
+        active.classList.remove('is-hl');
+        delete active.dataset.hlColor;
+        active.style.removeProperty('--hl-bg');
+        if (toastEl) {
+          toastEl.textContent = 'Cleared marker highlight from selected span';
+        }
+      } else {
+        active.classList.add('is-hl');
+        active.dataset.hlColor = swHex;
+        active.style.setProperty('--hl-bg', swHex);
+        if (toastEl) {
+          toastEl.textContent = `Highlighted selection in ${sw.dataset.uxHlName || swHex} (${swHex.toUpperCase()})`;
+        }
+      }
+      syncToolbarState();
     });
   });
 
