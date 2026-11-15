@@ -2,6 +2,10 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`) follow our continuous release workflow (`Issue → PR → CI Matrix → GitHub Release`).
 
+## [v3.0.15] - 2026-11-15 — Fixed Garbled PDF Text: `/ToUnicode` CMap Decoding for CID/Type0 Fonts
+### Fixed
+- **Word-Exported PDFs No Longer Show Scattered Symbols (`crates/pdf_engine/src/parser.rs`)**: The PDF parser now resolves each page's `/Font` resources (including inherited `/Parent` resources), loads every font's `/ToUnicode` CMap (`beginbfchar` + `beginbfrange` in array and sequential forms, multi-codepoint ligatures, and UTF-16BE surrogate pairs), and decodes composite-font (`/Type0` + `/Identity-H`) hex strings as CIDs instead of WinAnsi bytes. PDFs exported from Microsoft Word (subset `Aptos` / `SymbolMT` / `SegoeUIEmoji` fonts) now extract clean text — e.g. `Compte Rendu_TP3` reads `Chaque étudiant doit indiquer obligatoirement son nom…` instead of `! " # $ % & ' ( ) * + …`. Also added `'` / `"` / `TL` / `T*` text operators and UTF-16BE BOM handling for PDF metadata strings.
+
 ## [v3.0.14] - 2026-11-05 — Colorful Marker Highlights (`8` Curated Swatches + Split `Mark | ▾` Ribbon + Floating Selection Dots)
 ### Added & Upgraded
 - **Curated 8-Color Marker Highlight Palette (`crates/doc_model/src/lib.rs`)**: Added `LAVENDER_HIGHLIGHT` (`#DDD6FE`), `PEACH_HIGHLIGHT` (`#FED7AA`), `LIME_HIGHLIGHT` (`#D9F99D`), and `STONE_HIGHLIGHT` (`#E7E5E4`) alongside `AMBER_HIGHLIGHT`, `MINT_HIGHLIGHT`, `SKY_HIGHLIGHT`, and `ROSE_HIGHLIGHT`, exported via `HighlightSwatch`, `HIGHLIGHT_PALETTE`, and `highlight_color_label`.

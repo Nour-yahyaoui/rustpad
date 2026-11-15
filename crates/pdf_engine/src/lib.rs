@@ -623,4 +623,56 @@ mod tests {
         forged.extend_from_slice(fake_seal_obj.as_bytes());
         assert!(verify_pdf_seal_bytes(&forged).is_err());
     }
+
+    #[test]
+    fn test_pdf_tounicode_cmap_decodes_cid_font_text() {
+        // Word-style composite font: /Type0 + /Identity-H with a /ToUnicode
+        // CMap. CIDs: 1=H 2=i 3=space 4=W 5=o 6=r 7=l 8=d 9="fi" ligature.
+        // Before the ToUnicode fix these hex CIDs decoded as WinAnsi and the
+        // page showed scattered symbols ("%", "&", "'", ...) instead of text.
+        let cmap = "\
+/CIDInit /ProcSet findresource begin\n\
+10 dict begin\n\
+begincmap\n\
+1 begincodespacerange\n\
+<0000> <FFFF>\n\
+endcodespacerange\n\
+2 beginbfchar\n\
+<0001> <0048>\n\
+<0002> <0069>\n\
+endbfchar\n\
+2 beginbfrange\n\
+<0003> <0008> [<0020> <0057> <006F> <0072> <006C> <0064>]\n\
+<0009> <0009> <00660069>\n\
+endbfrange\n\
+endcmap\n\
+end\n\
+end";
+        let cmap_z = zlib_compress(cmap.as_bytes());
+        let content = b"BT /F1 12 Tf 1 0 0 1 72 720 Tm [<000100020003000400050006000700080009>] TJ ET";
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.7\n");
+        pdf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        pdf.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+        pdf.extend_from_slice(b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n");
+        pdf.extend_from_slice(b"4 0 obj\n<< /Type /Font /Subtype /Type0 /BaseFont /ABCDEF+Aptos /Encoding /Identity-H /ToUnicode 6 0 R >>\nendobj\n");
+        pdf.extend_from_slice(
+            format!("5 0 obj\n<< /Length {} >>\nstream\n", content.len()).as_bytes(),
+        );
+        pdf.extend_from_slice(content);
+        pdf.extend_from_slice(b"\nendstream\nendobj\n");
+        pdf.extend_from_slice(
+            format!(
+                "6 0 obj\n<< /Length {} /Filter /FlateDecode >>\nstream\n",
+                cmap_z.len()
+            )
+            .as_bytes(),
+        );
+        pdf.extend_from_slice(&cmap_z);
+        pdf.extend_from_slice(b"\nendstream\nendobj\n%%EOF\n");
+
+        let doc = load_pdf_bytes(&pdf).expect("parse CID PDF");
+        let text = doc.extract_all_text();
+        assert!(text.contains("Hi Worldfi"), "unexpected text: {text:?}");
+    }
 }

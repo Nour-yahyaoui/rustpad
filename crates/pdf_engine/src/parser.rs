@@ -3,7 +3,7 @@
 use crate::{PdfAnnotation, PdfDocument, PdfPage, PdfRectItem, PdfTextItem};
 use doc_model::{FontFamily, PaperSize, RgbColor};
 use rustpad_zip::{deflate_decompress, zlib_decompress};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 pub fn load_pdf_file(path: impl AsRef<Path>) -> Result<PdfDocument, String> {
@@ -79,7 +79,8 @@ pub fn load_pdf_bytes(bytes: &[u8]) -> Result<PdfDocument, String> {
             }
         }
 
-        let mut page = parse_content_stream(&combined_stream, w_pt, h_pt, rot);
+        let font_map = collect_page_font_map(&hdr, &objects);
+        let mut page = parse_content_stream(&combined_stream, w_pt, h_pt, rot, &font_map);
         extract_page_annots(&hdr, &objects, &mut page);
         pages.push(page);
     }
@@ -418,8 +419,16 @@ fn extract_pdf_paren_field(text: &str, key: &str) -> Option<String> {
     if !rest.starts_with('(') {
         return None;
     }
-    let (decoded, _) = parse_pdf_literal_string(rest.as_bytes());
-    Some(decoded)
+    let (raw, _) = parse_pdf_literal_string(rest.as_bytes());
+    Some(pdf_text_string_to_utf8(&raw))
+}
+
+/// Decodes a PDF text string: UTF-16BE when BOM-prefixed, else WinAnsi.
+fn pdf_text_string_to_utf8(raw: &[u8]) -> String {
+    if raw.starts_with(&[0xFE, 0xFF]) {
+        return utf16be_bytes_to_string(&raw[2..]);
+    }
+    winansi_bytes_to_utf8(raw)
 }
 
 fn extract_page_annots(hdr: &str, objects: &BTreeMap<u32, Vec<u8>>, page: &mut PdfPage) {
@@ -469,6 +478,370 @@ fn extract_rect_4(hdr: &str) -> Option<(f32, f32, f32, f32)> {
     }
 }
 
+/// Resolved font information for one `/Font` resource entry on a page.
+///
+/// `to_unicode` holds the font's `/ToUnicode` CMap (CID → Unicode) when the
+/// font is a composite (`/Type0` + `/Identity-H`) font whose text strings
+/// carry glyph IDs instead of characters. Simple fonts leave it empty and
+/// their strings are decoded as WinAnsi, as before.
+#[derive(Debug, Clone)]
+struct FontInfo {
+    family: FontFamily,
+    bold: bool,
+    italic: bool,
+    to_unicode: HashMap<u32, String>,
+    /// Bytes per character code in this font's strings (2 for Identity-H).
+    code_len: usize,
+}
+
+impl FontInfo {
+    fn simple(family: FontFamily, bold: bool, italic: bool) -> Self {
+        Self {
+            family,
+            bold,
+            italic,
+            to_unicode: HashMap::new(),
+            code_len: 1,
+        }
+    }
+}
+
+impl Default for FontInfo {
+    fn default() -> Self {
+        Self::simple(FontFamily::Sans, false, false)
+    }
+}
+
+/// Decodes one text string's raw bytes with the active font: CID strings go
+/// through the font's `/ToUnicode` CMap, simple-font strings as WinAnsi.
+fn decode_text_bytes(raw: &[u8], font: &FontInfo) -> String {
+    if font.to_unicode.is_empty() {
+        return winansi_bytes_to_utf8(raw);
+    }
+    let code_len = font.code_len.max(1);
+    let mut out = String::with_capacity(raw.len());
+    for chunk in raw.chunks_exact(code_len) {
+        let mut code: u32 = 0;
+        for &b in chunk {
+            code = (code << 8) | b as u32;
+        }
+        if let Some(s) = font.to_unicode.get(&code) {
+            out.push_str(s);
+        }
+        // Unmapped CIDs are skipped: they carry no Unicode meaning, and
+        // falling back to the raw low byte is what produced garbled symbols.
+    }
+    out
+}
+
+/// Builds the resource-name → font map for one page, resolving `/ToUnicode`
+/// CMaps and `/BaseFont` names. Falls back to the page's `/Parent` chain
+/// when the page itself declares no `/Font` resources.
+fn collect_page_font_map(
+    page_hdr: &str,
+    objects: &BTreeMap<u32, Vec<u8>>,
+) -> HashMap<String, FontInfo> {
+    let mut map = HashMap::new();
+    let mut hdr = page_hdr.to_string();
+    let mut visited: Vec<u32> = Vec::new();
+    loop {
+        if let Some(font_dict) = extract_font_dict(&hdr) {
+            for (name, obj_id) in parse_font_resource_refs(&font_dict) {
+                if let Some(body) = objects.get(&obj_id) {
+                    map.insert(name, resolve_font_info(body, objects));
+                }
+            }
+            if !map.is_empty() {
+                return map;
+            }
+        }
+        // Walk up to the parent /Pages node for inherited resources.
+        let Some(parent_id) = extract_single_ref(&hdr, "/Parent") else {
+            return map;
+        };
+        if visited.contains(&parent_id) {
+            return map;
+        }
+        visited.push(parent_id);
+        let Some(parent_body) = objects.get(&parent_id) else {
+            return map;
+        };
+        hdr = header_ascii(parent_body);
+    }
+}
+
+/// Extracts the `/Font << ... >>` dictionary substring (balanced `<< >>`).
+fn extract_font_dict(hdr: &str) -> Option<String> {
+    let pos = hdr.find("/Font")?;
+    let after = &hdr[pos + 5..];
+    let start = after.find("<<")?;
+    let mut depth = 0usize;
+    let mut i = start;
+    let bytes = after.as_bytes();
+    while i + 1 < bytes.len() {
+        if &bytes[i..i + 2] == b"<<" {
+            depth += 1;
+            i += 2;
+            continue;
+        }
+        if &bytes[i..i + 2] == b">>" {
+            depth -= 1;
+            i += 2;
+            if depth == 0 {
+                return Some(after[start..i].to_string());
+            }
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Parses `/F1 15 0 R /F2 16 0 R ...` resource references.
+fn parse_font_resource_refs(dict: &str) -> Vec<(String, u32)> {
+    let tokens: Vec<&str> = dict.split_whitespace().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 3 < tokens.len() {
+        if tokens[i].starts_with('/')
+            && tokens[i + 1].parse::<u32>().is_ok()
+            && tokens[i + 2].parse::<u32>().is_ok()
+            && tokens[i + 3] == "R"
+        {
+            out.push((
+                tokens[i][1..].to_string(),
+                tokens[i + 1].parse::<u32>().unwrap_or(0),
+            ));
+            i += 4;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Extracts a single `key N 0 R` indirect reference value.
+fn extract_single_ref(hdr: &str, key: &str) -> Option<u32> {
+    let pos = hdr.find(key)?;
+    let rest = hdr[pos + key.len()..].trim_start();
+    let mut parts = rest.split_whitespace();
+    let id: u32 = parts.next()?.parse().ok()?;
+    let _gen: u32 = parts.next()?.parse().ok()?;
+    if parts.next()? == "R" {
+        Some(id)
+    } else {
+        None
+    }
+}
+
+/// Resolves one font dictionary into a `FontInfo`, loading its `/ToUnicode`
+/// CMap when present.
+fn resolve_font_info(font_body: &[u8], objects: &BTreeMap<u32, Vec<u8>>) -> FontInfo {
+    let hdr = header_ascii(font_body);
+    let base = extract_font_name(&hdr, "/BaseFont").unwrap_or_default();
+    let (family, bold, italic) = classify_font_name(&base);
+    let mut info = FontInfo::simple(family, bold, italic);
+    if let Some(tu_id) = extract_single_ref(&hdr, "/ToUnicode") {
+        if let Some(tu_body) = objects.get(&tu_id) {
+            if let Some(decoded) = decode_stream_object(tu_body) {
+                let (map, code_len) = parse_tounicode_cmap(&decoded);
+                if !map.is_empty() {
+                    info.to_unicode = map;
+                    info.code_len = code_len;
+                }
+            }
+        }
+    }
+    info
+}
+
+/// Extracts a `/Name` value, decoding `#XX` hex escapes (`#20` → space).
+fn extract_font_name(hdr: &str, key: &str) -> Option<String> {
+    let pos = hdr.find(key)?;
+    let rest = hdr[pos + key.len()..].trim_start();
+    if !rest.starts_with('/') {
+        return None;
+    }
+    let tok = rest[1..]
+        .split(|c: char| c.is_whitespace() || c == '/' || c == '>' || c == '<')
+        .next()?;
+    Some(decode_name_escapes(tok))
+}
+
+fn decode_name_escapes(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'#' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (
+                (bytes[i + 1] as char).to_digit(16),
+                (bytes[i + 2] as char).to_digit(16),
+            ) {
+                out.push(((h << 4) | l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Maps a `/BaseFont` name (subset prefix `ABCDEF+` stripped) to a family
+/// plus bold/italic flags.
+fn classify_font_name(base: &str) -> (FontFamily, bool, bool) {
+    let stripped = match base.split_once('+') {
+        Some((prefix, rest))
+            if prefix.len() == 6 && prefix.chars().all(|c| c.is_ascii_uppercase()) =>
+        {
+            rest
+        }
+        _ => base,
+    };
+    let low = stripped.to_ascii_lowercase();
+    let bold = low.contains("bold") || low.contains("black") || low.contains("heavy");
+    let italic = low.contains("italic") || low.contains("oblique");
+    (FontFamily::from_docx_name(&low), bold, italic)
+}
+
+/// Parses a `/ToUnicode` CMap stream into a CID → Unicode map plus the
+/// character-code length in bytes (from `begincodespacerange`).
+fn parse_tounicode_cmap(decoded: &[u8]) -> (HashMap<u32, String>, usize) {
+    let text = String::from_utf8_lossy(decoded);
+    let mut map: HashMap<u32, String> = HashMap::new();
+    let mut code_len = 2usize;
+
+    // Codespace: the first range's source length defines the code size.
+    if let Some(cs) = text.find("begincodespacerange") {
+        let after = &text[cs + "begincodespacerange".len()..];
+        if let Some((lo_hex, _)) = parse_hex_pair(after) {
+            code_len = (lo_hex.len() / 2).max(1);
+        }
+    }
+
+    // beginbfchar: <src> <dst> pairs.
+    for section in text.split("beginbfchar").skip(1) {
+        let body = section.split("endbfchar").next().unwrap_or("");
+        for line in body.lines() {
+            if let Some((src, dst)) = parse_hex_pair(line) {
+                if let Ok(code) = u32::from_str_radix(&src, 16) {
+                    map.insert(code, utf16be_hex_to_string(dst));
+                }
+            }
+        }
+    }
+
+    // beginbfrange: <lo> <hi> [<d1> <d2> ...] or <lo> <hi> <dst> (dst increments).
+    for section in text.split("beginbfrange").skip(1) {
+        let body = section.split("endbfrange").next().unwrap_or("");
+        for line in body.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Some((lo_hex, rest)) = parse_hex_pair(line) else {
+                continue;
+            };
+            let Some((hi_hex, rest)) = parse_hex_pair(rest) else {
+                continue;
+            };
+            let (Ok(lo), Ok(hi)) = (
+                u32::from_str_radix(&lo_hex, 16),
+                u32::from_str_radix(&hi_hex, 16),
+            ) else {
+                continue;
+            };
+            if hi < lo || hi - lo > 65_535 {
+                continue;
+            }
+            let rest = rest.trim();
+            if let Some(arr) = rest.strip_prefix('[') {
+                let inner = arr.split(']').next().unwrap_or("");
+                for (i, dst) in hex_tokens(inner).iter().enumerate() {
+                    map.insert(lo + i as u32, utf16be_hex_to_string(dst));
+                }
+            } else if let Some((dst_hex, _)) = parse_hex_pair(rest) {
+                // Sequential form: dst, dst+1, ... as big-endian integers.
+                let dst_bytes = hex_to_bytes(&dst_hex);
+                let base_val: u64 = dst_bytes.iter().fold(0u64, |a, &b| (a << 8) | b as u64);
+                let width = dst_bytes.len().max(1);
+                for code in lo..=hi {
+                    let mut val = base_val.wrapping_add((code - lo) as u64);
+                    let mut bytes = vec![0u8; width];
+                    for i in (0..width).rev() {
+                        bytes[i] = (val & 0xFF) as u8;
+                        val >>= 8;
+                    }
+                    map.insert(code, utf16be_bytes_to_string(&bytes));
+                }
+            }
+        }
+    }
+
+    (map, code_len)
+}
+
+/// Parses `<XXXX>` at the start of `s`, returning the hex digits and the rest.
+fn parse_hex_pair(s: &str) -> Option<(String, &str)> {
+    let s = s.trim_start();
+    if !s.starts_with('<') {
+        return None;
+    }
+    let end = s.find('>')?;
+    let hex = s[1..end].trim().to_string();
+    if hex.is_empty() || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some((hex, &s[end + 1..]))
+}
+
+/// Collects all `<XXXX>` hex tokens in `s`.
+fn hex_tokens(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = s;
+    while let Some((hex, after)) = parse_hex_pair(rest) {
+        out.push(hex);
+        rest = after;
+    }
+    out
+}
+
+fn hex_to_bytes(hex: &str) -> Vec<u8> {
+    let clean: Vec<u8> = hex.bytes().filter(|b| b.is_ascii_hexdigit()).collect();
+    let mut bytes = Vec::with_capacity(clean.len().div_ceil(2));
+    let mut i = 0;
+    while i < clean.len() {
+        let hi = (clean[i] as char).to_digit(16).unwrap_or(0) as u8;
+        let lo = if i + 1 < clean.len() {
+            (clean[i + 1] as char).to_digit(16).unwrap_or(0) as u8
+        } else {
+            0
+        };
+        bytes.push((hi << 4) | lo);
+        i += 2;
+    }
+    bytes
+}
+
+/// Decodes a CMap destination hex string (UTF-16BE) to a Rust string,
+/// handling surrogate pairs (e.g. `<D83DDCF8>` → 📸) and multi-codepoint
+/// ligatures (e.g. `<00660069>` → "fi").
+fn utf16be_hex_to_string(hex: &str) -> String {
+    utf16be_bytes_to_string(&hex_to_bytes(hex))
+}
+
+fn utf16be_bytes_to_string(bytes: &[u8]) -> String {
+    let units: Vec<u16> = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_be_bytes(*c))
+        .collect();
+    String::from_utf16_lossy(&units)
+}
+
 #[derive(Clone)]
 struct GfxState {
     fill_rgb: RgbColor,
@@ -486,7 +859,13 @@ impl Default for GfxState {
     }
 }
 
-fn parse_content_stream(stream: &str, width_pt: f32, height_pt: f32, rotation_deg: u16) -> PdfPage {
+fn parse_content_stream(
+    stream: &str,
+    width_pt: f32,
+    height_pt: f32,
+    rotation_deg: u16,
+    font_map: &HashMap<String, FontInfo>,
+) -> PdfPage {
     let tokens = tokenize_pdf_content(stream.as_bytes());
     let mut state = GfxState::default();
     let mut stack: Vec<GfxState> = Vec::new();
@@ -495,7 +874,9 @@ fn parse_content_stream(stream: &str, width_pt: f32, height_pt: f32, rotation_de
     let mut cur_font = FontFamily::Sans;
     let mut cur_bold = false;
     let mut cur_italic = false;
+    let mut cur_font_info = FontInfo::default();
     let mut cur_size = 11.5f32;
+    let mut leading = 0.0f32;
     let mut text_x = 0.0f32;
     let mut text_y = 0.0f32;
     let mut pending_rect: Option<(f32, f32, f32, f32)> = None;
@@ -562,14 +943,42 @@ fn parse_content_stream(stream: &str, width_pt: f32, height_pt: f32, rotation_de
                         let sz = pop_num(&mut operand_stack).unwrap_or(11.5);
                         cur_size = sz.abs().max(6.0);
                         if let Some(PdfToken::Name(fname)) = operand_stack.pop() {
-                            decode_font_alias(&fname, &mut cur_font, &mut cur_bold, &mut cur_italic);
+                            if let Some(info) = font_map.get(&fname) {
+                                cur_font = info.family;
+                                cur_bold = info.bold;
+                                cur_italic = info.italic;
+                                cur_font_info = info.clone();
+                            } else {
+                                decode_font_alias(
+                                    &fname,
+                                    &mut cur_font,
+                                    &mut cur_bold,
+                                    &mut cur_italic,
+                                );
+                                cur_font_info = FontInfo::default();
+                            }
                         }
                     }
-                    "Td" | "TD" => {
+                    "Td" => {
                         let ty = pop_num(&mut operand_stack).unwrap_or(0.0);
                         let tx = pop_num(&mut operand_stack).unwrap_or(0.0);
                         text_x += tx;
                         text_y += ty;
+                    }
+                    "TD" => {
+                        let ty = pop_num(&mut operand_stack).unwrap_or(0.0);
+                        let tx = pop_num(&mut operand_stack).unwrap_or(0.0);
+                        text_x += tx;
+                        text_y += ty;
+                        leading = -ty;
+                    }
+                    "TL" => {
+                        if let Some(l) = pop_num(&mut operand_stack) {
+                            leading = l;
+                        }
+                    }
+                    "T*" => {
+                        text_y -= leading;
                     }
                     "Tm" => {
                         let ty = pop_num(&mut operand_stack).unwrap_or(0.0);
@@ -585,7 +994,49 @@ fn parse_content_stream(stream: &str, width_pt: f32, height_pt: f32, rotation_de
                         text_y = ty;
                     }
                     "Tj" => {
-                        if let Some(PdfToken::Str(s)) = operand_stack.pop() {
+                        if let Some(PdfToken::Str(raw)) = operand_stack.pop() {
+                            let s = decode_text_bytes(&raw, &cur_font_info);
+                            if !s.is_empty() && cur_size < 46.0 {
+                                text_items.push(PdfTextItem {
+                                    id: next_id,
+                                    x: text_x,
+                                    y: text_y,
+                                    font_family: cur_font,
+                                    font_size: cur_size,
+                                    bold: cur_bold,
+                                    italic: cur_italic,
+                                    color: state.fill_rgb,
+                                    text: s,
+                                });
+                                next_id += 1;
+                            }
+                        }
+                    }
+                    "'" => {
+                        text_y -= leading;
+                        if let Some(PdfToken::Str(raw)) = operand_stack.pop() {
+                            let s = decode_text_bytes(&raw, &cur_font_info);
+                            if !s.is_empty() && cur_size < 46.0 {
+                                text_items.push(PdfTextItem {
+                                    id: next_id,
+                                    x: text_x,
+                                    y: text_y,
+                                    font_family: cur_font,
+                                    font_size: cur_size,
+                                    bold: cur_bold,
+                                    italic: cur_italic,
+                                    color: state.fill_rgb,
+                                    text: s,
+                                });
+                                next_id += 1;
+                            }
+                        }
+                    }
+                    "\"" => {
+                        if let Some(PdfToken::Str(raw)) = operand_stack.pop() {
+                            let _ac = pop_num(&mut operand_stack);
+                            let _aw = pop_num(&mut operand_stack);
+                            let s = decode_text_bytes(&raw, &cur_font_info);
                             if !s.is_empty() && cur_size < 46.0 {
                                 text_items.push(PdfTextItem {
                                     id: next_id,
@@ -607,7 +1058,9 @@ fn parse_content_stream(stream: &str, width_pt: f32, height_pt: f32, rotation_de
                             let mut combined = String::new();
                             for item in arr {
                                 match item {
-                                    PdfToken::Str(s) => combined.push_str(&s),
+                                    PdfToken::Str(raw) => {
+                                        combined.push_str(&decode_text_bytes(&raw, &cur_font_info))
+                                    }
                                     PdfToken::Num(kern) if kern < -180.0 => combined.push(' '),
                                     _ => {}
                                 }
@@ -746,7 +1199,9 @@ fn decode_font_alias(alias: &str, family: &mut FontFamily, bold: &mut bool, ital
 enum PdfToken {
     Num(f32),
     Name(String),
-    Str(String),
+    /// Raw string bytes; decoded at show-time with the active font's
+    /// `/ToUnicode` CMap (CID fonts) or WinAnsi (simple fonts).
+    Str(Vec<u8>),
     Array(Vec<PdfToken>),
     Op(String),
 }
@@ -871,7 +1326,7 @@ fn tokenize_pdf_content(data: &[u8]) -> Vec<PdfToken> {
     out
 }
 
-fn parse_pdf_literal_string(data: &[u8]) -> (String, usize) {
+fn parse_pdf_literal_string(data: &[u8]) -> (Vec<u8>, usize) {
     let mut pos = 1usize; // skip '('
     let mut depth = 1usize;
     let mut raw_bytes = Vec::new();
@@ -919,10 +1374,10 @@ fn parse_pdf_literal_string(data: &[u8]) -> (String, usize) {
         pos += 1;
     }
 
-    (winansi_bytes_to_utf8(&raw_bytes), pos)
+    (raw_bytes, pos)
 }
 
-fn decode_pdf_hex_string(hex: &[u8]) -> String {
+fn decode_pdf_hex_string(hex: &[u8]) -> Vec<u8> {
     let clean: Vec<u8> = hex.iter().copied().filter(|b| b.is_ascii_hexdigit()).collect();
     let mut bytes = Vec::with_capacity(clean.len().div_ceil(2));
     let mut i = 0;
@@ -936,7 +1391,7 @@ fn decode_pdf_hex_string(hex: &[u8]) -> String {
         bytes.push((hi << 4) | lo);
         i += 2;
     }
-    winansi_bytes_to_utf8(&bytes)
+    bytes
 }
 
 fn winansi_bytes_to_utf8(bytes: &[u8]) -> String {
@@ -959,4 +1414,104 @@ fn winansi_bytes_to_utf8(bytes: &[u8]) -> String {
         out.push(ch);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WORD_STYLE_CMAP: &str = "\
+/CIDInit /ProcSet findresource begin\n\
+10 dict begin\n\
+begincmap\n\
+1 begincodespacerange\n\
+<0000> <FFFF>\n\
+endcodespacerange\n\
+3 beginbfchar\n\
+<0001> <0043>\n\
+<0002> <0068>\n\
+<0003> <0061>\n\
+endbfchar\n\
+2 beginbfrange\n\
+<0004> <0006> [<0071> <0075> <0065>]\n\
+<0007> <0008> <0020>\n\
+endbfrange\n\
+1 beginbfchar\n\
+<0009> <00660069>\n\
+endbfchar\n\
+1 beginbfchar\n\
+<000A> <D83DDCF8>\n\
+endbfchar\n\
+endcmap\n\
+end\n\
+end";
+
+    #[test]
+    fn test_tounicode_cmap_bfchar_bfrange_ligature_and_surrogate() {
+        let (map, code_len) = parse_tounicode_cmap(WORD_STYLE_CMAP.as_bytes());
+        assert_eq!(code_len, 2);
+        assert_eq!(map.get(&1).map(String::as_str), Some("C"));
+        assert_eq!(map.get(&2).map(String::as_str), Some("h"));
+        assert_eq!(map.get(&3).map(String::as_str), Some("a"));
+        // Array-form bfrange.
+        assert_eq!(map.get(&4).map(String::as_str), Some("q"));
+        assert_eq!(map.get(&5).map(String::as_str), Some("u"));
+        assert_eq!(map.get(&6).map(String::as_str), Some("e"));
+        // Sequential bfrange: <0007> <0008> <0020> → space, !.
+        assert_eq!(map.get(&7).map(String::as_str), Some(" "));
+        assert_eq!(map.get(&8).map(String::as_str), Some("!"));
+        // Multi-codepoint ligature.
+        assert_eq!(map.get(&9).map(String::as_str), Some("fi"));
+        // Surrogate pair (📸).
+        assert_eq!(map.get(&10).map(String::as_str), Some("📸"));
+    }
+
+    #[test]
+    fn test_decode_text_bytes_cid_font_never_leaks_ascii_symbols() {
+        let (map, code_len) = parse_tounicode_cmap(WORD_STYLE_CMAP.as_bytes());
+        let font = FontInfo {
+            family: FontFamily::Sans,
+            bold: false,
+            italic: false,
+            to_unicode: map,
+            code_len,
+        };
+        // "Chaque" as CIDs 1..6 — the exact bytes Word emits.
+        let raw = [0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6];
+        assert_eq!(decode_text_bytes(&raw, &font), "Chaque");
+        // Unmapped CID 0x00FF is skipped, never rendered as a symbol.
+        let raw_unmapped = [0, 1, 0, 0xFF, 0, 2];
+        assert_eq!(decode_text_bytes(&raw_unmapped, &font), "Ch");
+        // Simple fonts (no CMap) still decode as WinAnsi.
+        let simple = FontInfo::default();
+        assert_eq!(decode_text_bytes(b"Hello", &simple), "Hello");
+    }
+
+    #[test]
+    fn test_classify_font_name_strips_subset_prefix() {
+        let (family, bold, italic) = classify_font_name("BCDKEE+Aptos");
+        assert_eq!(family, FontFamily::Sans);
+        assert!(!bold && !italic);
+        let (_, bold, _) = classify_font_name("BCDGEE+Aptos#20Display#2CBold");
+        assert!(bold);
+        let (family, _, _) = classify_font_name("ABCDEF+TimesNewRoman");
+        assert_eq!(family, FontFamily::Serif);
+        let (family, _, _) = classify_font_name("ABCDEF+Consolas");
+        assert_eq!(family, FontFamily::Mono);
+    }
+
+    #[test]
+    fn test_extract_font_dict_and_refs() {
+        let hdr = "<< /Type /Page /Resources << /Font << /F1 15 0 R /F7 21 0 R >> /XObject << /Image42 25 0 R >> >> /Contents 26 0 R >>";
+        let dict = extract_font_dict(hdr).expect("font dict");
+        let refs = parse_font_resource_refs(&dict);
+        assert_eq!(refs, vec![("F1".to_string(), 15), ("F7".to_string(), 21)]);
+    }
+
+    #[test]
+    fn test_pdf_text_string_utf16be_bom() {
+        // "Hi" as UTF-16BE with BOM.
+        assert_eq!(pdf_text_string_to_utf8(&[0xFE, 0xFF, 0x00, b'H', 0x00, b'i']), "Hi");
+        assert_eq!(pdf_text_string_to_utf8(b"Hi"), "Hi");
+    }
 }
