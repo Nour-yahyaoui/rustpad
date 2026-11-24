@@ -134,7 +134,13 @@ impl TtfFace {
                 _ => {}
             }
         }
-        if head_off == 0 || hhea_off == 0 || cmap_off == 0 || hmtx_off == 0 || loca_off == 0 || glyf_off == 0 {
+        if head_off == 0
+            || hhea_off == 0
+            || cmap_off == 0
+            || hmtx_off == 0
+            || loca_off == 0
+            || glyf_off == 0
+        {
             return None;
         }
 
@@ -183,10 +189,16 @@ impl TtfFace {
         for i in 0..num_sub as usize {
             let rec = base + 4 + i * 8;
             let Some(pid) = read_u16(d, rec) else { break };
-            let Some(eid) = read_u16(d, rec + 2) else { break };
-            let Some(rel) = read_u32(d, rec + 4) else { break };
+            let Some(eid) = read_u16(d, rec + 2) else {
+                break;
+            };
+            let Some(rel) = read_u32(d, rec + 4) else {
+                break;
+            };
             let sub = base + rel as usize;
-            let Some(fmt) = read_u16(d, sub) else { continue };
+            let Some(fmt) = read_u16(d, sub) else {
+                continue;
+            };
             if (pid == 3 || pid == 0) && fmt == 12 {
                 fmt12_off = Some(sub);
             } else if ((pid == 3 && (eid == 1 || eid == 0)) || pid == 0) && fmt == 4 {
@@ -495,11 +507,7 @@ impl TtfFace {
                 let scan_y = (iy0 + py as i32) as f32 + sy_frac;
                 intersections.clear();
                 for &(x0, y0, x1, y1) in &scaled {
-                    let (ymin, ymax, dir) = if y0 < y1 {
-                        (y0, y1, 1)
-                    } else {
-                        (y1, y0, -1)
-                    };
+                    let (ymin, ymax, dir) = if y0 < y1 { (y0, y1, 1) } else { (y1, y0, -1) };
                     if scan_y >= ymin && scan_y < ymax {
                         let t = (scan_y - y0) / (y1 - y0);
                         let ix = x0 + t * (x1 - x0) - (ix0 as f32);
@@ -509,7 +517,8 @@ impl TtfFace {
                 if intersections.len() < 2 {
                     continue;
                 }
-                intersections.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                intersections
+                    .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
                 let mut winding = 0i32;
                 let mut span_start = 0.0f32;
@@ -558,12 +567,7 @@ impl TtfFace {
     }
 }
 
-fn emit_contour_edges(
-    xs: &[f32],
-    ys: &[f32],
-    flags: &[u8],
-    edges: &mut Vec<(f32, f32, f32, f32)>,
-) {
+fn emit_contour_edges(xs: &[f32], ys: &[f32], flags: &[u8], edges: &mut Vec<(f32, f32, f32, f32)>) {
     let n = xs.len();
     if n < 2 {
         return;
@@ -763,7 +767,12 @@ fn read_i16(d: &[u8], off: usize) -> Option<i16> {
 #[inline]
 fn read_u32(d: &[u8], off: usize) -> Option<u32> {
     if off + 4 <= d.len() {
-        Some(u32::from_be_bytes([d[off], d[off + 1], d[off + 2], d[off + 3]]))
+        Some(u32::from_be_bytes([
+            d[off],
+            d[off + 1],
+            d[off + 2],
+            d[off + 3],
+        ]))
     } else {
         None
     }

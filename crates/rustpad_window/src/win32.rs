@@ -423,12 +423,7 @@ unsafe extern "system" fn wnd_proc(
     }
 }
 
-unsafe fn wnd_proc_inner(
-    hwnd: HWND,
-    msg: UINT,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
+unsafe fn wnd_proc_inner(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     // Prevent Undefined Behavior (`&mut Win32Context` aliasing) when Win32 modal dialogs
     // (`GetOpenFileNameW`, `GetSaveFileNameW`) pump nested messages back into `wnd_proc`!
     let already_inside = IN_WND_PROC.with(|c| {

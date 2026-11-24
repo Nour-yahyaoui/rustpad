@@ -154,10 +154,7 @@ pub const MAX_XML_DEPTH: usize = 160;
 
 #[inline]
 fn is_ignorable_word_bloat_tag(raw_tag: &str) -> bool {
-    let local = raw_tag
-        .rsplit_once(':')
-        .map(|(_, l)| l)
-        .unwrap_or(raw_tag);
+    let local = raw_tag.rsplit_once(':').map(|(_, l)| l).unwrap_or(raw_tag);
     matches!(
         local,
         "proofErr"

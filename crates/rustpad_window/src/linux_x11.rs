@@ -3,9 +3,7 @@
 
 #![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
 
-use crate::{
-    AppControl, CursorShape, DesktopAppHandler, Key, Modifiers, MouseButton, WindowEvent,
-};
+use crate::{AppControl, CursorShape, DesktopAppHandler, Key, Modifiers, MouseButton, WindowEvent};
 use rustpad_render::canvas::LOGO_64_RGBA;
 use rustpad_render::{active_theme_mode, StudioTheme, Surface};
 use std::ffi::{c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void, CString};
@@ -260,7 +258,9 @@ pub fn run_x11_window(
 
         let dpy = XOpenDisplay(std::ptr::null());
         if dpy.is_null() {
-            return Err("No active X11 DISPLAY found (set DISPLAY or run on a desktop session)".into());
+            return Err(
+                "No active X11 DISPLAY found (set DISPLAY or run on a desktop session)".into(),
+            );
         }
 
         let screen = XDefaultScreen(dpy);
@@ -285,8 +285,8 @@ pub fn run_x11_window(
         XStoreName(dpy, win, c_title.as_ptr());
 
         // Set _NET_WM_NAME (UTF-8) & _NET_WM_ICON (64x64 RustPad logo!)
-        let net_wm_name = XInternAtom(dpy, b"_NET_WM_NAME\0".as_ptr() as *const c_char, 0);
-        let utf8_atom = XInternAtom(dpy, b"UTF8_STRING\0".as_ptr() as *const c_char, 0);
+        let net_wm_name = XInternAtom(dpy, c"_NET_WM_NAME".as_ptr(), 0);
+        let utf8_atom = XInternAtom(dpy, c"UTF8_STRING".as_ptr(), 0);
         XChangeProperty(
             dpy,
             win,
@@ -298,12 +298,12 @@ pub fn run_x11_window(
             title.len() as c_int,
         );
 
-        let net_wm_icon = XInternAtom(dpy, b"_NET_WM_ICON\0".as_ptr() as *const c_char, 0);
-        let cardinal_atom = XInternAtom(dpy, b"CARDINAL\0".as_ptr() as *const c_char, 0);
+        let net_wm_icon = XInternAtom(dpy, c"_NET_WM_ICON".as_ptr(), 0);
+        let cardinal_atom = XInternAtom(dpy, c"CARDINAL".as_ptr(), 0);
         let mut icon_data = Vec::with_capacity(2 + 64 * 64);
         icon_data.push(64 as c_ulong);
         icon_data.push(64 as c_ulong);
-        for px in LOGO_64_RGBA.chunks_exact(4) {
+        for px in LOGO_64_RGBA.as_chunks::<4>().0 {
             let argb = ((px[3] as c_ulong) << 24)
                 | ((px[0] as c_ulong) << 16)
                 | ((px[1] as c_ulong) << 8)
@@ -321,11 +321,10 @@ pub fn run_x11_window(
             icon_data.len() as c_int,
         );
 
-        let mut wm_delete = XInternAtom(dpy, b"WM_DELETE_WINDOW\0".as_ptr() as *const c_char, 0);
+        let mut wm_delete = XInternAtom(dpy, c"WM_DELETE_WINDOW".as_ptr(), 0);
         XSetWMProtocols(dpy, win, &mut wm_delete, 1);
 
-        let gtk_theme_atom =
-            XInternAtom(dpy, b"_GTK_THEME_VARIANT\0".as_ptr() as *const c_char, 0);
+        let gtk_theme_atom = XInternAtom(dpy, c"_GTK_THEME_VARIANT".as_ptr(), 0);
         let mut applied_dark_variant = active_theme_mode().is_dark_chrome();
         let initial_variant: &[u8] = if applied_dark_variant {
             b"dark"
@@ -344,8 +343,7 @@ pub fn run_x11_window(
         );
 
         // KeyPressMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask | ExposureMask | StructureNotifyMask
-        let event_mask: c_long =
-            (1 << 0) | (1 << 2) | (1 << 3) | (1 << 6) | (1 << 15) | (1 << 17);
+        let event_mask: c_long = (1 << 0) | (1 << 2) | (1 << 3) | (1 << 6) | (1 << 15) | (1 << 17);
         XSelectInput(dpy, win, event_mask);
         XMapWindow(dpy, win);
 
@@ -366,16 +364,14 @@ pub fn run_x11_window(
         let mut last_tick = Instant::now();
         let mut running = true;
         let mut active_cursor = CursorShape::Arrow;
-        let cursors = if let Some(create_cur) = x_create_font_cursor {
-            Some((
+        let cursors = x_create_font_cursor.map(|create_cur| {
+            (
                 create_cur(dpy, 68),  // XC_left_ptr
                 create_cur(dpy, 152), // XC_xterm
                 create_cur(dpy, 60),  // XC_hand2
                 create_cur(dpy, 108), // XC_sb_h_double_arrow
-            ))
-        } else {
-            None
-        };
+            )
+        });
 
         while running {
             let mut needs_redraw = false;

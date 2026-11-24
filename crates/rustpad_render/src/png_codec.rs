@@ -131,7 +131,7 @@ pub fn decode_png_rgba(png_bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> 
             }
             b"PLTE" => {
                 palette.clear();
-                for rgb in chunk_data.chunks_exact(3) {
+                for rgb in chunk_data.as_chunks::<3>().0 {
                     palette.push([rgb[0], rgb[1], rgb[2]]);
                 }
             }
@@ -199,10 +199,12 @@ pub fn decode_png_rgba(png_bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> 
 
         let mut raw_pos = 0usize;
         for pass in 0..7 {
-            let pw = ((width as usize).saturating_sub(X_ORIG[pass]) + X_STEP[pass] - 1)
-                / X_STEP[pass];
-            let ph = ((height as usize).saturating_sub(Y_ORIG[pass]) + Y_STEP[pass] - 1)
-                / Y_STEP[pass];
+            let pw = (width as usize)
+                .saturating_sub(X_ORIG[pass])
+                .div_ceil(X_STEP[pass]);
+            let ph = (height as usize)
+                .saturating_sub(Y_ORIG[pass])
+                .div_ceil(Y_STEP[pass]);
             if pw == 0 || ph == 0 {
                 continue;
             }
@@ -300,7 +302,7 @@ pub fn decode_png_thumbnail_rgba(
             }
             b"PLTE" => {
                 palette.clear();
-                for rgb in chunk_data.chunks_exact(3) {
+                for rgb in chunk_data.as_chunks::<3>().0 {
                     palette.push([rgb[0], rgb[1], rgb[2]]);
                 }
             }
@@ -578,7 +580,11 @@ fn unpack_png_pixel(
         }
         (0, 8) => {
             let g = row[px];
-            let a = if trns_gray_16 == Some(g as u16) { 0 } else { 255 };
+            let a = if trns_gray_16 == Some(g as u16) {
+                0
+            } else {
+                255
+            };
             [g, g, g, a]
         }
         (6, 16) => {
@@ -721,7 +727,7 @@ fn decode_dib_internal(
         return Err("BMP pixel offset out of range".into());
     }
     let pixels = &src_buf[pix_offset..];
-    let row_stride = ((width as usize) * (bpp as usize) + 31) / 32 * 4;
+    let row_stride = ((width as usize) * (bpp as usize)).div_ceil(32) * 4;
     if row_stride.saturating_mul(height as usize) > pixels.len() {
         return Err("Truncated BMP/DIB pixel data".into());
     }
@@ -740,7 +746,12 @@ fn decode_dib_internal(
                 32 => {
                     let o = x * 4;
                     let a_raw = row[o + 3];
-                    (row[o + 2], row[o + 1], row[o], if a_raw == 0 { 255 } else { a_raw })
+                    (
+                        row[o + 2],
+                        row[o + 1],
+                        row[o],
+                        if a_raw == 0 { 255 } else { a_raw },
+                    )
                 }
                 24 => {
                     let o = x * 3;
@@ -829,11 +840,7 @@ mod tests {
         // Build a valid 2x1 Indexed-Palette (color_type=3) PNG with PLTE + tRNS
         let mut png = Vec::new();
         png.extend_from_slice(&PNG_MAGIC);
-        write_png_chunk(
-            &mut png,
-            b"IHDR",
-            &[0, 0, 0, 2, 0, 0, 0, 1, 8, 3, 0, 0, 0],
-        );
+        write_png_chunk(&mut png, b"IHDR", &[0, 0, 0, 2, 0, 0, 0, 1, 8, 3, 0, 0, 0]);
         write_png_chunk(&mut png, b"PLTE", &[255, 0, 0, 0, 255, 0]);
         write_png_chunk(&mut png, b"tRNS", &[255, 128]);
         let idat = zlib_compress(&[0, 0, 1]); // filter=0, idx 0, idx 1

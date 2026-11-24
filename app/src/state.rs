@@ -2,6 +2,10 @@
 //! Inline Math Library, Clipboard & Hit-Testing Actions.
 
 use crate::commands::{filter_commands, CommandId};
+use crate::installer::{
+    browse_install_folder_dialog, save_portable_mode_choice, SetupFocusField, SetupStep,
+    SetupToggleOption, SetupWizardState,
+};
 use doc_model::{
     filter_math_templates, find_math_template, highlight_color_label, next_word_char_idx,
     parse_slash_math_command, prev_word_char_idx, word_range_at_char, Alignment, Block, Document,
@@ -9,9 +13,7 @@ use doc_model::{
     Paragraph, ParagraphStyle, RevisionKind, RevisionMeta, RgbColor, SectionBreakKind, SharedBytes,
     SpanStyle, TableBlock, TablePreset, TableTheme, TemplateKind, TextSpan, UndoHistory,
 };
-use docx_io::{
-    load_docx_file, load_docx_shared_with_progress, repair_docx_bytes, save_docx_bytes,
-};
+use docx_io::{load_docx_file, load_docx_shared_with_progress, repair_docx_bytes, save_docx_bytes};
 use pdf_create::{export_document_to_pdf_file, PdfCreateOptions};
 use pdf_engine::{
     compress_pdf_bytes, load_pdf_file, save_pdf_bytes, save_pdf_file, seal_pdf_bytes,
@@ -24,7 +26,8 @@ use power_tools::{
 };
 use rustpad_render::{
     active_theme_mode, cycle_theme_mode, decode_any_image_rgba, decode_any_image_thumbnail_rgba,
-    encode_rgba_png, load_saved_or_system_theme, save_theme_preference, FontBook, Rect,
+    encode_rgba_png, load_saved_or_system_theme, save_theme_preference, set_active_theme_mode,
+    FontBook, Rect, ThemeMode,
 };
 use rustpad_window::{
     detect_dpi_scale, get_clipboard_image_bytes, get_clipboard_text, set_clipboard_text,
@@ -85,6 +88,10 @@ impl WordLineHitBox {
     }
 }
 
+/// Background image-decode worker result channel payload:
+/// `(content_hash, generation, Result<(width, height, stride, rgba_len, SharedBytes), ()>)`.
+pub type ImageDecodeMsg = (u64, usize, Result<(u32, u32, u32, u32, SharedBytes), ()>);
+
 pub struct WordTabState {
     pub doc: Document,
     pub path: Option<PathBuf>,
@@ -104,7 +111,7 @@ pub struct WordTabState {
     pub failed_image_hashes: Vec<u64>,
     pub in_flight_image_hashes: Vec<u64>,
     pub image_worker_tx: Option<Sender<(u64, usize, SharedBytes, u32)>>,
-    pub image_worker_rx: Option<Receiver<(u64, usize, Result<(u32, u32, u32, u32, SharedBytes), ()>)>>,
+    pub image_worker_rx: Option<Receiver<ImageDecodeMsg>>,
     pub pending_viewport_image_decodes: bool,
     pub media_dimensions_probed: bool,
     pub cached_layout_key: u64,
@@ -194,14 +201,15 @@ impl WordTabState {
                 .stack_size(16 * 1024 * 1024)
                 .spawn(move || {
                     while let Ok((hkey, b_idx, payload, cap)) = job_rx.recv() {
-                        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            decode_any_image_thumbnail_rgba(&payload, cap)
-                                .map(|(ow, oh, tw, th, rgba)| {
-                                    (ow, oh, tw, th, SharedBytes::from_vec(rgba))
-                                })
-                                .map_err(|_| ())
-                        }))
-                        .unwrap_or(Err(()));
+                        let decoded =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                decode_any_image_thumbnail_rgba(&payload, cap)
+                                    .map(|(ow, oh, tw, th, rgba)| {
+                                        (ow, oh, tw, th, SharedBytes::from_vec(rgba))
+                                    })
+                                    .map_err(|_| ())
+                            }))
+                            .unwrap_or(Err(()));
                         if done_tx.send((hkey, b_idx, decoded)).is_err() {
                             break;
                         }
@@ -374,7 +382,11 @@ impl WordTabState {
         let b1 = b1.min(self.doc.blocks.len() - 1);
         let track = self.doc.track_changes;
         let author = self.doc.author.clone();
-        let rev_id = if track { self.doc.next_revision_id() } else { 1 };
+        let rev_id = if track {
+            self.doc.next_revision_id()
+        } else {
+            1
+        };
 
         if b0 == b1 {
             if let Some(Block::Paragraph(p)) = self.doc.blocks.get_mut(b0) {
@@ -462,7 +474,8 @@ impl WordTabState {
         let mut weights = self.normalized_col_weights(block_idx, cols);
         let min_w = (0.10f32).min(0.65 / cols as f32);
         let pair_sum = weights[col_idx] + weights[col_idx + 1];
-        let next_left = (weights[col_idx] + delta_ratio).clamp(min_w, (pair_sum - min_w).max(min_w));
+        let next_left =
+            (weights[col_idx] + delta_ratio).clamp(min_w, (pair_sum - min_w).max(min_w));
         let next_right = (pair_sum - next_left).max(min_w);
         weights[col_idx] = next_left;
         weights[col_idx + 1] = next_right;
@@ -489,7 +502,9 @@ impl WordTabState {
         focus_row: usize,
     ) -> usize {
         let rows_len = table.rows.len().max(1);
-        let idx = self.cursor_block.min(self.doc.blocks.len().saturating_sub(1));
+        let idx = self
+            .cursor_block
+            .min(self.doc.blocks.len().saturating_sub(1));
         let replace_here = replace_if_empty_para
             && matches!(
                 self.doc.blocks.get(idx),
@@ -547,7 +562,9 @@ impl WordTabState {
     /// Insert an `ImageBlock` smoothly at the cursor (replacing an empty paragraph in-place),
     /// preserve `table_col_weights`, ensure a trailing prose paragraph below, and select the figure.
     pub fn insert_image_smart(&mut self, img: ImageBlock, replace_if_empty_para: bool) -> usize {
-        let idx = self.cursor_block.min(self.doc.blocks.len().saturating_sub(1));
+        let idx = self
+            .cursor_block
+            .min(self.doc.blocks.len().saturating_sub(1));
         let replace_here = replace_if_empty_para
             && matches!(
                 self.doc.blocks.get(idx),
@@ -671,6 +688,7 @@ impl PdfTabState {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum StudioTab {
     HomeHub,
     Word(WordTabState),
@@ -759,9 +777,18 @@ pub enum ActiveModal {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolbarDropdown {
-    ParagraphStyle { anchor_x: i32, anchor_y: i32 },
-    FontFamily { anchor_x: i32, anchor_y: i32 },
-    HighlightPicker { anchor_x: i32, anchor_y: i32 },
+    ParagraphStyle {
+        anchor_x: i32,
+        anchor_y: i32,
+    },
+    FontFamily {
+        anchor_x: i32,
+        anchor_y: i32,
+    },
+    HighlightPicker {
+        anchor_x: i32,
+        anchor_y: i32,
+    },
     TableCreator {
         anchor_x: i32,
         anchor_y: i32,
@@ -785,10 +812,19 @@ impl ToolbarDropdown {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DragInteraction {
     None,
-    WordOutlineSplitter { pane_left: f32 },
-    PdfLeftSplitter { pane_left: f32 },
-    PdfRightSplitter { pane_right: f32 },
-    WorkspaceSplit { work_x: f32, work_w: f32 },
+    WordOutlineSplitter {
+        pane_left: f32,
+    },
+    PdfLeftSplitter {
+        pane_left: f32,
+    },
+    PdfRightSplitter {
+        pane_right: f32,
+    },
+    WorkspaceSplit {
+        work_x: f32,
+        work_w: f32,
+    },
     TableColumn {
         tab_idx: usize,
         block_idx: usize,
@@ -829,7 +865,10 @@ pub enum UiAction {
     SelectParagraphStyle(ParagraphStyle),
     SelectFontFamily(FontFamily),
     SelectHighlightColor(Option<RgbColor>),
-    InsertTableCustom { rows: usize, cols: usize },
+    InsertTableCustom {
+        rows: usize,
+        cols: usize,
+    },
     InsertTablePreset(TablePreset),
     CreateFromTemplate(TemplateKind),
     OpenRecentPath(PathBuf),
@@ -910,6 +949,14 @@ pub enum UiAction {
     FindFocusField(bool),
     FindReplaceAll,
     CancelDocLoad,
+    SetupGoStep(SetupStep),
+    SetupToggleOption(SetupToggleOption),
+    SetupSelectTheme(ThemeMode),
+    SetupFocusInput(SetupFocusField),
+    SetupBrowseInstallDir,
+    SetupRunPortable,
+    SetupStartInstall,
+    SetupFinishAndLaunch,
 }
 
 pub struct PendingDocLoad {
@@ -988,6 +1035,7 @@ pub struct RustPadApp {
     pub status_toast: String,
     pub recent_files: Vec<PathBuf>,
     pub pending_doc_load: Option<PendingDocLoad>,
+    pub setup_wizard: Option<SetupWizardState>,
     pub last_autosave_at: Instant,
 }
 
@@ -1050,14 +1098,28 @@ impl RustPadApp {
             ),
             recent_files: recent,
             pending_doc_load: None,
+            setup_wizard: None,
             last_autosave_at: Instant::now(),
         }
+    }
+
+    /// Opens the full-window Native First-Run Setup & Desktop Installer Wizard.
+    pub fn open_setup_wizard(&mut self) {
+        self.open_dropdown = None;
+        self.modal = None;
+        self.setup_wizard = Some(SetupWizardState::new());
     }
 
     /// Steps 60Hz kinetic spring scrolling AND polls non-blocking background document/image/AI workers.
     /// Returns `true` if a repaint is needed.
     pub fn poll_background_tasks(&mut self) -> bool {
         let mut needs_repaint = false;
+
+        if let Some(wiz) = &mut self.setup_wizard {
+            if wiz.poll() {
+                needs_repaint = true;
+            }
+        }
 
         // 0. Poll non-blocking 32 MiB-stack `.docx` streaming worker (keeps UI silky at 60–120Hz!)
         if let Some(load) = &self.pending_doc_load {
@@ -1075,11 +1137,16 @@ impl RustPadApp {
                     let media_mb = doc.estimated_media_bytes() as f64 / (1024.0 * 1024.0);
                     let _ = AdvisoryFileLock::acquire(&p, "Nour Yahyaoui");
                     if self.policy.audit_log_enabled {
-                        self.audit_trail
-                            .record("DOC_OPENED", &p.display().to_string(), "Nour Yahyaoui");
+                        self.audit_trail.record(
+                            "DOC_OPENED",
+                            p.display().to_string(),
+                            "Nour Yahyaoui",
+                        );
                     }
-                    self.tabs
-                        .push(StudioTab::Word(WordTabState::from_doc(doc, Some(p.clone()))));
+                    self.tabs.push(StudioTab::Word(WordTabState::from_doc(
+                        doc,
+                        Some(p.clone()),
+                    )));
                     self.active_tab = self.tabs.len() - 1;
                     self.push_recent(p.clone());
                     self.status_toast = if recovered_from_wal {
@@ -1207,8 +1274,7 @@ impl RustPadApp {
                                     return Ok((wal_doc, true));
                                 }
                             }
-                            let raw =
-                                std::fs::read(&worker_path).map_err(|e| e.to_string())?;
+                            let raw = std::fs::read(&worker_path).map_err(|e| e.to_string())?;
                             prog_worker.store(150, Ordering::Relaxed);
                             let backing = SharedBytes::from_vec(raw);
                             let doc = load_docx_shared_with_progress(backing, |done, total| {
@@ -1262,29 +1328,30 @@ impl RustPadApp {
             "docx" => {
                 // Guard third-party `.docx` archive/XML loading behind `catch_unwind` so malformed
                 // files surface an error toast instead of crashing the desktop session.
-                let load_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(Document, bool), String> {
-                    let wal_p = WalJournal::journal_path_for(Some(&p), 0);
-                    if wal_p.exists() {
-                        match WalJournal::recover_frame(&wal_p) {
-                            Ok(wal_doc) => Ok((wal_doc, true)),
-                            Err(_) => Ok((load_docx_file(&p).map_err(|e| e.0)?, false)),
-                        }
-                    } else {
-                        match load_docx_file(&p) {
-                            Ok(doc) => Ok((doc, false)),
-                            Err(_) => {
-                                let raw_bytes =
-                                    std::fs::read(&p).map_err(|e| e.to_string())?;
-                                let (repaired_bytes, rep) =
-                                    repair_docx_bytes(&raw_bytes).map_err(|e| e.0)?;
-                                let salvaged = docx_io::load_docx_bytes(&repaired_bytes)
-                                    .map_err(|e| e.0)?;
-                                let _ = rep.recovered_paragraphs;
-                                Ok((salvaged, false))
+                let load_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                    || -> Result<(Document, bool), String> {
+                        let wal_p = WalJournal::journal_path_for(Some(&p), 0);
+                        if wal_p.exists() {
+                            match WalJournal::recover_frame(&wal_p) {
+                                Ok(wal_doc) => Ok((wal_doc, true)),
+                                Err(_) => Ok((load_docx_file(&p).map_err(|e| e.0)?, false)),
+                            }
+                        } else {
+                            match load_docx_file(&p) {
+                                Ok(doc) => Ok((doc, false)),
+                                Err(_) => {
+                                    let raw_bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
+                                    let (repaired_bytes, rep) =
+                                        repair_docx_bytes(&raw_bytes).map_err(|e| e.0)?;
+                                    let salvaged = docx_io::load_docx_bytes(&repaired_bytes)
+                                        .map_err(|e| e.0)?;
+                                    let _ = rep.recovered_paragraphs;
+                                    Ok((salvaged, false))
+                                }
                             }
                         }
-                    }
-                }));
+                    },
+                ));
                 let (doc, recovered_from_wal) = match load_res {
                     Ok(Ok(pair)) => pair,
                     Ok(Err(msg)) => return Err(msg),
@@ -1304,10 +1371,12 @@ impl RustPadApp {
                 let _ = AdvisoryFileLock::acquire(&p, "Nour Yahyaoui");
                 if self.policy.audit_log_enabled {
                     self.audit_trail
-                        .record("DOC_OPENED", &p.display().to_string(), "Nour Yahyaoui");
+                        .record("DOC_OPENED", p.display().to_string(), "Nour Yahyaoui");
                 }
-                self.tabs
-                    .push(StudioTab::Word(WordTabState::from_doc(doc, Some(p.clone()))));
+                self.tabs.push(StudioTab::Word(WordTabState::from_doc(
+                    doc,
+                    Some(p.clone()),
+                )));
                 self.active_tab = self.tabs.len() - 1;
                 self.push_recent(p.clone());
                 self.status_toast = if recovered_from_wal {
@@ -1337,7 +1406,7 @@ impl RustPadApp {
                 };
                 if self.policy.audit_log_enabled {
                     self.audit_trail
-                        .record("PDF_OPENED", &p.display().to_string(), "Nour Yahyaoui");
+                        .record("PDF_OPENED", p.display().to_string(), "Nour Yahyaoui");
                 }
                 self.tabs
                     .push(StudioTab::Pdf(PdfTabState::from_pdf(pdf, Some(p.clone()))));
@@ -1379,8 +1448,10 @@ impl RustPadApp {
         {
             self.active_tab = existing_word_idx;
         } else {
-            self.tabs
-                .push(StudioTab::Word(WordTabState::from_doc(Document::blank(), None)));
+            self.tabs.push(StudioTab::Word(WordTabState::from_doc(
+                Document::blank(),
+                None,
+            )));
             self.active_tab = self.tabs.len() - 1;
         }
     }
@@ -1427,9 +1498,8 @@ impl RustPadApp {
             w.selected_image_block = Some(rep_idx);
             w.cursor_block = rep_idx;
             w.dirty = true;
-            self.status_toast = format!(
-                "Replaced image with '{name}' ({iw}×{ih} px) — Ctrl+Z to undo"
-            );
+            self.status_toast =
+                format!("Replaced image with '{name}' ({iw}×{ih} px) — Ctrl+Z to undo");
         } else {
             w.insert_image_smart(img, true);
             self.status_toast = format!(
@@ -1444,7 +1514,8 @@ impl RustPadApp {
         path: &Path,
         replace_block: Option<usize>,
     ) -> Result<(), String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("Cannot read '{}': {e}", path.display()))?;
+        let bytes =
+            std::fs::read(path).map_err(|e| format!("Cannot read '{}': {e}", path.display()))?;
         let name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -1509,7 +1580,10 @@ impl RustPadApp {
                     }
                     let docx_bytes = save_docx_bytes(&w.doc);
                     write_bytes_secure_atomic(&final_path, &docx_bytes)?;
-                    WalJournal::clear_frame(&WalJournal::journal_path_for(Some(&final_path), self.active_tab));
+                    WalJournal::clear_frame(&WalJournal::journal_path_for(
+                        Some(&final_path),
+                        self.active_tab,
+                    ));
                     let _ = AdvisoryFileLock::acquire(&final_path, &w.doc.author);
                     w.path = Some(final_path.clone());
                     w.dirty = false;
@@ -1517,7 +1591,7 @@ impl RustPadApp {
                     if self.policy.audit_log_enabled {
                         self.audit_trail.record(
                             "DOC_SAVED",
-                            &final_path.display().to_string(),
+                            final_path.display().to_string(),
                             &w.doc.author,
                         );
                     }
@@ -1658,10 +1732,8 @@ impl RustPadApp {
             CommandId::NewWordBlank => {
                 let mut doc = Document::blank();
                 doc.classification = self.policy.default_classification;
-                self.tabs.push(StudioTab::Word(WordTabState::from_doc(
-                    doc,
-                    None,
-                )));
+                self.tabs
+                    .push(StudioTab::Word(WordTabState::from_doc(doc, None)));
                 self.active_tab = self.tabs.len() - 1;
                 self.status_toast = "Created blank A4 Word document".into();
             }
@@ -1753,14 +1825,12 @@ impl RustPadApp {
                     self.tabs
                         .push(StudioTab::Word(WordTabState::from_doc(doc, None)));
                     self.active_tab = self.tabs.len() - 1;
-                    self.status_toast =
-                        "Converted PDF into an editable Word (.docx) tab".into();
+                    self.status_toast = "Converted PDF into an editable Word (.docx) tab".into();
                 } else if let Some(pdf) = converted_pdf {
                     self.tabs
                         .push(StudioTab::Pdf(PdfTabState::from_pdf(pdf, None)));
                     self.active_tab = self.tabs.len() - 1;
-                    self.status_toast =
-                        "Opened Word document directly inside PDF Studio".into();
+                    self.status_toast = "Opened Word document directly inside PDF Studio".into();
                 }
             }
             CommandId::Undo => {
@@ -1800,8 +1870,9 @@ impl RustPadApp {
                         .selected_text()
                         .map(|t| t.split_whitespace().count())
                         .unwrap_or(0);
-                    self.status_toast =
-                        format!("Selected entire document ({words} words) — format, copy, or AI polish");
+                    self.status_toast = format!(
+                        "Selected entire document ({words} words) — format, copy, or AI polish"
+                    );
                 }
             }
             CommandId::ToggleFocusMode => {
@@ -1814,26 +1885,24 @@ impl RustPadApp {
                     "Exited Focus Mode — restored Studio ribbon & sidebars".into()
                 };
             }
-            CommandId::ToggleLeftSidebar => {
-                match self.tabs.get(self.active_tab) {
-                    Some(StudioTab::Pdf(_)) => {
-                        self.pdf_left_open = !self.pdf_left_open;
-                        self.status_toast = if self.pdf_left_open {
-                            "Showed PDF Pages sidebar".into()
-                        } else {
-                            "Collapsed PDF Pages sidebar".into()
-                        };
-                    }
-                    _ => {
-                        self.word_sidebar_open = !self.word_sidebar_open;
-                        self.status_toast = if self.word_sidebar_open {
-                            "Showed Document Outline sidebar".into()
-                        } else {
-                            "Collapsed Outline sidebar (Focus mode)".into()
-                        };
-                    }
+            CommandId::ToggleLeftSidebar => match self.tabs.get(self.active_tab) {
+                Some(StudioTab::Pdf(_)) => {
+                    self.pdf_left_open = !self.pdf_left_open;
+                    self.status_toast = if self.pdf_left_open {
+                        "Showed PDF Pages sidebar".into()
+                    } else {
+                        "Collapsed PDF Pages sidebar".into()
+                    };
                 }
-            }
+                _ => {
+                    self.word_sidebar_open = !self.word_sidebar_open;
+                    self.status_toast = if self.word_sidebar_open {
+                        "Showed Document Outline sidebar".into()
+                    } else {
+                        "Collapsed Outline sidebar (Focus mode)".into()
+                    };
+                }
+            },
             CommandId::OpenTableCreator => {
                 if !matches!(self.tabs.get(self.active_tab), Some(StudioTab::Word(_))) {
                     self.execute_command(CommandId::NewWordBlank);
@@ -2006,11 +2075,9 @@ impl RustPadApp {
                 if let Some(StudioTab::Pdf(p)) = self.tabs.get_mut(self.active_tab) {
                     let raw = save_pdf_bytes(&p.pdf, false);
                     if let Ok((_comp, before, after)) = compress_pdf_bytes(&raw) {
-                        let pct = if before > 0 {
-                            100usize.saturating_sub((after * 100) / before)
-                        } else {
-                            0
-                        };
+                        let pct = (after * 100)
+                            .checked_div(before)
+                            .map_or(0, |ratio| 100usize.saturating_sub(ratio));
                         self.status_toast = format!(
                             "Compressed PDF streams: {:.1} KB -> {:.1} KB ({}% smaller)",
                             before as f32 / 1024.0,
@@ -2079,7 +2146,9 @@ impl RustPadApp {
                         .tabs
                         .iter()
                         .enumerate()
-                        .find(|(idx, t)| *idx != self.active_tab && !matches!(t, StudioTab::HomeHub))
+                        .find(|(idx, t)| {
+                            *idx != self.active_tab && !matches!(t, StudioTab::HomeHub)
+                        })
                         .map(|(idx, _)| idx);
                     if let Some(sec) = alt {
                         self.split_secondary_tab = Some(sec);
@@ -2105,17 +2174,22 @@ impl RustPadApp {
             CommandId::PrintDocument => {
                 let spool_path = std::env::temp_dir().join("rustpad_print_spool.pdf");
                 let prep = match self.tabs.get(self.active_tab) {
-                    Some(StudioTab::Word(w)) => {
-                        export_document_to_pdf_file(&spool_path, &w.doc, &PdfCreateOptions::default())
-                    }
+                    Some(StudioTab::Word(w)) => export_document_to_pdf_file(
+                        &spool_path,
+                        &w.doc,
+                        &PdfCreateOptions::default(),
+                    ),
                     Some(StudioTab::Pdf(p)) => save_pdf_file(&spool_path, &p.pdf, true),
                     _ => Err("Open a Word or PDF document to print".into()),
                 };
                 match prep.and_then(|()| spool_pdf_to_os_printer(&spool_path)) {
                     Ok(msg) => {
                         if self.policy.audit_log_enabled {
-                            self.audit_trail
-                                .record("OS_PRINT_SPOOL", &spool_path.display().to_string(), "Nour Yahyaoui");
+                            self.audit_trail.record(
+                                "OS_PRINT_SPOOL",
+                                spool_path.display().to_string(),
+                                "Nour Yahyaoui",
+                            );
                         }
                         self.status_toast = msg;
                     }
@@ -2130,7 +2204,7 @@ impl RustPadApp {
                     if self.policy.audit_log_enabled {
                         self.audit_trail.record(
                             "TRACK_CHANGES_TOGGLED",
-                            &format!("{}: {state_lbl}", w.doc.title),
+                            format!("{}: {state_lbl}", w.doc.title),
                             &w.doc.author,
                         );
                     }
@@ -2147,7 +2221,7 @@ impl RustPadApp {
                     if self.policy.audit_log_enabled {
                         self.audit_trail.record(
                             "REVISIONS_ACCEPTED_ALL",
-                            &format!("{} ({n} changes)", w.doc.title),
+                            format!("{} ({n} changes)", w.doc.title),
                             &w.doc.author,
                         );
                     }
@@ -2162,7 +2236,7 @@ impl RustPadApp {
                     if self.policy.audit_log_enabled {
                         self.audit_trail.record(
                             "REVISIONS_REJECTED_ALL",
-                            &format!("{} ({n} changes)", w.doc.title),
+                            format!("{} ({n} changes)", w.doc.title),
                             &w.doc.author,
                         );
                     }
@@ -2175,7 +2249,8 @@ impl RustPadApp {
                         text: String::new(),
                     });
                 } else {
-                    self.status_toast = "Open a Word (.docx) tab to add threaded review comments".into();
+                    self.status_toast =
+                        "Open a Word (.docx) tab to add threaded review comments".into();
                 }
             }
             CommandId::CycleClassification => {
@@ -2185,7 +2260,7 @@ impl RustPadApp {
                     if self.policy.audit_log_enabled {
                         self.audit_trail.record(
                             "CLASSIFICATION_CHANGED",
-                            &format!("{} -> {}", w.doc.title, w.doc.classification.label()),
+                            format!("{} -> {}", w.doc.title, w.doc.classification.label()),
                             &w.doc.author,
                         );
                     }
@@ -2207,7 +2282,7 @@ impl RustPadApp {
                     if self.policy.audit_log_enabled {
                         self.audit_trail.record(
                             "PDF_FORENSIC_SANITIZE",
-                            &format!(
+                            format!(
                                 "{} (purged {} text runs across {} box(es))",
                                 p.pdf.title, report.purged_text_runs, report.redaction_boxes
                             ),
@@ -2233,7 +2308,7 @@ impl RustPadApp {
                     if self.policy.audit_log_enabled {
                         self.audit_trail.record(
                             "PDF_SHA256_SEALED",
-                            &format!("{} ({})", p.pdf.title, &manifest.content_sha256[..16]),
+                            format!("{} ({})", p.pdf.title, &manifest.content_sha256[..16]),
                             &manifest.signer,
                         );
                     }
@@ -2281,13 +2356,17 @@ impl RustPadApp {
             CommandId::ZoomReset => self.set_zoom(1.12),
             CommandId::UiScaleUp => {
                 self.ui_scale = (self.ui_scale + 0.10).clamp(0.85, 1.55);
-                self.status_toast =
-                    format!("Interface Scale: {}%", (self.ui_scale * 100.0).round() as i32);
+                self.status_toast = format!(
+                    "Interface Scale: {}%",
+                    (self.ui_scale * 100.0).round() as i32
+                );
             }
             CommandId::UiScaleDown => {
                 self.ui_scale = (self.ui_scale - 0.10).clamp(0.85, 1.55);
-                self.status_toast =
-                    format!("Interface Scale: {}%", (self.ui_scale * 100.0).round() as i32);
+                self.status_toast = format!(
+                    "Interface Scale: {}%",
+                    (self.ui_scale * 100.0).round() as i32
+                );
             }
             CommandId::UiScaleReset => {
                 self.ui_scale = 1.0;
@@ -2316,7 +2395,7 @@ impl RustPadApp {
                     if self.policy.audit_log_enabled {
                         self.audit_trail.record(
                             "PRIVACY_CLEANED",
-                            &format!(
+                            format!(
                                 "{} (meta:{}, hidden:{}, rels:{})",
                                 w.doc.title,
                                 rep.cleared_metadata_fields,
@@ -2364,6 +2443,10 @@ impl RustPadApp {
                     query: String::new(),
                     selected: 0,
                 });
+            }
+            CommandId::OpenSetupWizard => {
+                self.open_setup_wizard();
+                self.status_toast = "Opened First-Run Setup & Desktop Installation Wizard".into();
             }
             CommandId::OpenAbout => {
                 self.modal = Some(ActiveModal::About);
@@ -2582,8 +2665,7 @@ impl RustPadApp {
                     PaperSize::Letter => PaperSize::Legal,
                     PaperSize::Legal => PaperSize::A4,
                 };
-                self.status_toast =
-                    format!("Paper size: {}", w.doc.page_setup.paper_size.label());
+                self.status_toast = format!("Paper size: {}", w.doc.page_setup.paper_size.label());
                 return;
             }
             CommandId::InsertTable => {
@@ -3030,9 +3112,7 @@ impl RustPadApp {
                 CommandId::ToggleHighlight => {
                     st.highlight = match st.highlight {
                         None => Some(RgbColor::AMBER_HIGHLIGHT),
-                        Some(c) if c == RgbColor::AMBER_HIGHLIGHT => {
-                            Some(RgbColor::MINT_HIGHLIGHT)
-                        }
+                        Some(c) if c == RgbColor::AMBER_HIGHLIGHT => Some(RgbColor::MINT_HIGHLIGHT),
                         Some(c) if c == RgbColor::MINT_HIGHLIGHT => Some(RgbColor::SKY_HIGHLIGHT),
                         _ => None,
                     };
@@ -3198,6 +3278,94 @@ impl RustPadApp {
                         format!("Cancelled background open for '{}'", load.path.display());
                 }
             }
+            UiAction::SetupGoStep(next_step) => {
+                if let Some(wiz) = &mut self.setup_wizard {
+                    if next_step != SetupStep::Welcome && !wiz.options.accepted_license {
+                        self.status_toast =
+                            "Please accept the MIT License Agreement to continue setup.".into();
+                        return;
+                    }
+                    wiz.focus_field = SetupFocusField::None;
+                    wiz.step = next_step;
+                }
+            }
+            UiAction::SetupToggleOption(opt) => {
+                if let Some(wiz) = &mut self.setup_wizard {
+                    wiz.toggle_option(opt);
+                }
+            }
+            UiAction::SetupSelectTheme(mode) => {
+                set_active_theme_mode(mode);
+                save_theme_preference(mode);
+                sync_native_window_theme(mode.is_dark_chrome());
+                if let Some(wiz) = &mut self.setup_wizard {
+                    wiz.options.selected_theme = mode;
+                }
+                self.status_toast = format!("Selected '{}' studio theme", mode.label());
+            }
+            UiAction::SetupFocusInput(field) => {
+                if let Some(wiz) = &mut self.setup_wizard {
+                    wiz.focus_field = field;
+                }
+            }
+            UiAction::SetupBrowseInstallDir => {
+                let current = self
+                    .setup_wizard
+                    .as_ref()
+                    .map(|w| w.options.install_dir.clone())
+                    .unwrap_or_default();
+                if let Some(chosen) = browse_install_folder_dialog(&current) {
+                    if let Some(wiz) = &mut self.setup_wizard {
+                        wiz.options.install_dir = chosen.to_string_lossy().into_owned();
+                    }
+                } else if let Some(wiz) = &mut self.setup_wizard {
+                    wiz.focus_field = SetupFocusField::InstallDir;
+                }
+            }
+            UiAction::SetupRunPortable => {
+                if let Some(wiz) = self.setup_wizard.take() {
+                    let _ = save_portable_mode_choice(
+                        wiz.options.selected_theme,
+                        &wiz.options.author_name,
+                    );
+                    self.active_tab = 0; // Open clean Home Launchpad (like Anar Welcome Screen)
+                    self.status_toast =
+                        "Portable Mode active — re-open Setup anytime from Home or Ctrl+K".into();
+                }
+            }
+            UiAction::SetupStartInstall => {
+                if let Some(wiz) = &mut self.setup_wizard {
+                    if !wiz.options.accepted_license {
+                        self.status_toast =
+                            "Please accept the MIT License Agreement before installing.".into();
+                        return;
+                    }
+                    if wiz.options.install_dir.trim().is_empty() {
+                        self.status_toast =
+                            "Please enter a valid target installation folder.".into();
+                        wiz.focus_field = SetupFocusField::InstallDir;
+                        return;
+                    }
+                    wiz.start_installation();
+                }
+            }
+            UiAction::SetupFinishAndLaunch => {
+                let launch_home = self
+                    .setup_wizard
+                    .as_ref()
+                    .map(|w| w.options.launch_home_on_finish)
+                    .unwrap_or(true);
+                self.setup_wizard = None;
+                self.active_tab = if launch_home {
+                    0
+                } else {
+                    1.min(self.tabs.len().saturating_sub(1))
+                };
+                self.status_toast = format!(
+                    "Welcome to RustPad Studio v{} — Desktop installation ready!",
+                    env!("CARGO_PKG_VERSION")
+                );
+            }
             UiAction::JumpOutline {
                 tab_idx,
                 block_idx,
@@ -3309,7 +3477,7 @@ impl RustPadApp {
                         if self.policy.audit_log_enabled {
                             self.audit_trail.record(
                                 "REVISION_CLAUSE_ACCEPTED",
-                                &format!("rev_id={rev_id}"),
+                                format!("rev_id={rev_id}"),
                                 &w.doc.author,
                             );
                         }
@@ -3329,7 +3497,7 @@ impl RustPadApp {
                         if self.policy.audit_log_enabled {
                             self.audit_trail.record(
                                 "REVISION_CLAUSE_REJECTED",
-                                &format!("rev_id={rev_id}"),
+                                format!("rev_id={rev_id}"),
                                 &w.doc.author,
                             );
                         }
@@ -3398,8 +3566,7 @@ impl RustPadApp {
                         w.active_table_cell = Some((block_idx, 0, last_c));
                         w.table_cursor_char = t.rows[0][last_c].text.chars().count();
                         w.dirty = true;
-                        self.status_toast =
-                            format!("Added column {} to table", last_c + 1);
+                        self.status_toast = format!("Added column {} to table", last_c + 1);
                     }
                 }
             }
@@ -3529,7 +3696,8 @@ impl RustPadApp {
                                 self.status_toast = "Pinned Sticky Note on PDF page".into();
                             }
                             PdfTool::Redact => {
-                                let scrubbed = page.apply_redaction(pdf_x, pdf_y - 8.0, 160.0, 22.0);
+                                let scrubbed =
+                                    page.apply_redaction(pdf_x, pdf_y - 8.0, 160.0, 22.0);
                                 p.dirty = true;
                                 self.status_toast = format!(
                                     "Applied true security redaction ({scrubbed} text object(s) scrubbed)"
@@ -3741,20 +3909,22 @@ impl RustPadApp {
                     if let Some(StudioTab::Word(w)) = self.tabs.get_mut(self.active_tab) {
                         let author = w.doc.author.clone();
                         let blk = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
-                        let cid =
-                            w.doc
-                                .add_comment(blk, &author, "2026-10-27T12:00:00Z", body);
+                        let cid = w
+                            .doc
+                            .add_comment(blk, &author, "2026-10-27T12:00:00Z", body);
                         w.dirty = true;
                         self.word_sidebar_open = true;
                         if self.policy.audit_log_enabled {
                             self.audit_trail.record(
                                 "COMMENT_ADDED",
-                                &format!("{} #{cid}", w.doc.title),
+                                format!("{} #{cid}", w.doc.title),
                                 &author,
                             );
                         }
-                        self.status_toast =
-                            format!("Added threaded review comment #{cid} to paragraph {}", blk + 1);
+                        self.status_toast = format!(
+                            "Added threaded review comment #{cid} to paragraph {}",
+                            blk + 1
+                        );
                     }
                 }
             }
@@ -4044,9 +4214,10 @@ impl RustPadApp {
         let idx = w.cursor_block.min(w.doc.blocks.len().saturating_sub(1));
         if !matches!(w.doc.blocks.get(idx), Some(Block::Paragraph(_))) {
             let ins_at = (idx + 1).min(w.doc.blocks.len());
-            w.doc
-                .blocks
-                .insert(ins_at, Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "")));
+            w.doc.blocks.insert(
+                ins_at,
+                Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "")),
+            );
             w.cursor_block = ins_at;
             w.cursor_char = 0;
             w.selected_image_block = None;
@@ -4151,6 +4322,10 @@ impl RustPadApp {
     }
 
     pub fn handle_key_down(&mut self, key: Key, mods: Modifiers) {
+        if self.setup_wizard.is_some() {
+            self.handle_setup_wizard_key(key, mods);
+            return;
+        }
         // Global Escape closes dropdowns, modals, background loader, active selection, or Focus Mode
         if key == Key::Escape {
             if self.open_dropdown.is_some() {
@@ -4174,10 +4349,9 @@ impl RustPadApp {
                 if let Some(img_idx) = w.selected_image_block.take() {
                     let next_idx = img_idx + 1;
                     if next_idx >= w.doc.blocks.len() {
-                        w.doc.blocks.push(Block::Paragraph(Paragraph::new(
-                            ParagraphStyle::Normal,
-                            "",
-                        )));
+                        w.doc
+                            .blocks
+                            .push(Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "")));
                     }
                     w.cursor_block = next_idx.min(w.doc.blocks.len().saturating_sub(1));
                     w.cursor_char = match w.doc.blocks.get(w.cursor_block) {
@@ -4191,10 +4365,9 @@ impl RustPadApp {
                 if let Some((tb_idx, _, _)) = w.active_table_cell.take() {
                     let next_idx = tb_idx + 1;
                     if next_idx >= w.doc.blocks.len() {
-                        w.doc.blocks.push(Block::Paragraph(Paragraph::new(
-                            ParagraphStyle::Normal,
-                            "",
-                        )));
+                        w.doc
+                            .blocks
+                            .push(Block::Paragraph(Paragraph::new(ParagraphStyle::Normal, "")));
                     }
                     w.cursor_block = next_idx.min(w.doc.blocks.len().saturating_sub(1));
                     w.cursor_char = match w.doc.blocks.get(w.cursor_block) {
@@ -4295,11 +4468,11 @@ impl RustPadApp {
                         .and_then(|s| s.to_str())
                         .unwrap_or("")
                         .to_ascii_lowercase();
-                    if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp") && candidate.is_file()
+                    if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "bmp")
+                        && candidate.is_file()
+                        && self.insert_image_from_path(candidate, None).is_ok()
                     {
-                        if self.insert_image_from_path(candidate, None).is_ok() {
-                            return;
-                        }
+                        return;
                     }
                 }
                 self.paste_text(&clip);
@@ -4895,8 +5068,7 @@ impl RustPadApp {
                     if cut {
                         w.history.record(&w.doc);
                         w.delete_selection();
-                        self.status_toast =
-                            format!("Cut selection ({chars} chars) to clipboard");
+                        self.status_toast = format!("Cut selection ({chars} chars) to clipboard");
                     } else {
                         self.status_toast =
                             format!("Copied selection ({chars} chars) to clipboard");
@@ -4975,9 +5147,7 @@ impl RustPadApp {
                 ActiveModal::SplitRange { range_spec } => range_spec.push_str(single),
                 ActiveModal::Watermark { text }
                 | ActiveModal::AddComment { text }
-                | ActiveModal::EditImageCaption { text, .. } => {
-                    text.push_str(single)
-                }
+                | ActiveModal::EditImageCaption { text, .. } => text.push_str(single),
                 ActiveModal::FindReplace {
                     find_text,
                     replace_text,
@@ -5041,9 +5211,8 @@ impl RustPadApp {
                     let tc = tbl.cols;
                     let focus_r = if tr > 1 { 1 } else { 0 };
                     w.insert_table_smart(tbl, None, true, focus_r);
-                    self.status_toast = format!(
-                        "Created {tr}×{tc} table from clipboard data (Ctrl+Z to undo)"
-                    );
+                    self.status_toast =
+                        format!("Created {tr}×{tc} table from clipboard data (Ctrl+Z to undo)");
                     return;
                 }
 
@@ -5073,7 +5242,82 @@ impl RustPadApp {
         }
     }
 
+    fn handle_setup_wizard_key(&mut self, key: Key, mods: Modifiers) {
+        if mods.ctrl && matches!(key, Key::Char('v') | Key::Char('V')) {
+            if let Some(clip) = get_clipboard_text() {
+                let cleaned: String = clip.chars().filter(|&c| c != '\n' && c != '\r').collect();
+                if let Some(wiz) = &mut self.setup_wizard {
+                    match wiz.focus_field {
+                        SetupFocusField::InstallDir => wiz.options.install_dir.push_str(&cleaned),
+                        SetupFocusField::AuthorName => wiz.options.author_name.push_str(&cleaned),
+                        SetupFocusField::None => {}
+                    }
+                }
+            }
+            return;
+        }
+
+        let mut follow_action: Option<UiAction> = None;
+        if let Some(wiz) = &mut self.setup_wizard {
+            match key {
+                Key::Escape => {
+                    if wiz.focus_field != SetupFocusField::None {
+                        wiz.focus_field = SetupFocusField::None;
+                    } else if wiz.step != SetupStep::Installing
+                        && wiz.existing_mode != crate::installer::PersistedSetupMode::NotConfigured
+                    {
+                        self.setup_wizard = None;
+                    }
+                }
+                Key::Backspace => match wiz.focus_field {
+                    SetupFocusField::InstallDir => {
+                        wiz.options.install_dir.pop();
+                    }
+                    SetupFocusField::AuthorName => {
+                        wiz.options.author_name.pop();
+                    }
+                    SetupFocusField::None => {}
+                },
+                Key::Enter => {
+                    if wiz.focus_field != SetupFocusField::None {
+                        wiz.focus_field = SetupFocusField::None;
+                    } else {
+                        match wiz.step {
+                            SetupStep::Welcome => {
+                                follow_action = Some(UiAction::SetupGoStep(SetupStep::Options));
+                            }
+                            SetupStep::Options => {
+                                follow_action = Some(UiAction::SetupGoStep(SetupStep::Personalize));
+                            }
+                            SetupStep::Personalize => {
+                                follow_action = Some(UiAction::SetupStartInstall);
+                            }
+                            SetupStep::Installing => {}
+                            SetupStep::Completed => {
+                                follow_action = Some(UiAction::SetupFinishAndLaunch);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(act) = follow_action {
+            self.dispatch_ui_action(act);
+        }
+    }
+
     pub fn handle_text_input(&mut self, ch: char) {
+        if let Some(wiz) = &mut self.setup_wizard {
+            if !ch.is_control() {
+                match wiz.focus_field {
+                    SetupFocusField::InstallDir => wiz.options.install_dir.push(ch),
+                    SetupFocusField::AuthorName => wiz.options.author_name.push(ch),
+                    SetupFocusField::None => {}
+                }
+            }
+            return;
+        }
         if let Some(modal) = &mut self.modal {
             match modal {
                 ActiveModal::CommandPalette { query, selected }
@@ -5358,10 +5602,8 @@ fn word_backspace(w: &mut WordTabState) {
         let cur_block = w.doc.blocks.remove(w.cursor_block);
         w.cursor_block -= 1;
         if let Block::Paragraph(cur_p) = cur_block {
-            let prev_is_para = matches!(
-                w.doc.blocks.get(w.cursor_block),
-                Some(Block::Paragraph(_))
-            );
+            let prev_is_para =
+                matches!(w.doc.blocks.get(w.cursor_block), Some(Block::Paragraph(_)));
             let prev_is_break_or_rule = matches!(
                 w.doc.blocks.get(w.cursor_block),
                 Some(Block::PageBreak | Block::SectionBreak(_) | Block::HorizontalRule)
@@ -5429,15 +5671,18 @@ fn word_delete(w: &mut WordTabState) {
             }
             rem -= slen;
         }
-    } else if w.cursor_block + 1 < w.doc.blocks.len() {
-        if matches!(w.doc.blocks.get(w.cursor_block + 1), Some(Block::Paragraph(_))) {
-            if let Block::Paragraph(next_p) = w.doc.blocks.remove(w.cursor_block + 1) {
-                if let Some(Block::Paragraph(cur_p)) = w.doc.blocks.get_mut(w.cursor_block) {
-                    cur_p.spans.extend(next_p.spans);
-                    cur_p.normalize_spans();
-                }
-                w.dirty = true;
+    } else if w.cursor_block + 1 < w.doc.blocks.len()
+        && matches!(
+            w.doc.blocks.get(w.cursor_block + 1),
+            Some(Block::Paragraph(_))
+        )
+    {
+        if let Block::Paragraph(next_p) = w.doc.blocks.remove(w.cursor_block + 1) {
+            if let Some(Block::Paragraph(cur_p)) = w.doc.blocks.get_mut(w.cursor_block) {
+                cur_p.spans.extend(next_p.spans);
+                cur_p.normalize_spans();
             }
+            w.dirty = true;
         }
     }
 }
@@ -5715,10 +5960,8 @@ fn discover_workspace_documents() -> Vec<PathBuf> {
             for ent in entries.flatten() {
                 let p = ent.path();
                 if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                    if matches!(
-                        ext.to_ascii_lowercase().as_str(),
-                        "docx" | "pdf" | "md"
-                    ) && p.file_name().and_then(|n| n.to_str()) != Some("README.md")
+                    if matches!(ext.to_ascii_lowercase().as_str(), "docx" | "pdf" | "md")
+                        && p.file_name().and_then(|n| n.to_str()) != Some("README.md")
                         && p.file_name().and_then(|n| n.to_str()) != Some("CHANGELOG.md")
                     {
                         found.push(p);
@@ -5734,7 +5977,14 @@ fn discover_workspace_documents() -> Vec<PathBuf> {
 
 fn discover_workspace_images() -> Vec<PathBuf> {
     let mut found = Vec::new();
-    for dir in [".", "assets", "assets/icons", "public", "examples", "samples"] {
+    for dir in [
+        ".",
+        "assets",
+        "assets/icons",
+        "public",
+        "examples",
+        "samples",
+    ] {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for ent in entries.flatten() {
                 let p = ent.path();
@@ -5957,7 +6207,7 @@ mod tests {
 
         if let Some(StudioTab::Word(w)) = app.tabs.get(app.active_tab) {
             assert_eq!(w.selected_image_block, Some(0));
-            assert!(matches!(w.doc.blocks.get(0), Some(Block::Image(_))));
+            assert!(matches!(w.doc.blocks.first(), Some(Block::Image(_))));
             assert!(matches!(w.doc.blocks.get(1), Some(Block::Paragraph(_))));
         }
 
@@ -6126,7 +6376,10 @@ mod tests {
             let Block::Paragraph(rp) = &reloaded.blocks[0] else {
                 panic!("expected paragraph");
             };
-            assert_eq!(rp.style_at_char(3).highlight, Some(RgbColor::MINT_HIGHLIGHT));
+            assert_eq!(
+                rp.style_at_char(3).highlight,
+                Some(RgbColor::MINT_HIGHLIGHT)
+            );
             assert_eq!(rp.style_at_char(6).highlight, None);
             assert_eq!(
                 rp.style_at_char(8).highlight,
@@ -6139,8 +6392,14 @@ mod tests {
             );
 
             let html = word_to_html(&w.doc, false);
-            assert!(html.contains(&format!("background-color:#{}", RgbColor::LAVENDER_HIGHLIGHT.to_hex())));
-            assert!(html.contains(&format!("background-color:#{}", RgbColor::PEACH_HIGHLIGHT.to_hex())));
+            assert!(html.contains(&format!(
+                "background-color:#{}",
+                RgbColor::LAVENDER_HIGHLIGHT.to_hex()
+            )));
+            assert!(html.contains(&format!(
+                "background-color:#{}",
+                RgbColor::PEACH_HIGHLIGHT.to_hex()
+            )));
         } else {
             panic!("expected Word tab");
         }

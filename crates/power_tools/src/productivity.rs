@@ -104,8 +104,14 @@ pub fn search_document(doc: &Document, query: &str, case_sensitive: bool) -> Vec
     for (label, text) in [
         ("Running Header", doc.page_setup.header_text.as_str()),
         ("Running Footer", doc.page_setup.footer_text.as_str()),
-        ("First-Page Header", doc.page_setup.first_page_header.as_str()),
-        ("First-Page Footer", doc.page_setup.first_page_footer.as_str()),
+        (
+            "First-Page Header",
+            doc.page_setup.first_page_header.as_str(),
+        ),
+        (
+            "First-Page Footer",
+            doc.page_setup.first_page_footer.as_str(),
+        ),
     ] {
         collect_text_hits(
             text,
@@ -192,10 +198,7 @@ fn collect_text_hits(
 
 fn make_snippet(text: &str, byte_pos: usize, match_len: usize) -> String {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
-    let center_idx = chars
-        .iter()
-        .position(|(b, _)| *b >= byte_pos)
-        .unwrap_or(0);
+    let center_idx = chars.iter().position(|(b, _)| *b >= byte_pos).unwrap_or(0);
     let from = center_idx.saturating_sub(28);
     let to = (center_idx + match_len.max(8) + 28).min(chars.len());
     let mut s = String::new();
@@ -254,7 +257,7 @@ pub fn detect_duplicate_paragraphs(
             block_indices: indices,
         })
         .collect();
-    groups.sort_by(|a, b| b.block_indices.len().cmp(&a.block_indices.len()));
+    groups.sort_by_key(|g| std::cmp::Reverse(g.block_indices.len()));
     groups
 }
 
@@ -329,7 +332,10 @@ fn heading_anchor_slug(text: &str) -> String {
             for lc in ch.to_lowercase() {
                 slug.push(lc);
             }
-        } else if (ch.is_whitespace() || ch == '-' || ch == '_') && !slug.ends_with('-') && !slug.is_empty() {
+        } else if (ch.is_whitespace() || ch == '-' || ch == '_')
+            && !slug.ends_with('-')
+            && !slug.is_empty()
+        {
             slug.push('-');
         }
     }
@@ -349,7 +355,10 @@ fn validate_link_target(
         return Some("Unescaped whitespace inside URL".into());
     }
     let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("javascript:") || lower.starts_with("vbscript:") || lower.starts_with("data:") {
+    if lower.starts_with("javascript:")
+        || lower.starts_with("vbscript:")
+        || lower.starts_with("data:")
+    {
         return Some("Blocked unsafe script/data URI scheme".into());
     }
     if let Some(anchor) = trimmed.strip_prefix('#') {
@@ -369,7 +378,9 @@ fn validate_link_target(
         .or_else(|| lower.strip_prefix("http://"))
     {
         let host = rest.split('/').next().unwrap_or("");
-        if host.is_empty() || (!host.contains('.') && host != "localhost" && !host.starts_with("127.")) {
+        if host.is_empty()
+            || (!host.contains('.') && host != "localhost" && !host.starts_with("127."))
+        {
             return Some(format!("Malformed HTTP(S) host '{host}'"));
         }
         return None;
@@ -422,7 +433,10 @@ pub fn run_batch_docx_job(
 ) -> Result<BatchJobSummary, String> {
     let in_dir = input_dir.as_ref();
     if !in_dir.exists() {
-        return Err(format!("Batch input directory '{}' does not exist", in_dir.display()));
+        return Err(format!(
+            "Batch input directory '{}' does not exist",
+            in_dir.display()
+        ));
     }
     if let Some(out) = output_dir {
         fs::create_dir_all(out).map_err(|e| e.to_string())?;
@@ -451,7 +465,11 @@ pub fn run_batch_docx_job(
                 Ok(raw) => {
                     let v = validate_docx_bytes(&raw);
                     if !v.is_valid {
-                        Err(format!("{}: INVALID ({} errors)", path.display(), v.error_count()))
+                        Err(format!(
+                            "{}: INVALID ({} errors)",
+                            path.display(),
+                            v.error_count()
+                        ))
                     } else if let Ok(doc) = load_docx_bytes(&raw) {
                         let sec = inspect_security_and_hidden(&doc, Some(&raw));
                         summary.security_warnings += sec.findings.len();
@@ -491,7 +509,8 @@ pub fn run_batch_docx_job(
                 })
             }
             BatchOperation::ConvertToPdf => match fs::read(&path).and_then(|b| {
-                load_docx_bytes(&b).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.0))
+                load_docx_bytes(&b)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.0))
             }) {
                 Ok(doc) => {
                     let out_file = target_dir.join(format!("{stem}.pdf"));
@@ -502,7 +521,8 @@ pub fn run_batch_docx_job(
                 Err(e) => Err(format!("{}: {e}", path.display())),
             },
             BatchOperation::ConvertToMarkdown => match fs::read(&path).and_then(|b| {
-                load_docx_bytes(&b).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.0))
+                load_docx_bytes(&b)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.0))
             }) {
                 Ok(doc) => {
                     let out_file = target_dir.join(format!("{stem}.md"));
@@ -513,7 +533,8 @@ pub fn run_batch_docx_job(
                 Err(e) => Err(format!("{}: {e}", path.display())),
             },
             BatchOperation::ConvertToHtml { dark_mode } => match fs::read(&path).and_then(|b| {
-                load_docx_bytes(&b).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.0))
+                load_docx_bytes(&b)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.0))
             }) {
                 Ok(doc) => {
                     let out_file = target_dir.join(format!("{stem}.html"));

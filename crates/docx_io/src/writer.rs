@@ -81,8 +81,11 @@ pub fn save_docx_bytes(doc: &Document) -> Vec<u8> {
     );
     zw.add_file(
         "word/footer1.xml",
-        build_footer_xml(&doc.page_setup.footer_text, doc.page_setup.show_page_numbers)
-            .into_bytes(),
+        build_footer_xml(
+            &doc.page_setup.footer_text,
+            doc.page_setup.show_page_numbers,
+        )
+        .into_bytes(),
     );
     if has_comments {
         zw.add_file(
@@ -551,14 +554,10 @@ fn write_paragraph_xml(
     }
     match p.list_kind {
         ListKind::Bullet => {
-            out.push_str(
-                r#"<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>"#,
-            );
+            out.push_str(r#"<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>"#);
         }
         ListKind::Numbered(_) => {
-            out.push_str(
-                r#"<w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr>"#,
-            );
+            out.push_str(r#"<w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr>"#);
         }
         ListKind::Checklist(_) | ListKind::None => {}
     }
@@ -586,9 +585,7 @@ fn write_paragraph_xml(
     for span in &p.spans {
         let mut r_xml = String::from("<w:r><w:rPr>");
         let font = span.style.font_family.docx_name();
-        r_xml.push_str(&format!(
-            r#"<w:rFonts w:ascii="{font}" w:hAnsi="{font}"/>"#
-        ));
+        r_xml.push_str(&format!(r#"<w:rFonts w:ascii="{font}" w:hAnsi="{font}"/>"#));
         if span.style.bold {
             r_xml.push_str("<w:b/>");
         }

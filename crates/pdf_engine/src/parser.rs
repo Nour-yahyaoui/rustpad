@@ -187,7 +187,10 @@ fn scan_pdf_objects(bytes: &[u8]) -> BTreeMap<u32, Vec<u8>> {
             while i < len && bytes[i].is_ascii_whitespace() {
                 i += 1;
             }
-            if i + 3 <= len && &bytes[i..i + 3] == b"obj" && (i + 3 == len || !bytes[i + 3].is_ascii_alphabetic()) {
+            if i + 3 <= len
+                && &bytes[i..i + 3] == b"obj"
+                && (i + 3 == len || !bytes[i + 3].is_ascii_alphabetic())
+            {
                 i += 3;
                 while i < len && (bytes[i] == b'\r' || bytes[i] == b'\n' || bytes[i] == b' ') {
                     i += 1;
@@ -321,7 +324,9 @@ fn extract_media_box(hdr: &str) -> Option<(f32, f32)> {
 fn extract_int_field(hdr: &str, key: &str) -> Option<i32> {
     let pos = hdr.find(key)?;
     let rest = hdr[pos + key.len()..].trim_start();
-    let tok = rest.split(|c: char| c.is_whitespace() || c == '/' || c == '>').next()?;
+    let tok = rest
+        .split(|c: char| c.is_whitespace() || c == '/' || c == '>')
+        .next()?;
     tok.parse::<i32>().ok()
 }
 
@@ -447,15 +452,10 @@ fn extract_page_annots(hdr: &str, objects: &BTreeMap<u32, Vec<u8>>, page: &mut P
             let ahdr = header_ascii(abody);
             if ahdr.contains("/Subtype /Text") {
                 let note = extract_pdf_paren_field(&ahdr, "/Contents").unwrap_or_default();
-                let author =
-                    extract_pdf_paren_field(&ahdr, "/T").unwrap_or_else(|| "Note".into());
+                let author = extract_pdf_paren_field(&ahdr, "/T").unwrap_or_else(|| "Note".into());
                 if let Some((x, y, _, _)) = extract_rect_4(&ahdr) {
-                    page.annotations.push(PdfAnnotation::StickyNote {
-                        x,
-                        y,
-                        author,
-                        note,
-                    });
+                    page.annotations
+                        .push(PdfAnnotation::StickyNote { x, y, author, note });
                 }
             }
         }
@@ -1378,7 +1378,11 @@ fn parse_pdf_literal_string(data: &[u8]) -> (Vec<u8>, usize) {
 }
 
 fn decode_pdf_hex_string(hex: &[u8]) -> Vec<u8> {
-    let clean: Vec<u8> = hex.iter().copied().filter(|b| b.is_ascii_hexdigit()).collect();
+    let clean: Vec<u8> = hex
+        .iter()
+        .copied()
+        .filter(|b| b.is_ascii_hexdigit())
+        .collect();
     let mut bytes = Vec::with_capacity(clean.len().div_ceil(2));
     let mut i = 0;
     while i < clean.len() {
@@ -1511,7 +1515,10 @@ end";
     #[test]
     fn test_pdf_text_string_utf16be_bom() {
         // "Hi" as UTF-16BE with BOM.
-        assert_eq!(pdf_text_string_to_utf8(&[0xFE, 0xFF, 0x00, b'H', 0x00, b'i']), "Hi");
+        assert_eq!(
+            pdf_text_string_to_utf8(&[0xFE, 0xFF, 0x00, b'H', 0x00, b'i']),
+            "Hi"
+        );
         assert_eq!(pdf_text_string_to_utf8(b"Hi"), "Hi");
     }
 }

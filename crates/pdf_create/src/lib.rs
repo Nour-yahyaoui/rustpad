@@ -351,6 +351,7 @@ struct WordToken {
     width_pt: f32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_paragraph_pdf(
     p: &Paragraph,
     show_revisions: bool,
@@ -686,11 +687,7 @@ fn render_paragraph_pdf(
             if let Some(hl) = tok.style.highlight {
                 let hl_x = x + lead_w;
                 let hl_w = core_w
-                    + if coalesced
-                        .get(t_idx + 1)
-                        .and_then(|n| n.style.highlight)
-                        == Some(hl)
-                    {
+                    + if coalesced.get(t_idx + 1).and_then(|n| n.style.highlight) == Some(hl) {
                         trail_w
                     } else {
                         0.0
@@ -761,6 +758,7 @@ fn render_paragraph_pdf(
     *cursor_y -= 5.0;
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_table_pdf(
     t: &TableBlock,
     m_left: f32,
@@ -906,12 +904,7 @@ const TIMES_BOLD_AFM: [u16; 95] = [
     556, 556, 444, 389, 333, 556, 500, 722, 500, 500, 444, 394, 220, 394, 520, // p..~
 ];
 
-pub fn estimate_styled_text_width(
-    text: &str,
-    size_pt: f32,
-    family: FontFamily,
-    bold: bool,
-) -> f32 {
+pub fn estimate_styled_text_width(text: &str, size_pt: f32, family: FontFamily, bold: bool) -> f32 {
     if family == FontFamily::Mono {
         let mut count = 0usize;
         for ch in text.chars() {
@@ -1085,7 +1078,7 @@ fn parse_jpeg_sof_dimensions(bytes: &[u8]) -> Option<(u32, u32, u8)> {
         if seg_len < 2 || pos + seg_len > bytes.len() {
             break;
         }
-        if matches!(m, 0xC0 | 0xC1 | 0xC2) && seg_len >= 8 {
+        if matches!(m, 0xC0..=0xC2) && seg_len >= 8 {
             let h = u16::from_be_bytes([bytes[pos + 3], bytes[pos + 4]]) as u32;
             let w = u16::from_be_bytes([bytes[pos + 5], bytes[pos + 6]]) as u32;
             let nf = bytes[pos + 7];
@@ -1130,8 +1123,8 @@ fn extract_png_rgb_for_pdf(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                 interlace = chunk[12];
             }
             b"PLTE" => {
-                for rgb in chunk.chunks_exact(3) {
-                    palette.push([rgb[0], rgb[1], rgb[2]]);
+                for rgb in chunk.as_chunks::<3>().0 {
+                    palette.push(*rgb);
                 }
             }
             b"IDAT" => idat.extend_from_slice(chunk),
@@ -1201,7 +1194,10 @@ fn extract_png_rgb_for_pdf(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
                     rgb.extend_from_slice(&row[i..i + 3]);
                 }
                 3 => {
-                    let c = palette.get(row[px] as usize).copied().unwrap_or([255, 255, 255]);
+                    let c = palette
+                        .get(row[px] as usize)
+                        .copied()
+                        .unwrap_or([255, 255, 255]);
                     rgb.extend_from_slice(&c);
                 }
                 4 => {
@@ -1248,7 +1244,7 @@ fn prepare_pdf_image_xobject(img: &ImageBlock) -> Option<PdfImageXObject> {
         let px_count = (*w as usize).saturating_mul(*h as usize);
         if *w > 0 && *h > 0 && rgba.len() >= px_count * 4 {
             let mut rgb = Vec::with_capacity(px_count * 3);
-            for px in rgba[..px_count * 4].chunks_exact(4) {
+            for px in rgba[..px_count * 4].as_chunks::<4>().0 {
                 let a = px[3] as u16;
                 rgb.push(((px[0] as u16 * a + 255 * (255 - a)) / 255) as u8);
                 rgb.push(((px[1] as u16 * a + 255 * (255 - a)) / 255) as u8);
@@ -1351,9 +1347,8 @@ pub fn assemble_pdf_binary_with_images(
     } else {
         objects.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
     }
-    objects.push(
-        format!("<< /Type /Pages /Kids [ {kids_refs}] /Count {page_count} >>").into_bytes(),
-    );
+    objects
+        .push(format!("<< /Type /Pages /Kids [ {kids_refs}] /Count {page_count} >>").into_bytes());
     objects.push(
         format!(
             "<< /Title ({}) /Author ({}) /Creator (RustPad Native Desktop Studio) /Producer (RustPad PDF 1.7 Engine) >>",
@@ -1376,7 +1371,8 @@ pub fn assemble_pdf_binary_with_images(
     }
 
     if images.is_empty() {
-        objects.push(format!("<< /Font << {font_map_entries}>> >>").into_bytes()); // Obj 16
+        objects.push(format!("<< /Font << {font_map_entries}>> >>").into_bytes());
+    // Obj 16
     } else {
         let mut xobj_entries = String::new();
         for k in 0..images.len() {
@@ -1467,8 +1463,14 @@ pub fn assemble_pdf_binary_with_images(
 }
 
 pub fn build_pdfa_xmp_packet(title: &str, author: &str) -> String {
-    let clean_title = title.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-    let clean_author = author.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let clean_title = title
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    let clean_author = author
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
     format!(
         r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/">
@@ -1508,7 +1510,9 @@ mod tests {
             "Diagram",
             2,
             2,
-            vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255],
+            vec![
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+            ],
             vec![137, 80, 78, 71, 13, 10, 26, 10],
             400.0,
         );
@@ -1557,10 +1561,8 @@ mod tests {
             estimate_styled_text_width("hello everyone im ", sz, FontFamily::Sans, false);
         let w_prefix_trimmed =
             estimate_styled_text_width("hello everyone im", sz, FontFamily::Sans, false);
-        let w_bold_name =
-            estimate_styled_text_width("nour yahyaoui", sz, FontFamily::Sans, true);
-        let w_reg_name =
-            estimate_styled_text_width("nour yahyaoui", sz, FontFamily::Sans, false);
+        let w_bold_name = estimate_styled_text_width("nour yahyaoui", sz, FontFamily::Sans, true);
+        let w_reg_name = estimate_styled_text_width("nour yahyaoui", sz, FontFamily::Sans, false);
         let space_w = estimate_styled_text_width(" ", sz, FontFamily::Sans, false);
 
         assert!(w_prefix_with_space - w_prefix_trimmed > 3.0);

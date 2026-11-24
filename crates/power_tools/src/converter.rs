@@ -49,10 +49,7 @@ pub fn pdf_to_word(pdf: &PdfDocument) -> Document {
         }
 
         for line in lines {
-            let max_size = line
-                .iter()
-                .map(|i| i.font_size)
-                .fold(11.5f32, f32::max);
+            let max_size = line.iter().map(|i| i.font_size).fold(11.5f32, f32::max);
             let any_bold = line.iter().any(|i| i.bold);
 
             let style = if max_size >= 23.0 {
@@ -287,7 +284,10 @@ pub fn markdown_to_word(md: &str, title: impl Into<String>) -> Document {
                 ParagraphStyle::Quote,
                 q.trim(),
             )));
-        } else if let Some(done_item) = trimmed.strip_prefix("- [x] ").or_else(|| trimmed.strip_prefix("- [X] ")) {
+        } else if let Some(done_item) = trimmed
+            .strip_prefix("- [x] ")
+            .or_else(|| trimmed.strip_prefix("- [X] "))
+        {
             let mut p = parse_inline_md(done_item);
             p.list_kind = ListKind::Checklist(true);
             blocks.push(Block::Paragraph(p));
@@ -295,7 +295,10 @@ pub fn markdown_to_word(md: &str, title: impl Into<String>) -> Document {
             let mut p = parse_inline_md(todo_item);
             p.list_kind = ListKind::Checklist(false);
             blocks.push(Block::Paragraph(p));
-        } else if let Some(b) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+        } else if let Some(b) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
             let mut p = parse_inline_md(b);
             p.list_kind = ListKind::Bullet;
             blocks.push(Block::Paragraph(p));
@@ -401,7 +404,7 @@ pub fn word_to_markdown(doc: &Document) -> String {
             Block::Paragraph(p) => {
                 match p.style {
                     ParagraphStyle::Title => md.push_str("# "),
-                    ParagraphStyle::Subtitle => md.push_str("*"),
+                    ParagraphStyle::Subtitle => md.push('*'),
                     ParagraphStyle::Heading1 => md.push_str("## "),
                     ParagraphStyle::Heading2 => md.push_str("### "),
                     ParagraphStyle::Heading3 => md.push_str("#### "),
@@ -693,7 +696,7 @@ fn escape_html(s: &str) -> String {
 
 fn encode_base64(bytes: &[u8]) -> String {
     const LUT: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };

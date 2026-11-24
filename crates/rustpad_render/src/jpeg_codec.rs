@@ -447,7 +447,7 @@ fn decode_jpeg_internal(
                     adobe_transform = Some(seg[11]);
                 }
             }
-            0xC0 | 0xC1 | 0xC2 => {
+            0xC0..=0xC2 => {
                 // SOF0 (Baseline), SOF1 (Extended Sequential), SOF2 (Progressive)
                 if seg.len() < 6 {
                     return Err("Malformed JPEG SOF header".into());
@@ -593,7 +593,7 @@ fn decode_jpeg_internal(
                         for mx in 0..mcu_cols {
                             if restart_interval > 0
                                 && mcu_counter > 0
-                                && mcu_counter % restart_interval == 0
+                                && mcu_counter.is_multiple_of(restart_interval)
                             {
                                 reader.consume_restart_marker();
                                 dc_pred = [0; 4];
@@ -675,9 +675,12 @@ fn decode_jpeg_internal(
                                         rgba[out_o + 2] = g;
                                     }
                                     3 => {
-                                        let c0 = sample_plane(&strips[0], sx, local_y, max_h, max_v);
-                                        let c1 = sample_plane(&strips[1], sx, local_y, max_h, max_v);
-                                        let c2 = sample_plane(&strips[2], sx, local_y, max_h, max_v);
+                                        let c0 =
+                                            sample_plane(&strips[0], sx, local_y, max_h, max_v);
+                                        let c1 =
+                                            sample_plane(&strips[1], sx, local_y, max_h, max_v);
+                                        let c2 =
+                                            sample_plane(&strips[2], sx, local_y, max_h, max_v);
                                         let (r, g, b) = if is_rgb {
                                             (c0, c1, c2)
                                         } else {
@@ -688,9 +691,12 @@ fn decode_jpeg_internal(
                                         rgba[out_o + 2] = b;
                                     }
                                     4 => {
-                                        let c0 = sample_plane(&strips[0], sx, local_y, max_h, max_v);
-                                        let c1 = sample_plane(&strips[1], sx, local_y, max_h, max_v);
-                                        let c2 = sample_plane(&strips[2], sx, local_y, max_h, max_v);
+                                        let c0 =
+                                            sample_plane(&strips[0], sx, local_y, max_h, max_v);
+                                        let c1 =
+                                            sample_plane(&strips[1], sx, local_y, max_h, max_v);
+                                        let c2 =
+                                            sample_plane(&strips[2], sx, local_y, max_h, max_v);
                                         let k = sample_plane(&strips[3], sx, local_y, max_h, max_v)
                                             as u16;
                                         let (c, m, y_ch) = if adobe_transform == Some(2) {
@@ -734,7 +740,7 @@ fn decode_jpeg_internal(
                         for bx in 0..bw {
                             if restart_interval > 0
                                 && mcu_counter > 0
-                                && mcu_counter % restart_interval == 0
+                                && mcu_counter.is_multiple_of(restart_interval)
                             {
                                 reader.consume_restart_marker();
                                 dc_pred = [0; 4];
@@ -765,7 +771,7 @@ fn decode_jpeg_internal(
                         for mx in 0..mcu_cols {
                             if restart_interval > 0
                                 && mcu_counter > 0
-                                && mcu_counter % restart_interval == 0
+                                && mcu_counter.is_multiple_of(restart_interval)
                             {
                                 reader.consume_restart_marker();
                                 dc_pred = [0; 4];
@@ -804,7 +810,9 @@ fn decode_jpeg_internal(
                 pos = reader.pos;
             }
             0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF => {
-                return Err(format!("Unsupported lossless/arithmetic JPEG SOF 0x{marker:02X}"));
+                return Err(format!(
+                    "Unsupported lossless/arithmetic JPEG SOF 0x{marker:02X}"
+                ));
             }
             _ => {}
         }
@@ -1090,14 +1098,80 @@ fn ycbcr_to_rgb(y: u8, cb: u8, cr: u8) -> (u8, u8, u8) {
 /// Fast separable 2D 8×8 inverse DCT (`ITU-T.81` §A.3.3) using exact cosine constants.
 fn idct_8x8(coeffs: &[i16; 64], qt: &[i32; 64], out: &mut [u8; 64]) {
     const IDCT_BASIS: [[f32; 8]; 8] = [
-        [0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338],
-        [0.49039263, 0.4157348,  0.27778512, 0.09754516, -0.09754516, -0.27778512, -0.4157348,  -0.49039263],
-        [0.46193975, 0.19134171, -0.19134171, -0.46193975, -0.46193975, -0.19134171, 0.19134171, 0.46193975],
-        [0.4157348,  -0.09754516, -0.49039263, -0.27778512, 0.27778512, 0.49039263, 0.09754516, -0.4157348],
-        [0.35355338, -0.35355338, -0.35355338, 0.35355338, 0.35355338, -0.35355338, -0.35355338, 0.35355338],
-        [0.27778512, -0.49039263, 0.09754516, 0.4157348,  -0.4157348,  -0.09754516, 0.49039263, -0.27778512],
-        [0.19134171, -0.46193975, 0.46193975, -0.19134171, -0.19134171, 0.46193975, -0.46193975, 0.19134171],
-        [0.09754516, -0.27778512, 0.4157348,  -0.49039263, 0.49039263, -0.4157348,  0.27778512, -0.09754516],
+        [
+            0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338, 0.35355338,
+            0.35355338,
+        ],
+        [
+            0.49039263,
+            0.4157348,
+            0.27778512,
+            0.09754516,
+            -0.09754516,
+            -0.27778512,
+            -0.4157348,
+            -0.49039263,
+        ],
+        [
+            0.46193975,
+            0.19134171,
+            -0.19134171,
+            -0.46193975,
+            -0.46193975,
+            -0.19134171,
+            0.19134171,
+            0.46193975,
+        ],
+        [
+            0.4157348,
+            -0.09754516,
+            -0.49039263,
+            -0.27778512,
+            0.27778512,
+            0.49039263,
+            0.09754516,
+            -0.4157348,
+        ],
+        [
+            0.35355338,
+            -0.35355338,
+            -0.35355338,
+            0.35355338,
+            0.35355338,
+            -0.35355338,
+            -0.35355338,
+            0.35355338,
+        ],
+        [
+            0.27778512,
+            -0.49039263,
+            0.09754516,
+            0.4157348,
+            -0.4157348,
+            -0.09754516,
+            0.49039263,
+            -0.27778512,
+        ],
+        [
+            0.19134171,
+            -0.46193975,
+            0.46193975,
+            -0.19134171,
+            -0.19134171,
+            0.46193975,
+            -0.46193975,
+            0.19134171,
+        ],
+        [
+            0.09754516,
+            -0.27778512,
+            0.4157348,
+            -0.49039263,
+            0.49039263,
+            -0.4157348,
+            0.27778512,
+            -0.09754516,
+        ],
     ];
 
     // Fast path for flat DC-only blocks (very common in smooth document diagrams & photos!)
@@ -1148,9 +1222,7 @@ mod tests {
         jpg.extend_from_slice(&[1u8; 64]);
 
         // SOF0: 8-bit, 8x8, 1 component (id=1, 1x1 sampling, tq=0)
-        jpg.extend_from_slice(&[
-            0xFF, 0xC0, 0x00, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0,
-        ]);
+        jpg.extend_from_slice(&[0xFF, 0xC0, 0x00, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0]);
 
         // DHT DC table 0: 1 symbol of length 1 bit -> symbol `0` (DC diff = 0 -> mid-gray 128!)
         let mut dc_counts = [0u8; 16];

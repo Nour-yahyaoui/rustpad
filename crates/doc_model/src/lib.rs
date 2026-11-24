@@ -136,18 +136,13 @@ pub fn highlight_color_label(color: RgbColor) -> &'static str {
 }
 
 /// Enterprise data-governance classification banner & metadata level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SecurityClassification {
+    #[default]
     Unclassified,
     Internal,
     Confidential,
     Restricted,
-}
-
-impl Default for SecurityClassification {
-    fn default() -> Self {
-        Self::Unclassified
-    }
 }
 
 impl SecurityClassification {
@@ -445,10 +440,7 @@ pub fn next_word_char_idx(text: &str, cur_char: usize) -> usize {
             i += 1;
         }
     } else if i < len && !chars[i].is_whitespace() {
-        while i < len
-            && !chars[i].is_whitespace()
-            && !chars[i].is_alphanumeric()
-            && chars[i] != '_'
+        while i < len && !chars[i].is_whitespace() && !chars[i].is_alphanumeric() && chars[i] != '_'
         {
             i += 1;
         }
@@ -809,7 +801,8 @@ impl Paragraph {
                 ..SpanStyle::default()
             });
         if self.spans.is_empty() {
-            self.spans.push(TextSpan::styled(String::new(), fallback_style));
+            self.spans
+                .push(TextSpan::styled(String::new(), fallback_style));
             return;
         }
         let mut merged: Vec<TextSpan> = Vec::with_capacity(self.spans.len());
@@ -1036,7 +1029,9 @@ impl TableBlock {
                     cell.bg_color = hdr_bg;
                 } else if striped && r_idx % 2 == 0 {
                     cell.bg_color = stripe_bg;
-                } else if is_stripe_fill(cell.bg_color) || r_idx > 0 && is_header_fill(cell.bg_color) {
+                } else if is_stripe_fill(cell.bg_color)
+                    || r_idx > 0 && is_header_fill(cell.bg_color)
+                {
                     cell.bg_color = None;
                 }
             }
@@ -1169,7 +1164,10 @@ impl TableBlock {
             return Some((
                 tbl,
                 weights,
-                format!("Inserted {} table — Tab to move across cells", preset.label()),
+                format!(
+                    "Inserted {} table — Tab to move across cells",
+                    preset.label()
+                ),
             ));
         }
 
@@ -1226,13 +1224,12 @@ impl TableBlock {
             let mut grid: Vec<Vec<String>> = non_empty_lines
                 .iter()
                 .map(|line| {
-                    let row: Vec<String> =
-                        line.split('\t').map(|s| s.trim().to_string()).collect();
+                    let row: Vec<String> = line.split('\t').map(|s| s.trim().to_string()).collect();
                     max_cols = max_cols.max(row.len());
                     row
                 })
                 .collect();
-            if max_cols < 2 || max_cols > 16 {
+            if !(2..=16).contains(&max_cols) {
                 return None;
             }
             for row in &mut grid {
@@ -1244,11 +1241,7 @@ impl TableBlock {
         }
 
         // 2. Check multi-line Markdown pipe table (`| A | B |\n|---|---|\n| 1 | 2 |`)
-        if non_empty_lines.len() >= 2
-            && non_empty_lines
-                .iter()
-                .all(|l| l.trim().contains('|'))
-        {
+        if non_empty_lines.len() >= 2 && non_empty_lines.iter().all(|l| l.trim().contains('|')) {
             let mut grid = Vec::new();
             let mut alignments: Vec<Alignment> = Vec::new();
             let mut max_cols = 0usize;
@@ -1265,7 +1258,7 @@ impl TableBlock {
                 max_cols = max_cols.max(parts.len());
                 grid.push(parts.into_iter().map(|s| s.to_string()).collect::<Vec<_>>());
             }
-            if grid.is_empty() || max_cols < 2 || max_cols > 16 {
+            if grid.is_empty() || !(2..=16).contains(&max_cols) {
                 return None;
             }
             for row in &mut grid {
@@ -1389,7 +1382,7 @@ fn parse_md_alignment(cell: &str) -> Alignment {
 }
 
 fn parse_grid_dimensions(spec: &str) -> Option<(usize, usize)> {
-    let normalized = spec.replace('×', "x").replace('*', "x");
+    let normalized = spec.replace(['×', '*'], "x");
     let parts: Vec<&str> = if normalized.contains('x') {
         normalized.split('x').collect()
     } else {
@@ -1535,8 +1528,18 @@ impl TablePreset {
                 t.rows[0] = vec![h_desc, h_qty, h_unit, h_total];
 
                 let items = [
-                    ("Core Architecture & Engineering", "1", "$1,200.00", "$1,200.00"),
-                    ("QA Verification & Release Packaging", "1", "$650.00", "$650.00"),
+                    (
+                        "Core Architecture & Engineering",
+                        "1",
+                        "$1,200.00",
+                        "$1,200.00",
+                    ),
+                    (
+                        "QA Verification & Release Packaging",
+                        "1",
+                        "$650.00",
+                        "$650.00",
+                    ),
                 ];
                 for (idx, (desc, qty, unit, tot)) in items.iter().enumerate() {
                     let mut c_qty = TableCell::plain(*qty);
@@ -1611,7 +1614,11 @@ impl TablePreset {
                 ];
                 let rows_data = [
                     ("Latency / Speed", "240 ms average", "< 16 ms native VSync"),
-                    ("Offline Operation", "Requires cloud login", "100% offline-first"),
+                    (
+                        "Offline Operation",
+                        "Requires cloud login",
+                        "100% offline-first",
+                    ),
                     ("Annual Cost", "$24 / seat / mo", "Open-source MIT"),
                 ];
                 for (i, (crit, base, prop)) in rows_data.iter().enumerate() {
@@ -1719,7 +1726,7 @@ pub fn probe_media_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
             if seg_len < 2 || pos + seg_len > bytes.len() {
                 break;
             }
-            if matches!(marker, 0xC0 | 0xC1 | 0xC2) && seg_len >= 7 {
+            if matches!(marker, 0xC0..=0xC2) && seg_len >= 7 {
                 let h = u16::from_be_bytes([bytes[pos + 3], bytes[pos + 4]]) as u32;
                 let w = u16::from_be_bytes([bytes[pos + 5], bytes[pos + 6]]) as u32;
                 if w > 0 && h > 0 {
@@ -2376,15 +2383,15 @@ impl Document {
                     if b_text == r_text {
                         out.blocks.push(Block::Paragraph(rp.clone()));
                     } else {
-                        let base_style = rp
-                            .spans
-                            .first()
-                            .map(|s| s.style.clone())
-                            .unwrap_or_else(|| SpanStyle {
-                                font_size_pt: rp.style.default_font_size(),
-                                bold: rp.style.is_bold_by_default(),
-                                ..SpanStyle::default()
-                            });
+                        let base_style =
+                            rp.spans
+                                .first()
+                                .map(|s| s.style.clone())
+                                .unwrap_or_else(|| SpanStyle {
+                                    font_size_pt: rp.style.default_font_size(),
+                                    bold: rp.style.is_bold_by_default(),
+                                    ..SpanStyle::default()
+                                });
                         let spans = diff_words_to_spans(
                             &b_text,
                             &r_text,
@@ -2642,7 +2649,8 @@ impl Document {
             ref_style.superscript = true;
             ref_style.color = RgbColor::COBALT;
             ref_style.footnote_ref = Some(next_id);
-            p.spans.push(TextSpan::styled(format!("[{next_id}]"), ref_style));
+            p.spans
+                .push(TextSpan::styled(format!("[{next_id}]"), ref_style));
             p.normalize_spans();
         }
         next_id
@@ -2951,7 +2959,8 @@ mod tests {
             "Payment due within 14 business days of verified invoice receipt.",
         ))];
 
-        let redline = Document::diff_redline(&base, &revised, "Legal Counsel", "2026-10-27T10:00:00Z");
+        let redline =
+            Document::diff_redline(&base, &revised, "Legal Counsel", "2026-10-27T10:00:00Z");
         let (ins, del) = redline.revision_counts();
         assert!(ins >= 1 && del >= 1);
 
@@ -3128,12 +3137,16 @@ mod tests {
         let spans = quad.to_inline_spans(&base);
         assert!(spans.len() >= 4);
         assert!(spans.iter().any(|s| s.style.superscript));
-        assert!(spans.iter().any(|s| s.style.italic && s.style.font_family == FontFamily::Serif));
+        assert!(spans
+            .iter()
+            .any(|s| s.style.italic && s.style.font_family == FontFamily::Serif));
 
         let mut p = Paragraph::new(ParagraphStyle::Normal, "Solve  for roots.");
         let added = p.insert_inline_spans_at(6, spans, None);
         assert!(added > 5);
-        assert!(p.plain_text().starts_with("Solve x = (−b ± √(b2 − 4ac)) / 2a for roots."));
+        assert!(p
+            .plain_text()
+            .starts_with("Solve x = (−b ± √(b2 − 4ac)) / 2a for roots."));
 
         assert_eq!(
             parse_slash_math_command("/math"),

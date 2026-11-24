@@ -103,7 +103,9 @@ impl SpellChecker {
             }
         }
         // Add author & domain terms so they never flag false positives
-        for extra in ["nour", "yahyaoui", "rustpad", "openxml", "winansi", "mahdia"] {
+        for extra in [
+            "nour", "yahyaoui", "rustpad", "openxml", "winansi", "mahdia",
+        ] {
             dict.insert(extra.to_string());
         }
         let mut sorted_list: Vec<String> = dict.iter().cloned().collect();

@@ -60,8 +60,15 @@ pub enum CursorShape {
 
 #[derive(Debug, Clone)]
 pub enum WindowEvent {
-    Resize { width: u32, height: u32 },
-    MouseMove { x: f32, y: f32, mods: Modifiers },
+    Resize {
+        width: u32,
+        height: u32,
+    },
+    MouseMove {
+        x: f32,
+        y: f32,
+        mods: Modifiers,
+    },
     MouseDown {
         x: f32,
         y: f32,
@@ -74,8 +81,14 @@ pub enum WindowEvent {
         button: MouseButton,
         mods: Modifiers,
     },
-    Scroll { delta_y: f32, mods: Modifiers },
-    KeyDown { key: Key, mods: Modifiers },
+    Scroll {
+        delta_y: f32,
+        mods: Modifiers,
+    },
+    KeyDown {
+        key: Key,
+        mods: Modifiers,
+    },
     TextInput(char),
     DroppedFile(PathBuf),
     Tick,
@@ -145,8 +158,8 @@ pub fn set_clipboard_text(text: &str) -> bool {
     }
     #[cfg(target_os = "linux")]
     {
-        let has_display = std::env::var_os("DISPLAY").is_some()
-            || std::env::var_os("WAYLAND_DISPLAY").is_some();
+        let has_display =
+            std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
         if has_display {
             for (bin, args) in [
                 ("wl-copy", &([] as [&str; 0])[..]),
@@ -192,7 +205,12 @@ pub fn set_clipboard_text(text: &str) -> bool {
 
 /// Reads UTF-8 text from the native OS clipboard (falling back to the in-process clipboard buffer).
 pub fn get_clipboard_text() -> Option<String> {
-    if OS_CLIP_SYNCED.load(Ordering::Relaxed) || internal_clipboard().lock().map(|g| g.is_empty()).unwrap_or(true) {
+    if OS_CLIP_SYNCED.load(Ordering::Relaxed)
+        || internal_clipboard()
+            .lock()
+            .map(|g| g.is_empty())
+            .unwrap_or(true)
+    {
         #[cfg(target_os = "windows")]
         {
             if let Some(s) = win32::get_win32_clipboard_text() {
@@ -211,11 +229,7 @@ pub fn get_clipboard_text() -> Option<String> {
                     ("xclip", &["-selection", "clipboard", "-o"][..]),
                     ("xsel", &["--clipboard", "--output"][..]),
                 ] {
-                    if let Ok(out) = Command::new(bin)
-                        .args(args)
-                        .stderr(Stdio::null())
-                        .output()
-                    {
+                    if let Ok(out) = Command::new(bin).args(args).stderr(Stdio::null()).output() {
                         if out.status.success() {
                             let s = String::from_utf8_lossy(&out.stdout).to_string();
                             if !s.is_empty() {
@@ -253,11 +267,11 @@ pub fn run_native_window(
 ) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        return linux_x11::run_x11_window(title, initial_width, initial_height, app);
+        linux_x11::run_x11_window(title, initial_width, initial_height, app)
     }
     #[cfg(target_os = "windows")]
     {
-        return win32::run_win32_window(title, initial_width, initial_height, app);
+        win32::run_win32_window(title, initial_width, initial_height, app)
     }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
@@ -278,18 +292,17 @@ pub fn get_clipboard_image_bytes() -> Option<Vec<u8>> {
     }
     #[cfg(target_os = "linux")]
     {
-        let has_display = std::env::var_os("DISPLAY").is_some()
-            || std::env::var_os("WAYLAND_DISPLAY").is_some();
+        let has_display =
+            std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
         if has_display {
             for (bin, args) in [
                 ("wl-paste", &["--no-newline", "--type", "image/png"][..]),
-                ("xclip", &["-selection", "clipboard", "-t", "image/png", "-o"][..]),
+                (
+                    "xclip",
+                    &["-selection", "clipboard", "-t", "image/png", "-o"][..],
+                ),
             ] {
-                if let Ok(out) = Command::new(bin)
-                    .args(args)
-                    .stderr(Stdio::null())
-                    .output()
-                {
+                if let Ok(out) = Command::new(bin).args(args).stderr(Stdio::null()).output() {
                     if out.status.success() && out.stdout.len() >= 16 {
                         return Some(out.stdout);
                     }
@@ -346,7 +359,10 @@ pub fn try_native_open_image_dialog(title: &str) -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         if let Ok(out) = Command::new("osascript")
-            .args(["-e", "POSIX path of (choose file of type {\"png\", \"jpg\", \"jpeg\", \"bmp\"})"])
+            .args([
+                "-e",
+                "POSIX path of (choose file of type {\"png\", \"jpg\", \"jpeg\", \"bmp\"})",
+            ])
             .output()
         {
             if out.status.success() {
@@ -450,7 +466,7 @@ pub fn try_native_save_dialog(title: &str, default_name: &str) -> Option<PathBuf
 }
 
 /// Dispatches a vector PDF spool file to the native OS print subsystem (Win32 Print verb / CUPS `lp`).
-pub fn spool_pdf_to_os_printer(pdf_path: & std::path::Path) -> Result<String, String> {
+pub fn spool_pdf_to_os_printer(pdf_path: &std::path::Path) -> Result<String, String> {
     if std::env::var("RUSTPAD_HEADLESS_PRINT").as_deref() == Ok("1") {
         return Ok(format!(
             "Spooled print-ready vector PDF to {}",
@@ -465,35 +481,51 @@ pub fn spool_pdf_to_os_printer(pdf_path: & std::path::Path) -> Result<String, St
         let mut cmd = Command::new("powershell");
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         if let Ok(st) = cmd
-            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &ps_cmd,
+            ])
             .status()
         {
             if st.success() {
-                return Ok(format!("Sent '{}' to Windows Print Spooler", pdf_path.display()));
+                return Ok(format!(
+                    "Sent '{}' to Windows Print Spooler",
+                    pdf_path.display()
+                ));
             }
         }
-        return Ok(format!(
+        Ok(format!(
             "Prepared print-ready PDF at '{}' (no default Windows printer bound)",
             pdf_path.display()
-        ));
+        ))
     }
     #[cfg(target_os = "linux")]
     {
         for bin in ["lp", "lpr"] {
             if let Ok(out) = Command::new(bin).arg(pdf_path).output() {
                 if out.status.success() {
-                    return Ok(format!("Dispatched '{}' to CUPS ({bin})", pdf_path.display()));
+                    return Ok(format!(
+                        "Dispatched '{}' to CUPS ({bin})",
+                        pdf_path.display()
+                    ));
                 }
             }
         }
-        return Ok(format!(
+        Ok(format!(
             "Prepared print-ready PDF at '{}' (CUPS queue offline)",
             pdf_path.display()
-        ));
+        ))
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
-        Ok(format!("Prepared print-ready PDF at '{}'", pdf_path.display()))
+        Ok(format!(
+            "Prepared print-ready PDF at '{}'",
+            pdf_path.display()
+        ))
     }
 }
 

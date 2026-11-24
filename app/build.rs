@@ -48,7 +48,7 @@ fn main() {
 }
 
 fn align4(buf: &mut Vec<u8>) {
-    while buf.len() % 4 != 0 {
+    while !buf.len().is_multiple_of(4) {
         buf.push(0);
     }
 }
@@ -218,7 +218,7 @@ fn build_vs_version_info() -> Vec<u8> {
         .unwrap_or(0);
 
     let ver_ms: u32 = (major << 16) | (minor & 0xFFFF);
-    let ver_ls: u32 = (patch << 16) | 0;
+    let ver_ls: u32 = patch << 16;
     let ver_quad = format!("{major}.{minor}.{patch}.0");
     let ver_semver = format!("{major}.{minor}.{patch}");
 
@@ -243,37 +243,44 @@ fn build_vs_version_info() -> Vec<u8> {
     }
 
     let mut root = Vec::with_capacity(1024);
-    write_version_node(&mut root, 0, "VS_VERSION_INFO", &ffi, ffi.len() as u16, |out| {
-        // Child 1: StringFileInfo -> "040904B0" (English US, Unicode UTF-16LE)
-        write_version_node(out, 1, "StringFileInfo", &[], 0, |sfi| {
-            write_version_node(sfi, 1, "040904B0", &[], 0, |st| {
-                write_version_string(st, "CompanyName", "Nour Yahyaoui - RustPad Studio");
-                write_version_string(
-                    st,
-                    "FileDescription",
-                    "RustPad - Offline Enterprise Word (.docx) & PDF Desktop Studio",
-                );
-                write_version_string(st, "FileVersion", &ver_quad);
-                write_version_string(st, "InternalName", "rustpad");
-                write_version_string(
-                    st,
-                    "LegalCopyright",
-                    "Copyright (c) 2026 Nour Yahyaoui. Open-Source MIT License.",
-                );
-                write_version_string(st, "OriginalFilename", "rustpad.exe");
-                write_version_string(st, "ProductName", "RustPad Desktop Studio");
-                write_version_string(st, "ProductVersion", &ver_semver);
+    write_version_node(
+        &mut root,
+        0,
+        "VS_VERSION_INFO",
+        &ffi,
+        ffi.len() as u16,
+        |out| {
+            // Child 1: StringFileInfo -> "040904B0" (English US, Unicode UTF-16LE)
+            write_version_node(out, 1, "StringFileInfo", &[], 0, |sfi| {
+                write_version_node(sfi, 1, "040904B0", &[], 0, |st| {
+                    write_version_string(st, "CompanyName", "Nour Yahyaoui - RustPad Studio");
+                    write_version_string(
+                        st,
+                        "FileDescription",
+                        "RustPad - Offline Enterprise Word (.docx) & PDF Desktop Studio",
+                    );
+                    write_version_string(st, "FileVersion", &ver_quad);
+                    write_version_string(st, "InternalName", "rustpad");
+                    write_version_string(
+                        st,
+                        "LegalCopyright",
+                        "Copyright (c) 2026 Nour Yahyaoui. Open-Source MIT License.",
+                    );
+                    write_version_string(st, "OriginalFilename", "rustpad.exe");
+                    write_version_string(st, "ProductName", "RustPad Desktop Studio");
+                    write_version_string(st, "ProductVersion", &ver_semver);
+                });
             });
-        });
 
-        // Child 2: VarFileInfo -> Translation = [0x0409, 0x04B0] (4 bytes)
-        let mut trans = Vec::with_capacity(4);
-        trans.extend_from_slice(&0x0409u16.to_le_bytes());
-        trans.extend_from_slice(&0x04B0u16.to_le_bytes());
-        write_version_node(out, 1, "VarFileInfo", &[], 0, |vfi| {
-            write_version_node(vfi, 0, "Translation", &trans, 4, |_| {});
-        });
-    });
+            // Child 2: VarFileInfo -> Translation = [0x0409, 0x04B0] (4 bytes)
+            let mut trans = Vec::with_capacity(4);
+            trans.extend_from_slice(&0x0409u16.to_le_bytes());
+            trans.extend_from_slice(&0x04B0u16.to_le_bytes());
+            write_version_node(out, 1, "VarFileInfo", &[], 0, |vfi| {
+                write_version_node(vfi, 0, "Translation", &trans, 4, |_| {});
+            });
+        },
+    );
 
     root
 }

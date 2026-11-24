@@ -442,7 +442,14 @@ fn parse_body_element(
             }
             // Also surface any `<w:drawing>` / `<w:pict>` screenshots placed inside layout table cells
             let mut tbl_imgs = Vec::new();
-            collect_embedded_images(el, archive, rels, media_cache, Alignment::Center, &mut tbl_imgs);
+            collect_embedded_images(
+                el,
+                archive,
+                rels,
+                media_cache,
+                Alignment::Center,
+                &mut tbl_imgs,
+            );
             for (img, media_path) in tbl_imgs {
                 consumed_media_paths.insert(media_path);
                 blocks.push(Block::Image(img));
@@ -711,7 +718,9 @@ fn parse_paragraph_or_special(
         return;
     }
 
-    if has_text || (extracted_images.is_empty() && !has_page_break && trailing_section_break.is_none()) {
+    if has_text
+        || (extracted_images.is_empty() && !has_page_break && trailing_section_break.is_none())
+    {
         if let Some(first) = spans.first_mut() {
             if let Some(rest) = first.text.strip_prefix("☑ ") {
                 list_kind = ListKind::Checklist(true);
@@ -739,7 +748,11 @@ fn parse_paragraph_or_special(
         blocks.push(Block::Image(img));
     }
 
-    if has_page_break && (has_text || blocks.last().is_some_and(|b| !matches!(b, Block::PageBreak)))
+    if has_page_break
+        && (has_text
+            || blocks
+                .last()
+                .is_some_and(|b| !matches!(b, Block::PageBreak)))
     {
         blocks.push(Block::PageBreak);
     }
@@ -1014,9 +1027,7 @@ fn resolve_docx_rel_path(
     }
 
     let path_only = cleaned.split(['?', '#']).next().unwrap_or(&cleaned);
-    let mut stack: Vec<&str> = if path_only.starts_with('/') {
-        Vec::new()
-    } else if path_only.starts_with("word/") {
+    let mut stack: Vec<&str> = if path_only.starts_with('/') || path_only.starts_with("word/") {
         Vec::new()
     } else {
         vec!["word"]
