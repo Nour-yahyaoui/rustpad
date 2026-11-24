@@ -4,6 +4,7 @@
 //! Author: Nour Yahyaoui <nourryahyaoui@gmail.com> · https://github.com/Nour-yahyaoui/rustpad
 
 pub mod commands;
+pub mod installer;
 pub mod pdf_view;
 pub mod state;
 pub mod ui_paint;
@@ -30,12 +31,8 @@ use power_tools::{
     redact_docx_file, run_batch_docx_job, word_to_html, word_to_markdown, word_to_pdf_document,
     BatchOperation, EnterprisePolicy, MetadataCleanOptions, RedactionOptions,
 };
-use rustpad_render::{
-    encode_surface_png, set_active_theme_mode, StudioTheme, Surface, ThemeMode,
-};
-use rustpad_window::{
-    run_native_window, AppControl, CursorShape, DesktopAppHandler, WindowEvent,
-};
+use rustpad_render::{encode_surface_png, set_active_theme_mode, StudioTheme, Surface, ThemeMode};
+use rustpad_window::{run_native_window, AppControl, CursorShape, DesktopAppHandler, WindowEvent};
 use std::path::{Path, PathBuf};
 
 struct NativeAppRunner {
@@ -86,7 +83,7 @@ impl DesktopAppHandler for NativeAppRunner {
             WindowEvent::Tick => {
                 let mut needs_redraw = self.app.poll_background_tasks();
                 self.tick_counter = self.tick_counter.wrapping_add(1);
-                if self.tick_counter % 32 == 0 {
+                if self.tick_counter.is_multiple_of(32) {
                     self.app.cursor_blink_on = !self.app.cursor_blink_on;
                     needs_redraw = true;
                 }
@@ -142,6 +139,9 @@ USAGE:
   rustpad sbom [-o sbom.cdx.json]             Emit CycloneDX 1.5 JSON Software Bill of Materials
   rustpad policy [--init-airgapped <OUT.json>] Inspect MDM DLP policy or generate air-gap profile
   rustpad demo-files <OUT_DIR>                Generate enterprise .docx, .pdf, .html & .md samples
+  rustpad --setup                             Launch native Setup & Desktop Installation Wizard
+  rustpad --install                           Perform per-user installation & shortcuts via CLI
+  rustpad --uninstall [--quiet]               Uninstall RustPad, shortcuts & file associations
   rustpad --render-preview <OUT_DIR>          Render 1440x900 Daylight & Midnight PNG screenshots
   rustpad --version | --help",
         ver = env!("CARGO_PKG_VERSION")
@@ -197,9 +197,7 @@ fn run_cli_redline(args: &[String]) -> Result<(), String> {
 }
 
 fn run_cli_validate(args: &[String]) -> Result<(), String> {
-    let path = args
-        .first()
-        .ok_or("Usage: rustpad validate <FILE.docx>")?;
+    let path = args.first().ok_or("Usage: rustpad validate <FILE.docx>")?;
     let packed_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let rep = validate_docx_file(path).map_err(|e| e.0)?;
     println!(
@@ -214,7 +212,10 @@ fn run_cli_validate(args: &[String]) -> Result<(), String> {
         println!("  [{}] {}: {}", f.severity.badge(), f.code, f.message);
     }
     if !rep.is_valid {
-        return Err(format!("Validation failed with {} error(s)", rep.error_count()));
+        return Err(format!(
+            "Validation failed with {} error(s)",
+            rep.error_count()
+        ));
     }
     Ok(())
 }
@@ -430,7 +431,11 @@ fn run_cli_sanitize(args: &[String]) -> Result<(), String> {
                     args.get(i).ok_or("Missing output path after -o")?,
                 ));
             }
-            other => return Err(format!("Unrecognized flag '{other}' for `rustpad sanitize`")),
+            other => {
+                return Err(format!(
+                    "Unrecognized flag '{other}' for `rustpad sanitize`"
+                ))
+            }
         }
         i += 1;
     }
@@ -493,9 +498,7 @@ fn run_cli_sign(args: &[String]) -> Result<(), String> {
 }
 
 fn run_cli_verify(args: &[String]) -> Result<(), String> {
-    let path = args
-        .first()
-        .ok_or("Usage: rustpad verify <SEALED.pdf>")?;
+    let path = args.first().ok_or("Usage: rustpad verify <SEALED.pdf>")?;
     let raw = std::fs::read(path).map_err(|e| format!("Failed reading '{path}': {e}"))?;
     let manifest = verify_pdf_seal_bytes(&raw)?;
     println!("STATUS:      CONTENT DIGEST MATCHES (modeled PDF content only)");
@@ -593,8 +596,11 @@ fn render_studio_previews(out_dir: &Path) -> Result<(), String> {
     let msa_tab_idx = app.tabs.len() - 1;
     app.active_tab = msa_tab_idx;
     render_app(&mut app, &mut surface);
-    std::fs::write(out_dir.join("word-studio.png"), encode_surface_png(&surface))
-        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        out_dir.join("word-studio.png"),
+        encode_surface_png(&surface),
+    )
+    .map_err(|e| e.to_string())?;
 
     // 2. Asymmetric Editorial Home Hub Preview
     app.active_tab = 0;
@@ -703,7 +709,10 @@ fn inspect_file(path: &Path, mode_flag: Option<&str>) -> Result<(), String> {
                 println!("Micro-Text Runs:    {}", sec.micro_font_runs_count);
                 println!("VBA Macros:         {}", sec.has_vba_macros);
                 println!("Embedded OLE:       {}", sec.has_embedded_ole);
-                println!("Remote Template:    {}", sec.has_external_template_injection);
+                println!(
+                    "Remote Template:    {}",
+                    sec.has_external_template_injection
+                );
                 for f in &sec.findings {
                     println!("  [{}] {}: {}", f.severity.badge(), f.category, f.detail);
                 }
@@ -717,10 +726,20 @@ fn inspect_file(path: &Path, mode_flag: Option<&str>) -> Result<(), String> {
                 println!("Duplicate Groups:     {}", dups.len());
                 println!("Broken Links:         {}", broken.len());
                 for c in &cons {
-                    println!("  [Block #{}] {}: {}", c.block_index + 1, c.category, c.message);
+                    println!(
+                        "  [Block #{}] {}: {}",
+                        c.block_index + 1,
+                        c.category,
+                        c.message
+                    );
                 }
                 for bl in &broken {
-                    println!("  [Link #{}] '{}': {}", bl.block_index + 1, bl.link_target, bl.reason);
+                    println!(
+                        "  [Link #{}] '{}': {}",
+                        bl.block_index + 1,
+                        bl.link_target,
+                        bl.reason
+                    );
                 }
                 return Ok(());
             }
@@ -730,7 +749,10 @@ fn inspect_file(path: &Path, mode_flag: Option<&str>) -> Result<(), String> {
             println!("Title:           {}", doc.title);
             println!("Author:          {}", doc.author);
             println!("Classification:  {}", doc.classification.label());
-            println!("Track Changes:   {} (+{ins} ins / -{del} del)", doc.track_changes);
+            println!(
+                "Track Changes:   {} (+{ins} ins / -{del} del)",
+                doc.track_changes
+            );
             println!("Comments:        {}", doc.comments.len());
             println!("Footnotes:       {}", doc.footnotes.len());
             println!("Endnotes:        {}", doc.endnotes.len());
@@ -751,7 +773,10 @@ fn inspect_file(path: &Path, mode_flag: Option<&str>) -> Result<(), String> {
             let pdf = load_pdf_file(path)?;
             let raw = std::fs::read(path).unwrap_or_default();
             let seal_state = match verify_pdf_seal_bytes(&raw) {
-                Ok(m) => format!("DIGEST MATCH ({}…; signer unverified)", &m.content_sha256[..16]),
+                Ok(m) => format!(
+                    "DIGEST MATCH ({}…; signer unverified)",
+                    &m.content_sha256[..16]
+                ),
                 Err(_) => "Unsigned".into(),
             };
             let text_blocks: usize = pdf.pages.iter().map(|p| p.text_items.len()).sum();
@@ -944,13 +969,43 @@ fn run_cli() -> Result<(), String> {
                     .unwrap_or_else(|| PathBuf::from("docs/screenshots"));
                 return render_studio_previews(&dir);
             }
+            "--install" => {
+                let exe = std::env::current_exe()
+                    .map_err(|e| format!("Could not resolve current executable: {e}"))?;
+                let opts = crate::installer::SetupOptions::default();
+                let prog = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+                let task = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+                let logs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+                let summary = crate::installer::perform_installation_blocking(
+                    &exe, &opts, &prog, &task, &logs,
+                )?;
+                println!(
+                    "Installed RustPad Studio v{} -> '{}'",
+                    env!("CARGO_PKG_VERSION"),
+                    summary.installed_exe.display()
+                );
+                return Ok(());
+            }
+            "--uninstall" | "uninstall" => {
+                let quiet = args.iter().any(|a| a == "--quiet" || a == "-q");
+                return crate::installer::run_uninstaller(quiet);
+            }
             _ => {}
         }
     }
 
+    let force_setup = args.first().map(|a| a.as_str()) == Some("--setup");
     let mut app = RustPadApp::new();
-    if let Some(open_arg) = args.first() {
+    if force_setup {
+        app.open_setup_wizard();
+    } else if let Some(open_arg) = args.first() {
         app.open_path(open_arg)?;
+    } else if crate::installer::should_launch_first_run_setup() {
+        // First time launching after download: start with the real-world Setup & Installation screen!
+        app.open_setup_wizard();
+    } else {
+        // Already installed / configured: start cleanly on the Home Launchpad (like Anar's Welcome Screen)
+        app.active_tab = 0;
     }
     let mut runner = NativeAppRunner {
         app,
@@ -1026,5 +1081,88 @@ mod tests {
         let png = encode_surface_png(&surface);
         assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
         assert!(png.len() > 8_000);
+    }
+
+    #[test]
+    fn test_v3016_first_run_setup_wizard_renders_all_steps_and_installs() {
+        use crate::installer::{SetupStep, SetupToggleOption};
+        use crate::state::UiAction;
+
+        let temp_root =
+            std::env::temp_dir().join(format!("rustpad_gui_setup_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_root);
+        let fake_cfg = temp_root.join("cfg");
+        let fake_inst = temp_root.join("install_target");
+        std::fs::create_dir_all(&fake_cfg).unwrap();
+
+        let mut app = RustPadApp::new();
+        app.open_setup_wizard();
+        if let Some(wiz) = &mut app.setup_wizard {
+            wiz.custom_config_dir = Some(fake_cfg.clone());
+        }
+        assert!(app.setup_wizard.is_some());
+
+        let mut surface = Surface::new(1380, 880, StudioTheme::desk_bg());
+
+        // Step 1: Welcome
+        render_app(&mut app, &mut surface);
+        assert!(!app.hit_regions.is_empty());
+        let step1_png = encode_surface_png(&surface);
+        assert!(step1_png.starts_with(b"\x89PNG\r\n\x1a\n"));
+
+        // Step 2: Options (configure isolated temp install dir & disable real user desktop modification)
+        app.dispatch_ui_action(UiAction::SetupGoStep(SetupStep::Options));
+        if let Some(wiz) = &mut app.setup_wizard {
+            wiz.options.install_dir = fake_inst.to_string_lossy().into_owned();
+            wiz.options.desktop_shortcut = false;
+            wiz.options.start_menu_entry = false;
+            wiz.options.file_associations = false;
+            wiz.options.add_to_user_path = false;
+            wiz.options.register_uninstaller = true;
+        }
+        render_app(&mut app, &mut surface);
+        app.dispatch_ui_action(UiAction::SetupToggleOption(
+            SetupToggleOption::DesktopShortcut,
+        ));
+        app.dispatch_ui_action(UiAction::SetupToggleOption(
+            SetupToggleOption::DesktopShortcut,
+        ));
+
+        // Step 3: Personalize (switch to Midnight live preview)
+        app.dispatch_ui_action(UiAction::SetupGoStep(SetupStep::Personalize));
+        app.dispatch_ui_action(UiAction::SetupSelectTheme(ThemeMode::Midnight));
+        render_app(&mut app, &mut surface);
+
+        // Step 4: Start real async installation & wait for completion
+        app.dispatch_ui_action(UiAction::SetupStartInstall);
+        render_app(&mut app, &mut surface);
+        for _ in 0..200 {
+            let _ = app.poll_background_tasks();
+            if app
+                .setup_wizard
+                .as_ref()
+                .map(|w| w.step == SetupStep::Completed)
+                .unwrap_or(false)
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            app.setup_wizard.as_ref().map(|w| w.step),
+            Some(SetupStep::Completed)
+        );
+        render_app(&mut app, &mut surface);
+        assert!(fake_inst
+            .join(crate::installer::installed_binary_name())
+            .exists());
+
+        // Finish & Launch -> transitions cleanly to Home Launchpad (tab 0)
+        app.dispatch_ui_action(UiAction::SetupFinishAndLaunch);
+        assert!(app.setup_wizard.is_none());
+        assert_eq!(app.active_tab, 0);
+
+        set_active_theme_mode(ThemeMode::Daylight);
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
 }

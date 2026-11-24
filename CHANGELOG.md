@@ -2,6 +2,13 @@
 
 All notable additions to **RustPad** (authored by **Nour Yahyaoui** — [LinkedIn](https://www.linkedin.com/in/nour-yahyaoui-86987b36b) · [@Nour-yahyaoui](https://github.com/Nour-yahyaoui) · `nourryahyaoui@gmail.com`) follow our continuous release workflow (`Issue → PR → CI Matrix → GitHub Release`).
 
+## [v3.0.16] - 2026-10-26 — First-Run Setup & Real-World Desktop Installation Wizard
+### Added
+- **Native First-Run Setup & Desktop Installer (`app/src/installer.rs`, `app/src/ui_paint.rs`, `app/src/state.rs`, `app/src/main.rs`)**:
+  - When a user downloads `rustpad.exe` / `rustpad` and launches it for the first time, RustPad now opens a full-window, 4-step **Setup & Desktop Installation Wizard** (`Welcome & License` → `Destination & Shortcuts` → `Studio Appearance` → `Install & Launch`) — inspired by `Anar-IDE` — with 1-click **Portable Mode** opt-out.
+  - **100% Real OS Integration (Zero Admin/UAC, Zero Console Flashes, 0 External Crates)**: Installs the executable + icon assets to `%LOCALAPPDATA%\Programs\RustPad` (Windows) or `~/.local/share/rustpad` (Linux); creates real Desktop & Start Menu shortcuts via native Win32 COM `IShellLinkW` + `[MS-SHLLINK]` `.lnk` fallback (and Freedesktop `.desktop` files on Linux); registers `.docx` and `.pdf` `"Open with RustPad"` entries (`HKCU\Software\Classes` + `SHChangeNotify` / `mimeapps.list`); optionally adds `rustpad` to User `PATH`; and registers a clean uninstaller in Windows Installed Apps (`rustpad --uninstall`).
+  - Added `--setup`, `--install`, and `--uninstall [--quiet]` CLI flags, `CommandId::OpenSetupWizard` in `Ctrl+K` and `HomeHub`, and defaulted normal no-arg Studio launches after setup to the clean **Home Launchpad**.
+
 ## [v3.0.15] - 2026-11-15 — Fixed Garbled PDF Text: `/ToUnicode` CMap Decoding for CID/Type0 Fonts
 ### Fixed
 - **Word-Exported PDFs No Longer Show Scattered Symbols (`crates/pdf_engine/src/parser.rs`)**: The PDF parser now resolves each page's `/Font` resources (including inherited `/Parent` resources), loads every font's `/ToUnicode` CMap (`beginbfchar` + `beginbfrange` in array and sequential forms, multi-codepoint ligatures, and UTF-16BE surrogate pairs), and decodes composite-font (`/Type0` + `/Identity-H`) hex strings as CIDs instead of WinAnsi bytes. PDFs exported from Microsoft Word (subset `Aptos` / `SymbolMT` / `SegoeUIEmoji` fonts) now extract clean text — e.g. `Compte Rendu_TP3` reads `Chaque étudiant doit indiquer obligatoirement son nom…` instead of `! " # $ % & ' ( ) * + …`. Also added `'` / `"` / `TL` / `T*` text operators and UTF-16BE BOM handling for PDF metadata strings.

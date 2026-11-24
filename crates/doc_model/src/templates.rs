@@ -46,7 +46,9 @@ impl TemplateKind {
         match self {
             Self::Blank => "Clean A4 sheet ready for writing",
             Self::WelcomeGuide => "Tour of Offline Enterprise Word, PDF & DLP AI",
-            Self::EnterpriseContract => "Live ECMA-376 Track Changes (w:ins/w:del) & legal comments",
+            Self::EnterpriseContract => {
+                "Live ECMA-376 Track Changes (w:ins/w:del) & legal comments"
+            }
             Self::ModernResume => "Crisp 1-page systems & software engineer CV",
             Self::AcademicReport => "Structured sections, benchmark matrix & governance",
             Self::BusinessInvoice => "Itemized billing schedule with summary totals",
@@ -80,9 +82,12 @@ fn checklist(text: &str, done: bool) -> Block {
 }
 
 fn build_welcome_guide() -> Document {
-    let mut setup = PageSetup::default();
-    setup.header_text = "RustPad v3.0 — Lossless OOXML Intelligence, Dark Mode & 60–120Hz Suite".into();
-    setup.footer_text = "Open-Source MIT · github.com/Nour-yahyaoui/rustpad".into();
+    let setup = PageSetup {
+        header_text: "RustPad v3.0 — Lossless OOXML Intelligence, Dark Mode & 60–120Hz Suite"
+            .into(),
+        footer_text: "Open-Source MIT · github.com/Nour-yahyaoui/rustpad".into(),
+        ..PageSetup::default()
+    };
 
     let mut intro = Paragraph::new(ParagraphStyle::Normal, "");
     intro.spans = vec![
@@ -135,12 +140,16 @@ fn build_welcome_guide() -> Document {
     ];
     table.rows[3] = vec![
         TableCell::plain("OOXML & Forensic PDF"),
-        TableCell::plain("Lossless .docx passthrough, per-clause redlines, PDF ObjStm + glyph-scrub redaction"),
+        TableCell::plain(
+            "Lossless .docx passthrough, per-clause redlines, PDF ObjStm + glyph-scrub redaction",
+        ),
         TableCell::plain("Ctrl+Shift+E"),
     ];
     table.rows[4] = vec![
         TableCell::plain("Inline Math & DLP Policy"),
-        TableCell::plain("83+ inline math formulas (/math, Alt+=) + offline MDM policy.json governance"),
+        TableCell::plain(
+            "83+ inline math formulas (/math, Alt+=) + offline MDM policy.json governance",
+        ),
         TableCell::plain("Ctrl+Shift+L"),
     ];
 
@@ -194,10 +203,12 @@ fn build_welcome_guide() -> Document {
 }
 
 fn build_enterprise_contract() -> Document {
-    let mut setup = PageSetup::default();
-    setup.header_text = "MASTER SERVICES & DATA SOVEREIGNTY AGREEMENT — CONFIDENTIAL".into();
-    setup.footer_text = "Legal Redline Draft v2.4 · ECMA-376 Tracked Revisions Active".into();
-    setup.watermark = Some("CONFIDENTIAL".into());
+    let setup = PageSetup {
+        header_text: "MASTER SERVICES & DATA SOVEREIGNTY AGREEMENT — CONFIDENTIAL".into(),
+        footer_text: "Legal Redline Draft v2.4 · ECMA-376 Tracked Revisions Active".into(),
+        watermark: Some("CONFIDENTIAL".into()),
+        ..PageSetup::default()
+    };
 
     let mut clause_payment = Paragraph::new(ParagraphStyle::Normal, "");
     clause_payment.spans = vec![

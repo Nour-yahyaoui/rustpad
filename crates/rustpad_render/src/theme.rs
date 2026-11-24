@@ -39,29 +39,21 @@ impl Color {
 
     #[inline]
     pub const fn pack_argb(self) -> u32 {
-        ((self.a as u32) << 24)
-            | ((self.r as u32) << 16)
-            | ((self.g as u32) << 8)
-            | (self.b as u32)
+        ((self.a as u32) << 24) | ((self.r as u32) << 16) | ((self.g as u32) << 8) | (self.b as u32)
     }
 }
 
 /// Studio appearance mode (`Ctrl+Shift+D` cycles or sets directly).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum ThemeMode {
     /// Warm architectural linen desk + pure cotton white sheet.
+    #[default]
     Daylight = 0,
     /// Full dark mode: obsidian slate chrome + low-glare charcoal sheet + warm parchment ink.
     Midnight = 1,
     /// Hybrid dark desk: obsidian dark chrome + warm cotton paper sheet for print preview at night.
     HybridDarkDesk = 2,
-}
-
-impl Default for ThemeMode {
-    fn default() -> Self {
-        Self::Daylight
-    }
 }
 
 impl ThemeMode {

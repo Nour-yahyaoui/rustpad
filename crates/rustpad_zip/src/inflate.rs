@@ -278,10 +278,7 @@ pub fn zlib_decompress(input: &[u8]) -> Result<Vec<u8>, ZipError> {
     zlib_decompress_bounded(input, DEFAULT_MAX_INFLATE_BYTES)
 }
 
-pub fn zlib_decompress_bounded(
-    input: &[u8],
-    max_output_bytes: usize,
-) -> Result<Vec<u8>, ZipError> {
+pub fn zlib_decompress_bounded(input: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, ZipError> {
     if input.len() < 6 {
         return Err(ZipError("Zlib stream too short".into()));
     }
@@ -290,7 +287,7 @@ pub fn zlib_decompress_bounded(
     if (cmf & 0x0F) != 8 {
         return Err(ZipError("Unsupported Zlib compression method".into()));
     }
-    if ((cmf as u16) * 256 + (flg as u16)) % 31 != 0 {
+    if !((cmf as u16) * 256 + (flg as u16)).is_multiple_of(31) {
         return Err(ZipError("Invalid Zlib header checksum".into()));
     }
     let fdict = (flg & 0x20) != 0;
@@ -299,7 +296,8 @@ pub fn zlib_decompress_bounded(
     if trimmed.len() < payload_start + 4 {
         return Err(ZipError("Truncated Zlib payload".into()));
     }
-    let out = deflate_decompress_bounded(&trimmed[payload_start..trimmed.len() - 4], max_output_bytes)?;
+    let out =
+        deflate_decompress_bounded(&trimmed[payload_start..trimmed.len() - 4], max_output_bytes)?;
     let expected = u32::from_be_bytes([
         trimmed[trimmed.len() - 4],
         trimmed[trimmed.len() - 3],

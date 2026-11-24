@@ -104,8 +104,7 @@ pub fn diff_chars(old: &str, new: &str) -> Vec<CharDiffOp> {
 
     let mut old_end = old_chars.len();
     let mut new_end = new_chars.len();
-    while old_end > prefix && new_end > prefix && old_chars[old_end - 1] == new_chars[new_end - 1]
-    {
+    while old_end > prefix && new_end > prefix && old_chars[old_end - 1] == new_chars[new_end - 1] {
         old_end -= 1;
         new_end -= 1;
     }
@@ -144,8 +143,7 @@ pub fn diff_chars(old: &str, new: &str) -> Vec<CharDiffOp> {
                     push_char_op(&mut ops, 0, mid_old[i]);
                     i += 1;
                     j += 1;
-                } else if j < m
-                    && (i == n || dp[i * stride + (j + 1)] >= dp[(i + 1) * stride + j])
+                } else if j < m && (i == n || dp[i * stride + (j + 1)] >= dp[(i + 1) * stride + j])
                 {
                     push_char_op(&mut ops, 1, mid_new[j]);
                     j += 1;
@@ -205,15 +203,15 @@ pub fn diff_redline_char_level(
                 if bt == rt {
                     out.blocks.push(Block::Paragraph(rp.clone()));
                 } else {
-                    let base_style = rp
-                        .spans
-                        .first()
-                        .map(|s| s.style.clone())
-                        .unwrap_or_else(|| SpanStyle {
-                            font_size_pt: rp.style.default_font_size(),
-                            bold: rp.style.is_bold_by_default(),
-                            ..SpanStyle::default()
-                        });
+                    let base_style =
+                        rp.spans
+                            .first()
+                            .map(|s| s.style.clone())
+                            .unwrap_or_else(|| SpanStyle {
+                                font_size_pt: rp.style.default_font_size(),
+                                bold: rp.style.is_bold_by_default(),
+                                ..SpanStyle::default()
+                            });
                     let mut spans = Vec::new();
                     for op in diff_chars(&bt, &rt) {
                         match op {
@@ -258,7 +256,11 @@ pub fn diff_redline_char_level(
                 let mut p = rp.clone();
                 let rt = rp.accepted_plain_text();
                 if !rt.is_empty() {
-                    let st = rp.spans.first().map(|s| s.style.clone()).unwrap_or_default();
+                    let st = rp
+                        .spans
+                        .first()
+                        .map(|s| s.style.clone())
+                        .unwrap_or_default();
                     p.spans = vec![TextSpan::tracked(
                         rt,
                         st,
@@ -277,7 +279,11 @@ pub fn diff_redline_char_level(
                 let bt = bp.accepted_plain_text();
                 if !bt.is_empty() {
                     let mut p = bp.clone();
-                    let st = bp.spans.first().map(|s| s.style.clone()).unwrap_or_default();
+                    let st = bp
+                        .spans
+                        .first()
+                        .map(|s| s.style.clone())
+                        .unwrap_or_default();
                     p.spans = vec![TextSpan::tracked(
                         bt,
                         st,
@@ -482,39 +488,38 @@ pub fn compare_documents(base: &Document, revised: &Document) -> DocumentCompari
         let mut unmatched_b: Vec<usize> = Vec::new();
         let mut unmatched_r: Vec<usize> = Vec::new();
 
-        let flush_unmatched = |ub: &mut Vec<usize>,
-                               ur: &mut Vec<usize>,
-                               rep: &mut DocumentComparisonReport| {
-            let pairs = ub.len().min(ur.len());
-            for k in 0..pairs {
-                let bi = ub[k];
-                let rj = ur[k];
-                rep.paragraphs_modified += 1;
-                for op in diff_chars(&b_texts[bi], &r_texts[rj]) {
-                    match op {
-                        CharDiffOp::Insert(s) => rep.char_insertions += s.chars().count(),
-                        CharDiffOp::Delete(s) => rep.char_deletions += s.chars().count(),
-                        CharDiffOp::Equal(_) => {}
+        let flush_unmatched =
+            |ub: &mut Vec<usize>, ur: &mut Vec<usize>, rep: &mut DocumentComparisonReport| {
+                let pairs = ub.len().min(ur.len());
+                for k in 0..pairs {
+                    let bi = ub[k];
+                    let rj = ur[k];
+                    rep.paragraphs_modified += 1;
+                    for op in diff_chars(&b_texts[bi], &r_texts[rj]) {
+                        match op {
+                            CharDiffOp::Insert(s) => rep.char_insertions += s.chars().count(),
+                            CharDiffOp::Delete(s) => rep.char_deletions += s.chars().count(),
+                            CharDiffOp::Equal(_) => {}
+                        }
                     }
+                    inspect_para_formatting_delta(
+                        r_paras[rj].0,
+                        b_paras[bi].1,
+                        r_paras[rj].1,
+                        &mut rep.formatting_changes,
+                    );
                 }
-                inspect_para_formatting_delta(
-                    r_paras[rj].0,
-                    b_paras[bi].1,
-                    r_paras[rj].1,
-                    &mut rep.formatting_changes,
-                );
-            }
-            for &bi in &ub[pairs..] {
-                rep.paragraphs_deleted += 1;
-                rep.char_deletions += b_texts[bi].chars().count();
-            }
-            for &rj in &ur[pairs..] {
-                rep.paragraphs_inserted += 1;
-                rep.char_insertions += r_texts[rj].chars().count();
-            }
-            ub.clear();
-            ur.clear();
-        };
+                for &bi in &ub[pairs..] {
+                    rep.paragraphs_deleted += 1;
+                    rep.char_deletions += b_texts[bi].chars().count();
+                }
+                for &rj in &ur[pairs..] {
+                    rep.paragraphs_inserted += 1;
+                    rep.char_insertions += r_texts[rj].chars().count();
+                }
+                ub.clear();
+                ur.clear();
+            };
 
         while i < n || j < m {
             if i < n && j < m && b_texts[i] == r_texts[j] {
@@ -528,9 +533,7 @@ pub fn compare_documents(base: &Document, revised: &Document) -> DocumentCompari
                 );
                 i += 1;
                 j += 1;
-            } else if j < m
-                && (i == n || dp[i * stride + (j + 1)] >= dp[(i + 1) * stride + j])
-            {
+            } else if j < m && (i == n || dp[i * stride + (j + 1)] >= dp[(i + 1) * stride + j]) {
                 unmatched_r.push(j);
                 j += 1;
             } else {
@@ -581,7 +584,11 @@ fn inspect_para_formatting_delta(
     if bp.style != rp.style {
         out.push(FormattingChange {
             block_index: block_idx,
-            summary: format!("Paragraph style: {} -> {}", bp.style.label(), rp.style.label()),
+            summary: format!(
+                "Paragraph style: {} -> {}",
+                bp.style.label(),
+                rp.style.label()
+            ),
         });
     }
     if bp.alignment != rp.alignment {
@@ -691,7 +698,10 @@ pub fn smart_merge_documents(
             }
             (_, o_conflict, t_conflict) => {
                 conflicts_count += 1;
-                let desc = format!("Block #{}: concurrent modification between reviewers", idx + 1);
+                let desc = format!(
+                    "Block #{}: concurrent modification between reviewers",
+                    idx + 1
+                );
                 conflict_descriptions.push(desc.clone());
 
                 match strategy {
@@ -711,7 +721,11 @@ pub fn smart_merge_documents(
                         {
                             merged.track_changes = true;
                             let mut combined = op.clone();
-                            let st = op.spans.first().map(|s| s.style.clone()).unwrap_or_default();
+                            let st = op
+                                .spans
+                                .first()
+                                .map(|s| s.style.clone())
+                                .unwrap_or_default();
                             combined.spans = vec![
                                 TextSpan::styled(op.accepted_plain_text(), st.clone()),
                                 TextSpan::tracked(

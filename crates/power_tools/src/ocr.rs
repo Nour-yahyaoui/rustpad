@@ -21,10 +21,7 @@ pub fn extract_text_ocr_or_pdf(path: impl AsRef<Path>) -> Result<(Document, Stri
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    let title = p
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("OCR Scan");
+    let title = p.file_stem().and_then(|s| s.to_str()).unwrap_or("OCR Scan");
 
     if ext == "pdf" {
         let pdf = load_pdf_file(p)?;
@@ -71,9 +68,7 @@ pub fn extract_text_ocr_or_pdf(path: impl AsRef<Path>) -> Result<(Document, Stri
                 let words = doc.stats().words;
                 return Ok((
                     doc,
-                    format!(
-                        "Completed pure-Rust offline bitmap OCR ({words} word(s) recognized)"
-                    ),
+                    format!("Completed pure-Rust offline bitmap OCR ({words} word(s) recognized)"),
                 ));
             }
         }
@@ -100,8 +95,16 @@ pub fn pure_rust_bitmap_ocr_bytes(bytes: &[u8]) -> Option<String> {
     let ink: Vec<u8> = luma
         .iter()
         .map(|&v| {
-            let is_ink = if invert { v > threshold } else { v <= threshold };
-            if is_ink { 1 } else { 0 }
+            let is_ink = if invert {
+                v > threshold
+            } else {
+                v <= threshold
+            };
+            if is_ink {
+                1
+            } else {
+                0
+            }
         })
         .collect();
 
@@ -141,8 +144,8 @@ pub fn pure_rust_bitmap_ocr_bytes(bytes: &[u8]) -> Option<String> {
             continue;
         }
 
-        let avg_char_w = (boxes.iter().map(|(x0, x1)| x1 - x0).sum::<usize>() as f32)
-            / (boxes.len() as f32);
+        let avg_char_w =
+            (boxes.iter().map(|(x0, x1)| x1 - x0).sum::<usize>() as f32) / (boxes.len() as f32);
         let space_gap_px = (avg_char_w * 0.52).max(3.0);
 
         let mut line_str = String::new();
@@ -225,7 +228,11 @@ fn build_glyph_templates() -> Vec<GlyphTemplate> {
             if g.width == 0 || g.height == 0 {
                 continue;
             }
-            let bin: Vec<u8> = g.alpha.iter().map(|&a| if a >= 96 { 1 } else { 0 }).collect();
+            let bin: Vec<u8> = g
+                .alpha
+                .iter()
+                .map(|&a| if a >= 96 { 1 } else { 0 })
+                .collect();
             let grid = resample_patch_16x20(
                 &bin,
                 g.width as usize,
@@ -251,9 +258,7 @@ fn match_template(patch: &[u8; 320], aspect: f32, templates: &[GlyphTemplate]) -
         let mut inter = 0u32;
         let mut union = 0u32;
         let mut eq = 0u32;
-        for i in 0..320 {
-            let a = patch[i];
-            let b = tpl.grid[i];
+        for (&a, &b) in patch.iter().zip(tpl.grid.iter()) {
             if a == b {
                 eq += 1;
             }
@@ -342,7 +347,7 @@ fn decode_grayscale_scan(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     }
     let (w, h, rgba) = decode_any_image_rgba(bytes).ok()?;
     let mut luma = Vec::with_capacity((w * h) as usize);
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         let a = px[3] as u32;
         // Composite transparent pixels onto white sheet
         let r = ((px[0] as u32 * a) + 255 * (255 - a)) / 255;

@@ -187,8 +187,9 @@ pub fn paint_word_tab(
     let page_gap = 28.0 * s;
     let top_pad = 26.0 * s;
     let total_pages = pages.len().max(1);
-    let total_doc_h =
-        top_pad * 2.0 + (total_pages as f32) * page_h + (total_pages.saturating_sub(1) as f32) * page_gap;
+    let total_doc_h = top_pad * 2.0
+        + (total_pages as f32) * page_h
+        + (total_pages.saturating_sub(1) as f32) * page_gap;
     w.max_scroll_y = (total_doc_h - canvas_rect.h + 40.0).max(0.0);
 
     // Record exact canvas Y of every block for accurate Outline jump & auto-scroll-to-caret
@@ -270,8 +271,8 @@ pub fn paint_word_tab(
     // 5. Render Physical Paper Sheets & Blocks
     surface.set_clip(canvas_rect);
     let scrollbar_reserve = if w.max_scroll_y > 4.0 { 14.0 } else { 0.0 };
-    let sheet_x = canvas_rect.x
-        + ((canvas_rect.w - scrollbar_reserve - page_w) * 0.5).max(18.0 * s);
+    let sheet_x =
+        canvas_rect.x + ((canvas_rect.w - scrollbar_reserve - page_w) * 0.5).max(18.0 * s);
     let mut sel_bar_anchor: Option<Rect> = None;
     let mut decoded_images_this_frame = 0usize;
 
@@ -372,7 +373,9 @@ pub fn paint_word_tab(
                 &p_str,
             );
         }
-        if page_idx + 1 == total_pages && (!w.doc.footnotes.is_empty() || !w.doc.endnotes.is_empty()) {
+        if page_idx + 1 == total_pages
+            && (!w.doc.footnotes.is_empty() || !w.doc.endnotes.is_empty())
+        {
             let note_count = w.doc.footnotes.len() + w.doc.endnotes.len();
             let max_show = note_count.min(3);
             let base_ny = footer_y - (16.0 + max_show as f32 * 12.5) * scale;
@@ -567,13 +570,38 @@ fn paint_floating_selection_bar(
     };
 
     let left_items: [(&str, FontSlot, bool, CommandId); 3] = [
-        ("B", FontSlot::SansBold, probe_style.bold, CommandId::ToggleBold),
-        ("I", FontSlot::SerifItalic, probe_style.italic, CommandId::ToggleItalic),
-        ("U", FontSlot::SansBold, probe_style.underline, CommandId::ToggleUnderline),
+        (
+            "B",
+            FontSlot::SansBold,
+            probe_style.bold,
+            CommandId::ToggleBold,
+        ),
+        (
+            "I",
+            FontSlot::SerifItalic,
+            probe_style.italic,
+            CommandId::ToggleItalic,
+        ),
+        (
+            "U",
+            FontSlot::SansBold,
+            probe_style.underline,
+            CommandId::ToggleUnderline,
+        ),
     ];
     let right_items: [(&str, FontSlot, bool, CommandId); 2] = [
-        ("Ink", FontSlot::SansRegular, false, CommandId::CycleTextColor),
-        ("+Note", FontSlot::SansRegular, false, CommandId::AddReviewComment),
+        (
+            "Ink",
+            FontSlot::SansRegular,
+            false,
+            CommandId::CycleTextColor,
+        ),
+        (
+            "+Note",
+            FontSlot::SansRegular,
+            false,
+            CommandId::AddReviewComment,
+        ),
     ];
 
     // 5 instant 1-click pastel swatches + `▾` full palette trigger (+ `✕` clear when highlighted)
@@ -623,7 +651,9 @@ fn paint_floating_selection_bar(
 
     let min_x = canvas_rect.x + 10.0 * s;
     let max_x = (canvas_rect.x + canvas_rect.w - total_w - 16.0 * s).max(min_x);
-    let pop_x = (sel_r.x + (sel_r.w - total_w) * 0.5).clamp(min_x, max_x).round();
+    let pop_x = (sel_r.x + (sel_r.w - total_w) * 0.5)
+        .clamp(min_x, max_x)
+        .round();
     let above_y = sel_r.y - bar_h - 8.0 * s;
     let pop_y = if above_y >= canvas_rect.y + 8.0 * s {
         above_y.round()
@@ -724,7 +754,10 @@ fn paint_floating_selection_bar(
         );
         // Clicking an already-applied swatch toggles it off; otherwise applies that exact color!
         let next_col = if is_cur { None } else { Some(sw.color) };
-        hit_regions.push(HitRegion::button(br, UiAction::SelectHighlightColor(next_col)));
+        hit_regions.push(HitRegion::button(
+            br,
+            UiAction::SelectHighlightColor(next_col),
+        ));
         bx += sw_btn_w + gap;
     }
 
@@ -813,6 +846,7 @@ fn paint_floating_selection_bar(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn paint_canvas_scrollbar(
     surface: &mut Surface,
     hit_regions: &mut Vec<HitRegion>,
@@ -1119,7 +1153,11 @@ fn warm_visible_page_images(
             img.png_bytes.clone()
         };
         let hkey = hash_image_bytes(&payload);
-        if let Some(pos) = w.image_rgba_cache.iter().position(|(k, _, _, _)| *k == hkey) {
+        if let Some(pos) = w
+            .image_rgba_cache
+            .iter()
+            .position(|(k, _, _, _)| *k == hkey)
+        {
             let last = w.image_rgba_cache.len() - 1;
             if pos != last {
                 let entry = w.image_rgba_cache.remove(pos);
@@ -1264,8 +1302,8 @@ fn layout_document_pages(
                 for (r_idx, row) in t.rows.iter().enumerate() {
                     let mut max_lines = 1usize;
                     let mut wrapped_row = Vec::with_capacity(cols);
-                    for c_idx in 0..cols {
-                        let cw = (content_w * weights[c_idx] - cell_pad_x * 2.0).max(28.0);
+                    for (c_idx, &wgt) in weights.iter().enumerate().take(cols) {
+                        let cw = (content_w * wgt - cell_pad_x * 2.0).max(28.0);
                         let cell_txt = row.get(c_idx).map(|c| c.text.as_str()).unwrap_or("");
                         let slot = if r_idx == 0 || row.get(c_idx).map(|c| c.bold).unwrap_or(false)
                         {
@@ -1806,9 +1844,10 @@ fn paint_laid_out_block(
             // Live Selection Overlay: Dimension Badge + 60–120Hz Aspect-Locked Corner Resize Handles!
             if is_selected || is_hov {
                 let max_w_pt = (content_w / scale.max(0.4)).max(120.0);
-                let pct = ((img.width_pt / max_w_pt) * 100.0).round().clamp(10.0, 100.0) as i32;
-                let badge_txt =
-                    format!("{:.0}×{:.0} pt · {pct}%", img.width_pt, img.height_pt);
+                let pct = ((img.width_pt / max_w_pt) * 100.0)
+                    .round()
+                    .clamp(10.0, 100.0) as i32;
+                let badge_txt = format!("{:.0}×{:.0} pt · {pct}%", img.width_pt, img.height_pt);
                 let bpx = (9.5 * scale).clamp(8.5, 12.0);
                 let btw = fonts.measure_text(FontSlot::MonoRegular, &badge_txt, bpx);
                 let bw = btw + 12.0 * scale;
@@ -1880,7 +1919,12 @@ fn paint_laid_out_block(
             let border_col = StudioTheme::adapt_table_border(t.border_color);
 
             let table_body_h: f32 = item.table_row_heights.iter().sum();
-            let table_outer = Rect::new(x - 4.0, y - 4.0, content_w + 28.0 * scale, table_body_h + 26.0 * scale);
+            let table_outer = Rect::new(
+                x - 4.0,
+                y - 4.0,
+                content_w + 28.0 * scale,
+                table_body_h + 26.0 * scale,
+            );
             let table_active_or_hovered = w
                 .active_table_cell
                 .map(|(b, _, _)| b == item.block_idx)
@@ -1895,16 +1939,16 @@ fn paint_laid_out_block(
                 };
                 let mut cx = x;
 
-                for c_idx in 0..cols {
-                    let cw = content_w * weights[c_idx];
+                for (c_idx, &wgt) in weights.iter().enumerate().take(cols) {
+                    let cw = content_w * wgt;
                     let cell_r = Rect::new(cx, cur_row_y, cw, rh);
                     let cell_opt = row.get(c_idx);
                     if let Some(bg) = cell_opt.and_then(|c| c.bg_color) {
                         surface.fill_rect(cell_r, StudioTheme::adapt_table_cell_bg(bg));
                     }
 
-                    let is_active_cell = is_focused
-                        && w.active_table_cell == Some((item.block_idx, r_idx, c_idx));
+                    let is_active_cell =
+                        is_focused && w.active_table_cell == Some((item.block_idx, r_idx, c_idx));
 
                     surface.stroke_rounded_rect(
                         cell_r,
@@ -1929,7 +1973,8 @@ fn paint_laid_out_block(
                         .and_then(|rw| rw.get(c_idx));
 
                     let mut char_running = 0usize;
-                    let mut clicked_char_est = cell_opt.map(|c| c.text.chars().count()).unwrap_or(0);
+                    let mut clicked_char_est =
+                        cell_opt.map(|c| c.text.chars().count()).unwrap_or(0);
                     let mut caret_drawn = false;
 
                     if let Some(wlines) = cell_lines {
@@ -1937,7 +1982,9 @@ fn paint_laid_out_block(
                             let lw = fonts.measure_text(slot, ln, txt_px);
                             let tx = match align {
                                 Alignment::Center => cell_r.x + ((cw - lw) * 0.5).max(cell_pad_x),
-                                Alignment::Right => (cell_r.x + cw - cell_pad_x - lw).max(cell_r.x + cell_pad_x),
+                                Alignment::Right => {
+                                    (cell_r.x + cw - cell_pad_x - lw).max(cell_r.x + cell_pad_x)
+                                }
                                 _ => cell_r.x + cell_pad_x,
                             };
                             let baseline =
@@ -1979,10 +2026,12 @@ fn paint_laid_out_block(
                                     .table_cursor_char
                                     .min(cell_opt.map(|c| c.text.chars().count()).unwrap_or(0));
                                 let is_last_line = li + 1 == wlines.len();
-                                if (caret_pos >= char_running && caret_pos <= char_running + ln_chars)
+                                if (caret_pos >= char_running
+                                    && caret_pos <= char_running + ln_chars)
                                     || is_last_line
                                 {
-                                    let local_off = caret_pos.saturating_sub(char_running).min(ln_chars);
+                                    let local_off =
+                                        caret_pos.saturating_sub(char_running).min(ln_chars);
                                     let prefix: String = ln.chars().take(local_off).collect();
                                     let cx_caret = tx + fonts.measure_text(slot, &prefix, txt_px);
                                     surface.fill_rect(
@@ -2025,8 +2074,8 @@ fn paint_laid_out_block(
 
             // Column Border Drag-Resize Handles across the full height of the table!
             let mut div_x = x;
-            for c_idx in 0..cols.saturating_sub(1) {
-                div_x += content_w * weights[c_idx];
+            for (c_idx, &wgt) in weights.iter().enumerate().take(cols.saturating_sub(1)) {
+                div_x += content_w * wgt;
                 let grip = Rect::new(div_x - 3.5, y, 7.0, table_body_h);
                 if grip.contains(mouse_x, mouse_y) {
                     surface.fill_rect(
@@ -2049,7 +2098,12 @@ fn paint_laid_out_block(
 
             // On-Canvas `+ Add Row` bottom bar & `+ Col` right edge button!
             if table_active_or_hovered && item.table_is_last_slice {
-                let row_btn = Rect::new(x, y + table_body_h + 2.0, content_w, (19.0 * scale).clamp(17.0, 26.0));
+                let row_btn = Rect::new(
+                    x,
+                    y + table_body_h + 2.0,
+                    content_w,
+                    (19.0 * scale).clamp(17.0, 26.0),
+                );
                 let row_hov = row_btn.contains(mouse_x, mouse_y);
                 surface.fill_rounded_rect(
                     row_btn,
@@ -2418,13 +2472,7 @@ fn paint_paragraph_block(
 
             if !ln.text.is_empty() {
                 surface.draw_text(
-                    fonts,
-                    ln.slot,
-                    ln.px_size,
-                    draw_x,
-                    baseline_y,
-                    eff_color,
-                    &ln.text,
+                    fonts, ln.slot, ln.px_size, draw_x, baseline_y, eff_color, &ln.text,
                 );
             } else if item.block_idx == 0 && w.doc.blocks.len() == 1 {
                 surface.draw_text(
@@ -2711,13 +2759,7 @@ fn paint_rich_spans_line(
                 );
                 let ins_col = Color::rgb(21, 114, 67);
                 surface.draw_text(
-                    fonts,
-                    sp_slot,
-                    adj_px,
-                    seg_x,
-                    baseline_y,
-                    ins_col,
-                    &slice_str,
+                    fonts, sp_slot, adj_px, seg_x, baseline_y, ins_col, &slice_str,
                 );
                 surface.fill_rect(
                     Rect::new(seg_x, baseline_y + 2.0, sw, (1.3 * scale).max(1.1)),
@@ -2732,21 +2774,10 @@ fn paint_rich_spans_line(
                 );
                 let del_col = Color::rgb(178, 42, 38);
                 surface.draw_text(
-                    fonts,
-                    sp_slot,
-                    adj_px,
-                    seg_x,
-                    baseline_y,
-                    del_col,
-                    &slice_str,
+                    fonts, sp_slot, adj_px, seg_x, baseline_y, del_col, &slice_str,
                 );
                 surface.fill_rect(
-                    Rect::new(
-                        seg_x,
-                        baseline_y - sp_px * 0.30,
-                        sw,
-                        (1.3 * scale).max(1.1),
-                    ),
+                    Rect::new(seg_x, baseline_y - sp_px * 0.30, sw, (1.3 * scale).max(1.1)),
                     del_col,
                 );
             }
@@ -2767,7 +2798,9 @@ fn paint_rich_spans_line(
                 }
                 let col = if is_checked_done || sp.style.hidden {
                     StudioTheme::sheet_ink_muted()
-                } else if sp.style.hyperlink.is_some() && sp.style.color == doc_model::RgbColor::INK_SLATE {
+                } else if sp.style.hyperlink.is_some()
+                    && sp.style.color == doc_model::RgbColor::INK_SLATE
+                {
                     StudioTheme::word_accent()
                 } else {
                     StudioTheme::adapt_doc_ink(sp.style.color, sp.style.highlight.is_some())
@@ -2788,12 +2821,7 @@ fn paint_rich_spans_line(
                 }
                 if sp.style.strikethrough || is_checked_done {
                     surface.fill_rect(
-                        Rect::new(
-                            seg_x,
-                            adj_y - adj_px * 0.30,
-                            sw,
-                            (1.1 * scale).max(1.0),
-                        ),
+                        Rect::new(seg_x, adj_y - adj_px * 0.30, sw, (1.1 * scale).max(1.0)),
                         col,
                     );
                 }
@@ -2914,7 +2942,15 @@ fn paint_word_ribbon(
     if bx + style_w < max_x {
         let r = Rect::new(bx, by, style_w, bh);
         let hov = r.contains(mouse_x, mouse_y);
-        surface.fill_rounded_rect(r, 5.0, if hov { StudioTheme::hover() } else { StudioTheme::paper() });
+        surface.fill_rounded_rect(
+            r,
+            5.0,
+            if hov {
+                StudioTheme::hover()
+            } else {
+                StudioTheme::paper()
+            },
+        );
         surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::border());
         surface.draw_text_clipped(
             fonts,
@@ -2947,7 +2983,15 @@ fn paint_word_ribbon(
     if bx + font_w < max_x {
         let r = Rect::new(bx, by, font_w, bh);
         let hov = r.contains(mouse_x, mouse_y);
-        surface.fill_rounded_rect(r, 5.0, if hov { StudioTheme::hover() } else { StudioTheme::paper() });
+        surface.fill_rounded_rect(
+            r,
+            5.0,
+            if hov {
+                StudioTheme::hover()
+            } else {
+                StudioTheme::paper()
+            },
+        );
         surface.stroke_rounded_rect(r, 5.0, 1.0, StudioTheme::border());
         surface.draw_text(
             fonts,
@@ -2984,8 +3028,20 @@ fn paint_word_ribbon(
         let btn_seg = (22.0 * s).round();
         let down_r = Rect::new(r.x, r.y, btn_seg, bh);
         let up_r = Rect::new(r.x + r.w - btn_seg, r.y, btn_seg, bh);
-        surface.draw_icon(UiIcon::Minus, down_r.x + btn_seg * 0.5, r.y + bh * 0.5, 9.0 * s, StudioTheme::ink_sub());
-        surface.draw_icon(UiIcon::Plus, up_r.x + btn_seg * 0.5, r.y + bh * 0.5, 9.0 * s, StudioTheme::ink_sub());
+        surface.draw_icon(
+            UiIcon::Minus,
+            down_r.x + btn_seg * 0.5,
+            r.y + bh * 0.5,
+            9.0 * s,
+            StudioTheme::ink_sub(),
+        );
+        surface.draw_icon(
+            UiIcon::Plus,
+            up_r.x + btn_seg * 0.5,
+            r.y + bh * 0.5,
+            9.0 * s,
+            StudioTheme::ink_sub(),
+        );
         let sz_txt = if (cur_pt.fract()).abs() < 0.1 {
             format!("{:.0}", cur_pt)
         } else {
@@ -3001,18 +3057,88 @@ fn paint_word_ribbon(
             StudioTheme::ink(),
             &sz_txt,
         );
-        hit_regions.push(HitRegion::button(down_r, UiAction::ExecCommand(CommandId::FontSizeDown)));
-        hit_regions.push(HitRegion::button(up_r, UiAction::ExecCommand(CommandId::FontSizeUp)));
+        hit_regions.push(HitRegion::button(
+            down_r,
+            UiAction::ExecCommand(CommandId::FontSizeDown),
+        ));
+        hit_regions.push(HitRegion::button(
+            up_r,
+            UiAction::ExecCommand(CommandId::FontSizeUp),
+        ));
         bx += step_w + 4.0 * s;
     }
 
     bx = draw_divider(surface, bx, bar.y, bar.h, s);
 
     // 3. Inline Marks (`B`, `I`, `U`, `Ink`, `Mark`)
-    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "B", FontSlot::SansBold, is_bold, false, CommandId::ToggleBold);
-    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "I", FontSlot::SerifItalic, is_italic, false, CommandId::ToggleItalic);
-    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "U", FontSlot::SansRegular, is_under, false, CommandId::ToggleUnderline);
-    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Ink", FontSlot::SansRegular, false, false, CommandId::CycleTextColor);
+    bx = draw_label_btn(
+        surface,
+        fonts,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        max_x,
+        "B",
+        FontSlot::SansBold,
+        is_bold,
+        false,
+        CommandId::ToggleBold,
+    );
+    bx = draw_label_btn(
+        surface,
+        fonts,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        max_x,
+        "I",
+        FontSlot::SerifItalic,
+        is_italic,
+        false,
+        CommandId::ToggleItalic,
+    );
+    bx = draw_label_btn(
+        surface,
+        fonts,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        max_x,
+        "U",
+        FontSlot::SansRegular,
+        is_under,
+        false,
+        CommandId::ToggleUnderline,
+    );
+    bx = draw_label_btn(
+        surface,
+        fonts,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        max_x,
+        "Ink",
+        FontSlot::SansRegular,
+        false,
+        false,
+        CommandId::CycleTextColor,
+    );
 
     // Split `Mark | ▾` button with live active marker color indicator bar
     {
@@ -3025,7 +3151,8 @@ fn paint_word_ribbon(
             let group_r = Rect::new(bx, by, total_mark_w, bh);
             let left_r = Rect::new(bx, by, left_w, bh);
             let right_r = Rect::new(bx + left_w, by, right_w, bh);
-            let picker_open = matches!(open_dropdown, Some(ToolbarDropdown::HighlightPicker { .. }));
+            let picker_open =
+                matches!(open_dropdown, Some(ToolbarDropdown::HighlightPicker { .. }));
             let hov_l = left_r.contains(mouse_x, mouse_y);
             let hov_r = right_r.contains(mouse_x, mouse_y);
 
@@ -3091,11 +3218,7 @@ fn paint_word_ribbon(
                 left_w - 12.0 * s,
                 bar_h_px,
             );
-            surface.fill_rounded_rect(
-                swatch_bar,
-                1.8,
-                Color::rgb(bar_col.r, bar_col.g, bar_col.b),
-            );
+            surface.fill_rounded_rect(swatch_bar, 1.8, Color::rgb(bar_col.r, bar_col.g, bar_col.b));
             surface.stroke_rounded_rect(swatch_bar, 1.8, 0.8, Color::rgba(15, 23, 42, 55));
 
             surface.draw_icon(
@@ -3129,9 +3252,21 @@ fn paint_word_ribbon(
 
     // 4. Alignment & Lists (Crisp Vector Icons!)
     for (ic, active, cmd) in [
-        (UiIcon::AlignLeft, cur_align == Alignment::Left, CommandId::AlignLeft),
-        (UiIcon::AlignCenter, cur_align == Alignment::Center, CommandId::AlignCenter),
-        (UiIcon::AlignRight, cur_align == Alignment::Right, CommandId::AlignRight),
+        (
+            UiIcon::AlignLeft,
+            cur_align == Alignment::Left,
+            CommandId::AlignLeft,
+        ),
+        (
+            UiIcon::AlignCenter,
+            cur_align == Alignment::Center,
+            CommandId::AlignCenter,
+        ),
+        (
+            UiIcon::AlignRight,
+            cur_align == Alignment::Right,
+            CommandId::AlignRight,
+        ),
         (UiIcon::BulletList, is_bullet, CommandId::ToggleBulletList),
         (UiIcon::Checklist, is_check, CommandId::ToggleChecklist),
     ] {
@@ -3274,11 +3409,91 @@ fn paint_word_ribbon(
         false,
         CommandId::OpenMathLibrary,
     );
-    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Break", FontSlot::SansRegular, false, false, CommandId::InsertPageBreak);
-    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Track", FontSlot::SansBold, w.doc.track_changes, false, CommandId::ToggleTrackChanges);
-    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "+Comment", FontSlot::SansRegular, !w.doc.comments.is_empty(), false, CommandId::AddReviewComment);
-    bx = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Spell", FontSlot::SansRegular, w.spellcheck, false, CommandId::ToggleSpellcheck);
-    let _ = draw_label_btn(surface, fonts, hit_regions, mouse_x, mouse_y, bx, by, bh, s, max_x, "Export PDF", FontSlot::SansBold, false, true, CommandId::ExportWordToPdf);
+    bx = draw_label_btn(
+        surface,
+        fonts,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        max_x,
+        "Break",
+        FontSlot::SansRegular,
+        false,
+        false,
+        CommandId::InsertPageBreak,
+    );
+    bx = draw_label_btn(
+        surface,
+        fonts,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        max_x,
+        "Track",
+        FontSlot::SansBold,
+        w.doc.track_changes,
+        false,
+        CommandId::ToggleTrackChanges,
+    );
+    bx = draw_label_btn(
+        surface,
+        fonts,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        max_x,
+        "+Comment",
+        FontSlot::SansRegular,
+        !w.doc.comments.is_empty(),
+        false,
+        CommandId::AddReviewComment,
+    );
+    bx = draw_label_btn(
+        surface,
+        fonts,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        max_x,
+        "Spell",
+        FontSlot::SansRegular,
+        w.spellcheck,
+        false,
+        CommandId::ToggleSpellcheck,
+    );
+    let _ = draw_label_btn(
+        surface,
+        fonts,
+        hit_regions,
+        mouse_x,
+        mouse_y,
+        bx,
+        by,
+        bh,
+        s,
+        max_x,
+        "Export PDF",
+        FontSlot::SansBold,
+        false,
+        true,
+        CommandId::ExportWordToPdf,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3325,14 +3540,10 @@ fn paint_contextual_review_bar(
     let max_x = bar.x + bar.w - 10.0 * s;
 
     // 1-Click Per-Clause Accept / Reject when cursor or paragraph sits on a tracked revision!
-    let cur_clause = w
-        .doc
-        .blocks
-        .get(w.cursor_block)
-        .and_then(|b| match b {
-            Block::Paragraph(p) => p.revision_at_char(w.cursor_char),
-            _ => None,
-        });
+    let cur_clause = w.doc.blocks.get(w.cursor_block).and_then(|b| match b {
+        Block::Paragraph(p) => p.revision_at_char(w.cursor_char),
+        _ => None,
+    });
     if let Some(rev) = cur_clause {
         let acc_lbl = format!("Accept #{}", rev.id);
         let rej_lbl = format!("Reject #{}", rev.id);
@@ -3404,7 +3615,11 @@ fn paint_contextual_review_bar(
     };
     let cls_lbl = format!("Class: {}", w.doc.classification.label());
     let actions: [(&str, CommandId, bool); 5] = [
-        (track_lbl, CommandId::ToggleTrackChanges, w.doc.track_changes),
+        (
+            track_lbl,
+            CommandId::ToggleTrackChanges,
+            w.doc.track_changes,
+        ),
         ("Accept All", CommandId::AcceptAllRevisions, false),
         ("Reject All", CommandId::RejectAllRevisions, false),
         ("+ Comment", CommandId::AddReviewComment, false),
@@ -3507,9 +3722,24 @@ fn paint_contextual_image_bar(
         ("50%", CommandId::ImageScale50, false, false),
         ("75%", CommandId::ImageScale75, false, false),
         ("100%", CommandId::ImageScale100, false, false),
-        ("Left", CommandId::AlignLeft, cur_align == Alignment::Left, false),
-        ("Center", CommandId::AlignCenter, cur_align == Alignment::Center, false),
-        ("Right", CommandId::AlignRight, cur_align == Alignment::Right, false),
+        (
+            "Left",
+            CommandId::AlignLeft,
+            cur_align == Alignment::Left,
+            false,
+        ),
+        (
+            "Center",
+            CommandId::AlignCenter,
+            cur_align == Alignment::Center,
+            false,
+        ),
+        (
+            "Right",
+            CommandId::AlignRight,
+            cur_align == Alignment::Right,
+            false,
+        ),
         ("Caption", CommandId::ImageEditCaption, false, false),
         ("Replace", CommandId::ImageReplace, false, false),
         ("Delete", CommandId::ImageDelete, false, true),
@@ -3783,7 +4013,12 @@ fn draw_label_btn(
 
 fn draw_divider(surface: &mut Surface, bx: f32, bar_y: f32, bar_h: f32, s: f32) -> f32 {
     surface.fill_rect(
-        Rect::new((bx + 3.0 * s).round(), bar_y + 10.0 * s, 1.0, bar_h - 20.0 * s),
+        Rect::new(
+            (bx + 3.0 * s).round(),
+            bar_y + 10.0 * s,
+            1.0,
+            bar_h - 20.0 * s,
+        ),
         StudioTheme::border(),
     );
     bx + 8.0 * s

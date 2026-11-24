@@ -104,15 +104,15 @@ impl SnapshotVault {
                 .saturating_add(doc.blocks.len() * 128);
             (Vec::new(), est, Some(slim))
         } else {
-                let docx_bytes = save_docx_bytes(doc);
-                let comp = zlib_compress(&docx_bytes);
-                if let Some(dir) = &self.disk_dir {
-                    let file_path = dir.join(format!("snapshot_{id:05}.rpsnap"));
-                    let _ = std::fs::write(file_path, &comp);
-                }
-                let len = comp.len();
-                (comp, len, None)
-            };
+            let docx_bytes = save_docx_bytes(doc);
+            let comp = zlib_compress(&docx_bytes);
+            if let Some(dir) = &self.disk_dir {
+                let file_path = dir.join(format!("snapshot_{id:05}.rpsnap"));
+                let _ = std::fs::write(file_path, &comp);
+            }
+            let len = comp.len();
+            (comp, len, None)
+        };
 
         if self.entries.len() >= self.max_entries {
             self.entries.remove(0);
@@ -150,7 +150,9 @@ impl SnapshotVault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{markdown_to_word, pdf_to_word, word_to_markdown, word_to_pdf_document, SpellChecker};
+    use crate::{
+        markdown_to_word, pdf_to_word, word_to_markdown, word_to_pdf_document, SpellChecker,
+    };
     use doc_model::TemplateKind;
 
     #[test]
@@ -195,7 +197,10 @@ mod tests {
         for i in 0..100u32 {
             doc.blocks.push(Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Heading1,
-                format!("Section {}: Production Telemetry & Architecture Capture", i + 1),
+                format!(
+                    "Section {}: Production Telemetry & Architecture Capture",
+                    i + 1
+                ),
             )));
             doc.blocks.push(Block::Paragraph(Paragraph::new(
                 ParagraphStyle::Normal,
@@ -214,7 +219,12 @@ mod tests {
             let n = fake_png.len();
             fake_png[n - 4..].copy_from_slice(&tag);
 
-            let mut img = ImageBlock::new(format!("Screenshot-{:03}.png", i + 1), 440.0, 247.5, fake_png);
+            let mut img = ImageBlock::new(
+                format!("Screenshot-{:03}.png", i + 1),
+                440.0,
+                247.5,
+                fake_png,
+            );
             img.caption = format!("Figure {}: 4K cluster dashboard capture", i + 1);
             assert_eq!(img.intrinsic_px, Some((3840, 2160)));
             doc.blocks.push(Block::Image(img));
@@ -244,7 +254,9 @@ mod tests {
             .collect();
         assert_eq!(img_blocks.len(), 100);
         assert!(img_blocks.iter().all(|i| i.rgba_preview.is_none()));
-        assert!(img_blocks.iter().all(|i| i.intrinsic_px == Some((3840, 2160))));
+        assert!(img_blocks
+            .iter()
+            .all(|i| i.intrinsic_px == Some((3840, 2160))));
 
         // 3. `SnapshotVault::capture` uses zero-copy CoW (`SharedBytes`) instead of double LZ77!
         let mut vault = SnapshotVault::default();

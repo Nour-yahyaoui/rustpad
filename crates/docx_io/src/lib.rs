@@ -78,7 +78,9 @@ mod tests {
                 .map(|v| v.as_slice()),
             Some(&b"<enterprisePolicy org=\"SovereignLab\"/>"[..])
         );
-        assert!(parsed.passthrough_parts.contains_key("word/theme/theme1.xml"));
+        assert!(parsed
+            .passthrough_parts
+            .contains_key("word/theme/theme1.xml"));
     }
 
     #[test]
@@ -313,11 +315,15 @@ mod tests {
 
         // Add hyperlinked + hidden span + section break + embedded OLE passthrough
         let mut link_para = doc_model::Paragraph::new(doc_model::ParagraphStyle::Normal, "");
-        let mut link_style = doc_model::SpanStyle::default();
-        link_style.hyperlink = Some("https://rustpad-studio.vercel.app/".into());
-        link_style.underline = true;
-        let mut hidden_style = doc_model::SpanStyle::default();
-        hidden_style.hidden = true;
+        let link_style = doc_model::SpanStyle {
+            hyperlink: Some("https://rustpad-studio.vercel.app/".into()),
+            underline: true,
+            ..doc_model::SpanStyle::default()
+        };
+        let hidden_style = doc_model::SpanStyle {
+            hidden: true,
+            ..doc_model::SpanStyle::default()
+        };
         link_para.spans = vec![
             doc_model::TextSpan::styled("Official Studio", link_style),
             doc_model::TextSpan::styled("SECRET_INTERNAL_TOKEN", hidden_style),
@@ -338,18 +344,24 @@ mod tests {
 
         let bytes = save_docx_bytes(&doc);
         let v_rep = validate_docx_bytes(&bytes);
-        assert!(v_rep.is_valid, "expected valid v3.0 package: {:?}", v_rep.findings);
+        assert!(
+            v_rep.is_valid,
+            "expected valid v3.0 package: {:?}",
+            v_rep.findings
+        );
 
         let round = load_docx_bytes(&bytes).expect("roundtrip v3.0 docx");
         assert_eq!(round.footnotes.len(), 1);
         assert_eq!(round.endnotes.len(), 1);
         assert_eq!(round.metadata.company, "RustPad Sovereign Lab");
-        assert!(round
-            .passthrough_shared
-            .contains_key("word/embeddings/oleObject1.bin")
-            || round
-                .passthrough_parts
-                .contains_key("word/embeddings/oleObject1.bin"));
+        assert!(
+            round
+                .passthrough_shared
+                .contains_key("word/embeddings/oleObject1.bin")
+                || round
+                    .passthrough_parts
+                    .contains_key("word/embeddings/oleObject1.bin")
+        );
 
         let sec = inspect_security_and_hidden(&round, Some(&bytes));
         assert!(sec.hidden_runs_count >= 1);

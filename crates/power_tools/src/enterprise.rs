@@ -288,10 +288,7 @@ impl AdvisoryFileLock {
     pub fn acquire(file_path: &Path, owner: &str) -> Result<PathBuf, String> {
         let lp = Self::lock_path_for(file_path);
         let pid = std::process::id();
-        let body = format!(
-            "owner={owner}\npid={pid}\ntimestamp={}\n",
-            now_epoch_secs()
-        );
+        let body = format!("owner={owner}\npid={pid}\ntimestamp={}\n", now_epoch_secs());
         let _ = std::fs::write(&lp, body);
         Ok(lp)
     }
@@ -420,15 +417,42 @@ pub fn build_document_a11y_tree(doc: &Document) -> AccessibilityNode {
 pub fn generate_cyclonedx_sbom_json() -> String {
     let ver = env!("CARGO_PKG_VERSION");
     let crates = [
-        ("rustpad", "Native Win32/X11 Desktop Studio & Enterprise Headless CLI"),
-        ("rustpad_zip", "Hardened PKZIP, RFC 1951 DEFLATE/Zlib, CRC32, Adler32 & SHA-256"),
-        ("doc_model", "Structured OpenXML AST, Legal Track Changes, Redline Diff & Undo"),
-        ("docx_io", "Lossless ECMA-376 .docx Reader/Writer, Comments & Passthrough"),
-        ("pdf_create", "ISO 32000 PDF 1.7 & Archival PDF/A-2b Vector Renderer"),
-        ("pdf_engine", "PDF 1.5+ ObjStm Parser, Forensic Redaction Sanitizer & SHA-256 Sealer"),
-        ("power_tools", "Enterprise DLP Policy, Redaction, Converter, OCR, WAL & Audit Trail"),
-        ("rustpad_render", "Pure-Rust TrueType (.ttf) Subpixel Rasterizer & 2D SDF Painter"),
-        ("rustpad_window", "Zero-Dependency Win32 & Linux X11 Windowing, DPI & Clipboard"),
+        (
+            "rustpad",
+            "Native Win32/X11 Desktop Studio & Enterprise Headless CLI",
+        ),
+        (
+            "rustpad_zip",
+            "Hardened PKZIP, RFC 1951 DEFLATE/Zlib, CRC32, Adler32 & SHA-256",
+        ),
+        (
+            "doc_model",
+            "Structured OpenXML AST, Legal Track Changes, Redline Diff & Undo",
+        ),
+        (
+            "docx_io",
+            "Lossless ECMA-376 .docx Reader/Writer, Comments & Passthrough",
+        ),
+        (
+            "pdf_create",
+            "ISO 32000 PDF 1.7 & Archival PDF/A-2b Vector Renderer",
+        ),
+        (
+            "pdf_engine",
+            "PDF 1.5+ ObjStm Parser, Forensic Redaction Sanitizer & SHA-256 Sealer",
+        ),
+        (
+            "power_tools",
+            "Enterprise DLP Policy, Redaction, Converter, OCR, WAL & Audit Trail",
+        ),
+        (
+            "rustpad_render",
+            "Pure-Rust TrueType (.ttf) Subpixel Rasterizer & 2D SDF Painter",
+        ),
+        (
+            "rustpad_window",
+            "Zero-Dependency Win32 & Linux X11 Windowing, DPI & Clipboard",
+        ),
     ];
     let comps: Vec<String> = crates
         .iter()
@@ -522,10 +546,8 @@ mod tests {
     #[test]
     fn test_wal_crash_journal_roundtrip_and_sbom() {
         let doc = TemplateKind::EnterpriseContract.build();
-        let wal_path = std::env::temp_dir().join(format!(
-            "rustpad_test_wal_{}.wal",
-            std::process::id()
-        ));
+        let wal_path =
+            std::env::temp_dir().join(format!("rustpad_test_wal_{}.wal", std::process::id()));
         let digest = WalJournal::write_frame(&wal_path, &doc).expect("write WAL");
         assert_eq!(digest.len(), 64);
 

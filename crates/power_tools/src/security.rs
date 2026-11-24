@@ -96,8 +96,9 @@ pub fn redact_docx_document(doc: &mut Document, opts: &RedactionOptions) -> Reda
         for block in &mut doc.blocks {
             if let Block::Paragraph(p) = block {
                 let before = p.spans.len();
-                p.spans
-                    .retain(|s| !matches!(&s.revision, Some(r) if r.kind == RevisionKind::Deletion));
+                p.spans.retain(
+                    |s| !matches!(&s.revision, Some(r) if r.kind == RevisionKind::Deletion),
+                );
                 rep.purged_deleted_revisions += before.saturating_sub(p.spans.len());
                 for sp in &mut p.spans {
                     sp.revision = None;
@@ -343,8 +344,9 @@ pub fn clean_document_metadata(
         for block in &mut doc.blocks {
             if let Block::Paragraph(p) = block {
                 let before = p.spans.len();
-                p.spans
-                    .retain(|s| !matches!(&s.revision, Some(r) if r.kind == RevisionKind::Deletion));
+                p.spans.retain(
+                    |s| !matches!(&s.revision, Some(r) if r.kind == RevisionKind::Deletion),
+                );
                 rep.purged_revisions += before.saturating_sub(p.spans.len());
                 for sp in &mut p.spans {
                     if sp.revision.take().is_some() {
@@ -394,14 +396,20 @@ pub fn write_bytes_secure_atomic(dest: impl AsRef<Path>, bytes: &[u8]) -> Result
         open_opts.mode(0o600);
     }
 
-    let mut file = open_opts
-        .open(&tmp_path)
-        .map_err(|e| format!("Failed to create secure temp file '{}': {e}", tmp_path.display()))?;
+    let mut file = open_opts.open(&tmp_path).map_err(|e| {
+        format!(
+            "Failed to create secure temp file '{}': {e}",
+            tmp_path.display()
+        )
+    })?;
 
     if let Err(e) = file.write_all(bytes).and_then(|_| file.sync_all()) {
         drop(file);
         let _ = wipe_and_remove(&tmp_path, bytes.len().min(65_536));
-        return Err(format!("Failed writing atomic file '{}': {e}", dest.display()));
+        return Err(format!(
+            "Failed writing atomic file '{}': {e}",
+            dest.display()
+        ));
     }
     drop(file);
 
@@ -461,8 +469,13 @@ fn scrub_text(input: &str, terms: &[String], opts: &RedactionOptions) -> (String
 
     if opts.redact_emails || opts.redact_api_secrets || opts.redact_phone_and_id_numbers {
         let mut rebuilt = String::with_capacity(cur.len());
-        for token in cur.split_inclusive(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | '<' | '>' | '"' | '\'')) {
-            let trimmed_end = token.trim_end_matches(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '.' | '(' | ')' | '<' | '>' | '"' | '\''));
+        for token in cur.split_inclusive(|c: char| {
+            c.is_whitespace() || matches!(c, ',' | ';' | '(' | ')' | '<' | '>' | '"' | '\'')
+        }) {
+            let trimmed_end = token.trim_end_matches(|c: char| {
+                c.is_whitespace()
+                    || matches!(c, ',' | ';' | '.' | '(' | ')' | '<' | '>' | '"' | '\'')
+            });
             let suffix = &token[trimmed_end.len()..];
             let core = trimmed_end;
             let should_mask = (opts.redact_emails && looks_like_email(core))
@@ -505,7 +518,10 @@ fn looks_like_id_number(s: &str) -> bool {
     if bytes.len() == 11
         && bytes[3] == b'-'
         && bytes[6] == b'-'
-        && bytes.iter().enumerate().all(|(i, b)| i == 3 || i == 6 || b.is_ascii_digit())
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(i, b)| i == 3 || i == 6 || b.is_ascii_digit())
     {
         return true;
     }

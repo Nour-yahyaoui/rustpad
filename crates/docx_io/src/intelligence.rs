@@ -212,9 +212,7 @@ pub fn validate_docx_bytes(bytes: &[u8]) -> DocxValidationReport {
         }
     }
 
-    let is_valid = findings
-        .iter()
-        .all(|f| f.severity != IssueSeverity::Error);
+    let is_valid = findings.iter().all(|f| f.severity != IssueSeverity::Error);
     DocxValidationReport {
         is_valid,
         archive_entries,
@@ -389,9 +387,9 @@ pub fn repair_docx_bytes(bytes: &[u8]) -> Result<(Vec<u8>, DocxRepairReport), Do
                 zw.add_file(name.clone(), data.clone());
             } else {
                 report.repaired_xml_parts += 1;
-                report
-                    .actions
-                    .push(format!("Skipped irreparably truncated auxiliary XML '{name}'"));
+                report.actions.push(format!(
+                    "Skipped irreparably truncated auxiliary XML '{name}'"
+                ));
             }
         } else {
             zw.add_stored(name.clone(), data.clone());
@@ -448,11 +446,7 @@ fn heal_truncated_word_xml(raw: &str) -> String {
             continue;
         }
         if let Some(close_raw) = inner.strip_prefix('/') {
-            let cname = close_raw
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .trim();
+            let cname = close_raw.split_whitespace().next().unwrap_or("").trim();
             if let Some(idx) = open_stack.iter().rposition(|t| t == cname) {
                 open_stack.truncate(idx);
             }
@@ -541,7 +535,9 @@ pub fn inspect_formatting_consistency(doc: &Document) -> Vec<ConsistencyFinding>
             // Track body font family & size distribution
             for sp in &p.spans {
                 if !sp.text.trim().is_empty() {
-                    *body_fonts.entry(sp.style.font_family.label()).or_insert(0usize) += 1;
+                    *body_fonts
+                        .entry(sp.style.font_family.label())
+                        .or_insert(0usize) += 1;
                     let sz_key = (sp.style.font_size_pt * 2.0).round() as u32;
                     *body_sizes.entry(sz_key).or_insert(0usize) += 1;
                 }
@@ -549,14 +545,15 @@ pub fn inspect_formatting_consistency(doc: &Document) -> Vec<ConsistencyFinding>
         }
 
         // 3. Double spaces inside prose
-        if txt.contains("  ") && p.spans.iter().all(|s| s.style.font_family != doc_model::FontFamily::Mono) {
+        if txt.contains("  ")
+            && p.spans
+                .iter()
+                .all(|s| s.style.font_family != doc_model::FontFamily::Mono)
+        {
             findings.push(ConsistencyFinding {
                 block_index: idx,
                 category: "Whitespace",
-                message: format!(
-                    "Repeated consecutive spaces in paragraph #{}",
-                    idx + 1
-                ),
+                message: format!("Repeated consecutive spaces in paragraph #{}", idx + 1),
             });
         }
     }
@@ -568,11 +565,7 @@ pub fn inspect_formatting_consistency(doc: &Document) -> Vec<ConsistencyFinding>
             message: format!(
                 "Body paragraphs mix {} different font families ({})",
                 body_fonts.len(),
-                body_fonts
-                    .keys()
-                    .copied()
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                body_fonts.keys().copied().collect::<Vec<_>>().join(", ")
             ),
         });
     }
@@ -685,7 +678,8 @@ pub fn inspect_security_and_hidden(
                 all_part_names.insert(n.clone());
             }
             if let Ok(Some(settings_rels)) = arch.get_str("word/_rels/settings.xml.rels") {
-                if settings_rels.contains("attachedTemplate") && settings_rels.contains("External") {
+                if settings_rels.contains("attachedTemplate") && settings_rels.contains("External")
+                {
                     rep.has_external_template_injection = true;
                     rep.findings.push(SecurityFinding {
                         severity: IssueSeverity::Error,
@@ -730,11 +724,7 @@ pub fn inspect_security_and_hidden(
     rep
 }
 
-fn check_paragraph_hidden_and_links(
-    idx: usize,
-    p: &Paragraph,
-    rep: &mut SecurityInspectionReport,
-) {
+fn check_paragraph_hidden_and_links(idx: usize, p: &Paragraph, rep: &mut SecurityInspectionReport) {
     for sp in &p.spans {
         if sp.text.trim().is_empty() {
             continue;
@@ -779,7 +769,10 @@ fn check_paragraph_hidden_and_links(
             });
         }
         if let Some(link) = &sp.style.hyperlink {
-            if link.starts_with("http://") || link.starts_with("https://") || link.starts_with("file://") {
+            if link.starts_with("http://")
+                || link.starts_with("https://")
+                || link.starts_with("file://")
+            {
                 rep.external_links_count += 1;
             }
         }

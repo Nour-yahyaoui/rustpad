@@ -89,8 +89,9 @@ pub fn verify_pdf_seal_bytes(pdf_bytes: &[u8]) -> Result<PdfSealManifest, String
         }
     }
 
-    let hdr = seal_hdr
-        .ok_or_else(|| "PDF does not contain an embedded /RustPadSeal cryptographic manifest".to_string())?;
+    let hdr = seal_hdr.ok_or_else(|| {
+        "PDF does not contain an embedded /RustPadSeal cryptographic manifest".to_string()
+    })?;
     let signer = extract_paren(&hdr, "/Signer").unwrap_or_else(|| "Unknown".into());
     let date_iso = extract_paren(&hdr, "/Date").unwrap_or_default();
     let expected_hash = extract_paren(&hdr, "/ContentSha256")

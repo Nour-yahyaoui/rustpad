@@ -103,7 +103,8 @@ fn locate_central_directory(
                 bytes[loc + 14],
                 bytes[loc + 15],
             ]) as usize;
-            if z64_off + 56 <= bytes.len() && bytes[z64_off..z64_off + 4] == [0x50, 0x4B, 0x06, 0x06]
+            if z64_off + 56 <= bytes.len()
+                && bytes[z64_off..z64_off + 4] == [0x50, 0x4B, 0x06, 0x06]
             {
                 total_entries = u64::from_le_bytes([
                     bytes[z64_off + 32],
@@ -226,7 +227,12 @@ fn scan_central_directory_index(
         let name_bytes = &bytes[cursor + 46..cursor + 46 + name_len];
         let extra_bytes = &bytes[cursor + 46 + name_len..cursor + 46 + name_len + extra_len];
         if uncomp_hint == 0xFFFF_FFFF || comp_size == 0xFFFF_FFFF || local_offset == 0xFFFF_FFFF {
-            parse_zip64_extra(extra_bytes, &mut uncomp_hint, &mut comp_size, &mut local_offset);
+            parse_zip64_extra(
+                extra_bytes,
+                &mut uncomp_hint,
+                &mut comp_size,
+                &mut local_offset,
+            );
         }
 
         let raw_name = String::from_utf8_lossy(name_bytes).replace('\\', "/");
@@ -370,11 +376,7 @@ impl LazyZipArchive {
                 return Ok(Some(self.backing.slice(meta.data_start, end)));
             }
             8 => deflate_decompress_bounded(payload, self.limits.max_entry_unpacked_bytes)?,
-            m => {
-                return Err(ZipError(format!(
-                    "Unsupported ZIP compression method: {m}"
-                )))
-            }
+            m => return Err(ZipError(format!("Unsupported ZIP compression method: {m}"))),
         };
 
         if out.len() > 16 * 1024 && self.limits.max_compression_ratio > 0 {
@@ -425,22 +427,23 @@ pub fn salvage_corrupt_zip_entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
             continue;
         }
         let method = u16::from_le_bytes([bytes[i + 8], bytes[i + 9]]);
-        let comp_size = u32::from_le_bytes([
-            bytes[i + 18],
-            bytes[i + 19],
-            bytes[i + 20],
-            bytes[i + 21],
-        ]) as usize;
+        let comp_size =
+            u32::from_le_bytes([bytes[i + 18], bytes[i + 19], bytes[i + 20], bytes[i + 21]])
+                as usize;
         let name_len = u16::from_le_bytes([bytes[i + 26], bytes[i + 27]]) as usize;
         let extra_len = u16::from_le_bytes([bytes[i + 28], bytes[i + 29]]) as usize;
         let name_start = i + 30;
-        let Some(data_start) = name_start.checked_add(name_len).and_then(|v| v.checked_add(extra_len)) else {
+        let Some(data_start) = name_start
+            .checked_add(name_len)
+            .and_then(|v| v.checked_add(extra_len))
+        else {
             break;
         };
         if name_start + name_len > bytes.len() || data_start > bytes.len() {
             break;
         }
-        let raw_name = String::from_utf8_lossy(&bytes[name_start..name_start + name_len]).into_owned();
+        let raw_name =
+            String::from_utf8_lossy(&bytes[name_start..name_start + name_len]).into_owned();
         if raw_name.is_empty()
             || raw_name.contains("..")
             || raw_name.starts_with('/')
@@ -474,15 +477,19 @@ fn decode_xml_text_bytes(b: &[u8]) -> String {
     if b.len() >= 2 && b[0] == 0xFF && b[1] == 0xFE {
         // UTF-16LE XML part
         let units: Vec<u16> = b[2..]
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes(*c))
             .collect();
         String::from_utf16_lossy(&units)
     } else if b.len() >= 2 && b[0] == 0xFE && b[1] == 0xFF {
         // UTF-16BE XML part
         let units: Vec<u16> = b[2..]
-            .chunks_exact(2)
-            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_be_bytes(*c))
             .collect();
         String::from_utf16_lossy(&units)
     } else {
@@ -527,11 +534,7 @@ impl ZipArchive {
                     payload.to_vec()
                 }
                 8 => deflate_decompress_bounded(payload, remaining_budget)?,
-                m => {
-                    return Err(ZipError(format!(
-                        "Unsupported ZIP compression method: {m}"
-                    )))
-                }
+                m => return Err(ZipError(format!("Unsupported ZIP compression method: {m}"))),
             };
 
             if unpacked.len() > 16 * 1024 && limits.max_compression_ratio > 0 {
@@ -718,10 +721,7 @@ mod tests {
     fn test_zip_archive_and_lazy_zero_copy_roundtrip() {
         let mut zw = ZipWriter::new();
         zw.add_file("[Content_Types].xml", b"<Types></Types>".to_vec());
-        zw.add_file(
-            "word/document.xml",
-            "<w:document>".repeat(120).into_bytes(),
-        );
+        zw.add_file("word/document.xml", "<w:document>".repeat(120).into_bytes());
         // Stored PNG payload containing an embedded fake EOCD signature `[0x50, 0x4B, 0x05, 0x06]`
         let mut fake_media = vec![137, 80, 78, 71, 13, 10, 26, 10];
         fake_media.extend_from_slice(&[0x50, 0x4B, 0x05, 0x06, 1, 2, 3, 4]);
@@ -748,8 +748,7 @@ mod tests {
 
     #[test]
     fn test_interop_with_python_zlib_dynamic_huffman() {
-        let mut py_zlib_like =
-            zlib_compress(&b"Dynamic/Fixed test payload 0123456789 ".repeat(64));
+        let mut py_zlib_like = zlib_compress(&b"Dynamic/Fixed test payload 0123456789 ".repeat(64));
         let out = zlib_decompress(&py_zlib_like).unwrap();
         assert_eq!(out, b"Dynamic/Fixed test payload 0123456789 ".repeat(64));
         py_zlib_like[10] ^= 0xFF;

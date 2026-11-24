@@ -452,7 +452,9 @@ impl PdfDocument {
                     let bounds = (*x, *y, *x + width, *y + 26.0);
                     finite_rect(bounds) && !boxes.iter().any(|b| rectangles_overlap(bounds, *b))
                 }
-                PdfAnnotation::Signature { strokes, signer, .. } => {
+                PdfAnnotation::Signature {
+                    strokes, signer, ..
+                } => {
                     let mut points = strokes.iter().flatten();
                     let Some(&(first_x, first_y)) = points.next() else {
                         return true;
@@ -487,7 +489,12 @@ impl PdfDocument {
                         max_x + 2.0,
                         max_y + 2.0,
                     );
-                    let bounds = (bounds.0, bounds.1, bounds.2.max(min_x + label_width + 2.0), bounds.3);
+                    let bounds = (
+                        bounds.0,
+                        bounds.1,
+                        bounds.2.max(min_x + label_width + 2.0),
+                        bounds.3,
+                    );
                     finite_rect(bounds) && !boxes.iter().any(|b| rectangles_overlap(bounds, *b))
                 }
             });
@@ -665,8 +672,7 @@ mod tests {
         // True redaction removes overlapping text item
         let target_x = merged.pages[0].text_items[0].x;
         let target_y = merged.pages[0].text_items[0].y;
-        let scrubbed =
-            merged.pages[0].apply_redaction(target_x - 2.0, target_y - 2.0, 260.0, 30.0);
+        let scrubbed = merged.pages[0].apply_redaction(target_x - 2.0, target_y - 2.0, 260.0, 30.0);
         assert!(scrubbed >= 1);
 
         let split = merged.extract_ranges("1-2").expect("extract pages 1-2");
@@ -717,8 +723,14 @@ mod tests {
         assert_eq!(report.redaction_boxes, 1);
         assert_eq!(report.purged_text_runs, 1);
         assert_eq!(report.purged_annotations, 2);
-        assert!(doc.pages[0].annotations.iter().any(|a| matches!(a, PdfAnnotation::Redaction { .. })));
-        assert!(doc.pages[0].annotations.iter().any(|a| matches!(a, PdfAnnotation::StickyNote { .. })));
+        assert!(doc.pages[0]
+            .annotations
+            .iter()
+            .any(|a| matches!(a, PdfAnnotation::Redaction { .. })));
+        assert!(doc.pages[0]
+            .annotations
+            .iter()
+            .any(|a| matches!(a, PdfAnnotation::StickyNote { .. })));
         assert!(doc.pages[0].text_items.is_empty());
         assert!(doc.pages[0].watermark.is_none());
     }
@@ -729,11 +741,7 @@ mod tests {
         let obj1 = b"<< /Type /Catalog /Pages 2 0 R >>";
         let obj2 = b"<< /Type /Pages /Kids [ 3 0 R ] /Count 1 >>";
         let obj3 = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>";
-        let index_hdr = format!(
-            "1 0 2 {} 3 {} ",
-            obj1.len(),
-            obj1.len() + obj2.len()
-        );
+        let index_hdr = format!("1 0 2 {} 3 {} ", obj1.len(), obj1.len() + obj2.len());
         let first_off = index_hdr.len();
         let mut objstm_raw = Vec::new();
         objstm_raw.extend_from_slice(index_hdr.as_bytes());
@@ -746,11 +754,7 @@ mod tests {
         let mut synthetic_pdf = Vec::new();
         synthetic_pdf.extend_from_slice(b"%PDF-1.6\n");
         synthetic_pdf.extend_from_slice(
-            format!(
-                "4 0 obj\n<< /Length {} >>\nstream\n",
-                content_stream.len()
-            )
-            .as_bytes(),
+            format!("4 0 obj\n<< /Length {} >>\nstream\n", content_stream.len()).as_bytes(),
         );
         synthetic_pdf.extend_from_slice(content_stream);
         synthetic_pdf.extend_from_slice(b"\nendstream\nendobj\n");
@@ -789,8 +793,12 @@ mod tests {
             12.0,
             RgbColor::INK_SLATE,
         );
-        let (sealed_bytes, manifest) =
-            seal_pdf_bytes(&loaded, "Enterprise Records Officer", "2026-10-27T14:00:00Z", true);
+        let (sealed_bytes, manifest) = seal_pdf_bytes(
+            &loaded,
+            "Enterprise Records Officer",
+            "2026-10-27T14:00:00Z",
+            true,
+        );
         let verified = verify_pdf_seal_bytes(&sealed_bytes).expect("valid seal");
         assert_eq!(verified.content_sha256, manifest.content_sha256);
         assert!(verified.pdfa_conformance);
@@ -835,7 +843,8 @@ endcmap\n\
 end\n\
 end";
         let cmap_z = zlib_compress(cmap.as_bytes());
-        let content = b"BT /F1 12 Tf 1 0 0 1 72 720 Tm [<000100020003000400050006000700080009>] TJ ET";
+        let content =
+            b"BT /F1 12 Tf 1 0 0 1 72 720 Tm [<000100020003000400050006000700080009>] TJ ET";
         let mut pdf = Vec::new();
         pdf.extend_from_slice(b"%PDF-1.7\n");
         pdf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");

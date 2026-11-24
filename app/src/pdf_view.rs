@@ -70,7 +70,10 @@ pub fn paint_pdf_tab(
             StudioTheme::pdf_accent(),
             &lbl,
         );
-        hit_regions.push(HitRegion::button(toolbar_rect, UiAction::SwitchTab(tab_idx)));
+        hit_regions.push(HitRegion::button(
+            toolbar_rect,
+            UiAction::SwitchTab(tab_idx),
+        ));
     }
 
     let body = Rect::new(
@@ -96,7 +99,17 @@ pub fn paint_pdf_tab(
 
     if show_thumbs {
         let lrect = Rect::new(body.x, body.y, thumb_w, body.h);
-        paint_pdf_thumbnails(surface, fonts, hit_regions, tab_idx, mouse_x, mouse_y, s, lrect, p);
+        paint_pdf_thumbnails(
+            surface,
+            fonts,
+            hit_regions,
+            tab_idx,
+            mouse_x,
+            mouse_y,
+            s,
+            lrect,
+            p,
+        );
         let split_l = Rect::new(lrect.x + lrect.w - 4.0, lrect.y, 8.0, lrect.h);
         if split_l.contains(mouse_x, mouse_y) {
             surface.fill_rect(
@@ -168,7 +181,8 @@ pub fn paint_pdf_tab(
 
         if sheet.contains(mouse_x, mouse_y) {
             let pdf_x = ((mouse_x - sheet.x) / scale).clamp(16.0, page.width_pt - 32.0);
-            let pdf_y = (page.height_pt - ((mouse_y - sheet.y) / scale)).clamp(16.0, page.height_pt - 24.0);
+            let pdf_y =
+                (page.height_pt - ((mouse_y - sheet.y) / scale)).clamp(16.0, page.height_pt - 24.0);
             hit_regions.push(HitRegion::text(
                 sheet,
                 UiAction::ClickPdfPageCanvas {
@@ -220,7 +234,12 @@ pub fn paint_pdf_tab(
                 estimate_styled_text_width(&item.text, item.font_size, item.font_family, item.bold)
                     * scale;
             let tw = target_w.max(32.0 * scale);
-            let item_box = Rect::new(tx - 3.0, baseline_y - px_size * 0.92, tw + 6.0, px_size * 1.24);
+            let item_box = Rect::new(
+                tx - 3.0,
+                baseline_y - px_size * 0.92,
+                tw + 6.0,
+                px_size * 1.24,
+            );
             let selected = is_focused && p.selected_text_id == Some(item.id);
             let hovered = item_box.contains(mouse_x, mouse_y);
 
@@ -586,7 +605,10 @@ fn paint_pdf_toolbar(
             StudioTheme::ink_sub()
         },
     );
-    hit_regions.push(HitRegion::button(insp_btn, UiAction::TogglePdfRightInspector));
+    hit_regions.push(HitRegion::button(
+        insp_btn,
+        UiAction::TogglePdfRightInspector,
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -648,7 +670,12 @@ fn paint_pdf_thumbnails(
             },
         );
 
-        let mini = Rect::new(card.x + 8.0 * s, card.y + 7.0 * s, 46.0 * s, card.h - 14.0 * s);
+        let mini = Rect::new(
+            card.x + 8.0 * s,
+            card.y + 7.0 * s,
+            46.0 * s,
+            card.h - 14.0 * s,
+        );
         surface.fill_rect(mini, StudioTheme::paper());
         surface.stroke_rounded_rect(mini, 2.0, 1.0, StudioTheme::border_strong());
         for ln in 0..4 {
@@ -813,7 +840,10 @@ fn paint_pdf_inspector(
 
     y += 6.0 * s;
     let quick: &[(&str, CommandId)] = &[
-        ("Forensic Sanitize Redactions", CommandId::PdfSanitizeRedactions),
+        (
+            "Forensic Sanitize Redactions",
+            CommandId::PdfSanitizeRedactions,
+        ),
         ("Embed SHA-256 Seal & PDF/A-2b", CommandId::PdfSealDocument),
         ("Draw & Place Signature", CommandId::OpenSignaturePad),
         ("Stamp [APPROVED]", CommandId::StampApproved),

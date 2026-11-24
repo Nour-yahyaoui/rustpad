@@ -3,6 +3,7 @@
 //! Inline Math Library, Floating Style/Font Dropdowns, Modals & Status Bar.
 
 use crate::commands::{filter_commands, CommandId};
+use crate::installer::{os_platform_label, SetupFocusField, SetupStep, SetupToggleOption};
 use crate::pdf_view::paint_pdf_tab;
 use crate::state::{
     ActiveModal, DragInteraction, FileModalKind, HitRegion, RustPadApp, StudioTab, ToolbarDropdown,
@@ -19,7 +20,7 @@ use docx_io::{
 };
 use power_tools::{detect_broken_links, detect_duplicate_paragraphs};
 use rustpad_render::{
-    active_theme_mode, Color, FontBook, FontSlot, Rect, StudioTheme, Surface, UiIcon,
+    active_theme_mode, Color, FontBook, FontSlot, Rect, StudioTheme, Surface, ThemeMode, UiIcon,
 };
 
 pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
@@ -31,12 +32,30 @@ pub fn render_app(app: &mut RustPadApp, surface: &mut Surface) {
     let s = app.ui_scale.clamp(0.85, 1.6);
     let win_w = surface.width as f32;
     let win_h = surface.height as f32;
+    let status_h = (30.0 * s).round();
+
+    // First-Run Setup & Desktop Installation Wizard (full-window dedicated setup screen)
+    if app.setup_wizard.is_some() {
+        paint_setup_wizard(
+            app,
+            surface,
+            s,
+            Rect::new(0.0, 0.0, win_w.max(320.0), (win_h - status_h).max(200.0)),
+        );
+        paint_status_bar(
+            app,
+            surface,
+            s,
+            Rect::new(0.0, win_h - status_h, win_w, status_h),
+        );
+        return;
+    }
+
     let header_h = if app.focus_mode {
         0.0
     } else {
         (48.0 * s).round()
     };
-    let status_h = (30.0 * s).round();
 
     // 1. Unified Studio Header Bar (hidden in Focus Mode for calm full-bleed writing)
     if header_h > 0.0 {
@@ -392,7 +411,12 @@ fn paint_header_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
             app.hit_regions
                 .push(HitRegion::button(tab_r, UiAction::SwitchTab(idx)));
         } else {
-            let pill = Rect::new(tab_r.x + 7.0 * s, tab_r.y + (tab_h - 16.0 * s) * 0.5, 36.0 * s, 16.0 * s);
+            let pill = Rect::new(
+                tab_r.x + 7.0 * s,
+                tab_r.y + (tab_h - 16.0 * s) * 0.5,
+                36.0 * s,
+                16.0 * s,
+            );
             surface.fill_rounded_rect(
                 pill,
                 3.0,
@@ -697,11 +721,7 @@ fn paint_home_hub(
     } else {
         max_w
     };
-    let right_x = if two_col {
-        ox + left_w + 36.0 * s
-    } else {
-        ox
-    };
+    let right_x = if two_col { ox + left_w + 36.0 * s } else { ox };
     let right_w = if two_col {
         max_w - left_w - 36.0 * s
     } else {
@@ -796,7 +816,43 @@ fn paint_home_hub(
         );
         hit_regions.push(HitRegion::button(r, UiAction::ExecCommand(cmd)));
     }
-    ly += (btn_h + 8.0 * s) * 2.0 + 24.0 * s;
+    ly += (btn_h + 8.0 * s) * 2.0 + 4.0 * s;
+
+    let setup_btn = Rect::new(ox, ly, left_w, (34.0 * s).round());
+    let setup_hov = setup_btn.contains(mouse_x, mouse_y);
+    surface.fill_rounded_rect(
+        setup_btn,
+        5.0,
+        if setup_hov {
+            StudioTheme::hover()
+        } else {
+            StudioTheme::paper()
+        },
+    );
+    surface.stroke_rounded_rect(setup_btn, 5.0, 1.0, StudioTheme::border_strong());
+    let setup_lbl = "Desktop Setup & OS Integration (Shortcuts, .docx/.pdf, PATH)…";
+    surface.draw_icon(
+        UiIcon::Shield,
+        setup_btn.x + 18.0 * s,
+        setup_btn.y + setup_btn.h * 0.5,
+        14.0 * s,
+        StudioTheme::rust_orange(),
+    );
+    surface.draw_text_clipped(
+        fonts,
+        FontSlot::SansBold,
+        11.2 * s,
+        setup_btn.x + 31.0 * s,
+        setup_btn.y + setup_btn.h * 0.64,
+        setup_btn.w - 38.0 * s,
+        StudioTheme::ink(),
+        setup_lbl,
+    );
+    hit_regions.push(HitRegion::button(
+        setup_btn,
+        UiAction::ExecCommand(CommandId::OpenSetupWizard),
+    ));
+    ly += setup_btn.h + 20.0 * s;
 
     // Recent Workspace Ledger (Hairline rows, crisp format tags)
     surface.draw_text(
@@ -837,7 +893,12 @@ fn paint_home_hub(
                 .and_then(|e| e.to_str())
                 .map(|e| e.eq_ignore_ascii_case("pdf"))
                 .unwrap_or(false);
-            let tag_r = Rect::new(r.x + 4.0 * s, r.y + (row_h - 17.0 * s) * 0.5, 38.0 * s, 17.0 * s);
+            let tag_r = Rect::new(
+                r.x + 4.0 * s,
+                r.y + (row_h - 17.0 * s) * 0.5,
+                38.0 * s,
+                17.0 * s,
+            );
             surface.fill_rounded_rect(
                 tag_r,
                 3.0,
@@ -927,7 +988,12 @@ fn paint_home_hub(
         );
 
         // Crisp A4 miniature sheet preview
-        let sheet = Rect::new(card.x + 12.0 * s, card.y + 12.0 * s, 52.0 * s, card.h - 24.0 * s);
+        let sheet = Rect::new(
+            card.x + 12.0 * s,
+            card.y + 12.0 * s,
+            52.0 * s,
+            card.h - 24.0 * s,
+        );
         surface.fill_rect(sheet, StudioTheme::paper());
         surface.stroke_rounded_rect(sheet, 2.0, 1.0, StudioTheme::border_strong());
         surface.fill_rect(
@@ -1026,7 +1092,12 @@ fn paint_toolbar_dropdown(
             surface.stroke_rounded_rect(card, 6.0, 1.0, StudioTheme::border_strong());
 
             for (i, (st, label, fsz)) in items.iter().enumerate() {
-                let r = Rect::new(card.x + 6.0 * s, card.y + 6.0 * s + (i as f32) * row_h, mw - 12.0 * s, row_h);
+                let r = Rect::new(
+                    card.x + 6.0 * s,
+                    card.y + 6.0 * s + (i as f32) * row_h,
+                    mw - 12.0 * s,
+                    row_h,
+                );
                 if r.contains(app.mouse_x, app.mouse_y) {
                     surface.fill_rounded_rect(r, 4.0, StudioTheme::hover());
                 }
@@ -1052,9 +1123,21 @@ fn paint_toolbar_dropdown(
         }
         ToolbarDropdown::FontFamily { anchor_x, anchor_y } => {
             let items = [
-                (FontFamily::Sans, "Inter / Sans-Serif", FontSlot::SansRegular),
-                (FontFamily::Serif, "Georgia / Editorial Serif", FontSlot::SerifRegular),
-                (FontFamily::Mono, "JetBrains / Monospace", FontSlot::MonoRegular),
+                (
+                    FontFamily::Sans,
+                    "Inter / Sans-Serif",
+                    FontSlot::SansRegular,
+                ),
+                (
+                    FontFamily::Serif,
+                    "Georgia / Editorial Serif",
+                    FontSlot::SerifRegular,
+                ),
+                (
+                    FontFamily::Mono,
+                    "JetBrains / Monospace",
+                    FontSlot::MonoRegular,
+                ),
             ];
             let mw = 214.0 * s;
             let row_h = (34.0 * s).round();
@@ -1068,7 +1151,12 @@ fn paint_toolbar_dropdown(
             surface.stroke_rounded_rect(card, 6.0, 1.0, StudioTheme::border_strong());
 
             for (i, (fam, label, slot)) in items.iter().enumerate() {
-                let r = Rect::new(card.x + 6.0 * s, card.y + 6.0 * s + (i as f32) * row_h, mw - 12.0 * s, row_h);
+                let r = Rect::new(
+                    card.x + 6.0 * s,
+                    card.y + 6.0 * s + (i as f32) * row_h,
+                    mw - 12.0 * s,
+                    row_h,
+                );
                 if r.contains(app.mouse_x, app.mouse_y) {
                     surface.fill_rounded_rect(r, 4.0, StudioTheme::hover());
                 }
@@ -1089,8 +1177,9 @@ fn paint_toolbar_dropdown(
             let mw = (228.0 * s).round();
             let hdr_h = (26.0 * s).round();
             let row_h = (28.0 * s).round();
-            let mh = (hdr_h + (HIGHLIGHT_PALETTE.len() as f32) * row_h + 10.0 * s + row_h + 8.0 * s)
-                .round();
+            let mh =
+                (hdr_h + (HIGHLIGHT_PALETTE.len() as f32) * row_h + 10.0 * s + row_h + 8.0 * s)
+                    .round();
             let mx = (anchor_x as f32).min(win_w - mw - 12.0).max(8.0);
             let my = (anchor_y as f32 + 4.0).min(win_h - mh - 12.0).max(8.0);
             let card = Rect::new(mx, my, mw, mh);
@@ -1201,14 +1290,7 @@ fn paint_toolbar_dropdown(
                     let cx = r.x + r.w - 14.0 * s;
                     let cy = r.y + row_h * 0.52;
                     let ck = StudioTheme::word_accent();
-                    surface.draw_line(
-                        cx - 4.0 * s,
-                        cy,
-                        cx - 1.2 * s,
-                        cy + 3.0 * s,
-                        1.7 * s,
-                        ck,
-                    );
+                    surface.draw_line(cx - 4.0 * s, cy, cx - 1.2 * s, cy + 3.0 * s, 1.7 * s, ck);
                     surface.draw_line(
                         cx - 1.2 * s,
                         cy + 3.0 * s,
@@ -1219,8 +1301,10 @@ fn paint_toolbar_dropdown(
                     );
                 }
 
-                app.hit_regions
-                    .push(HitRegion::button(r, UiAction::SelectHighlightColor(Some(sw.color))));
+                app.hit_regions.push(HitRegion::button(
+                    r,
+                    UiAction::SelectHighlightColor(Some(sw.color)),
+                ));
                 ry += row_h;
             }
 
@@ -1251,8 +1335,10 @@ fn paint_toolbar_dropdown(
                 StudioTheme::ink_sub(),
                 "No Highlight (Clear)",
             );
-            app.hit_regions
-                .push(HitRegion::button(clear_r, UiAction::SelectHighlightColor(None)));
+            app.hit_regions.push(HitRegion::button(
+                clear_r,
+                UiAction::SelectHighlightColor(None),
+            ));
         }
         ToolbarDropdown::TableCreator {
             anchor_x,
@@ -1268,12 +1354,9 @@ fn paint_toolbar_dropdown(
             let mw = (grid_span + pad_x * 2.0).max(232.0 * s).round();
             let preset_h = (28.0 * s).round();
             let presets = TablePreset::ALL;
-            let mh = (36.0 * s
-                + grid_span
-                + 28.0 * s
-                + (presets.len() as f32) * preset_h
-                + 28.0 * s)
-                .round();
+            let mh =
+                (36.0 * s + grid_span + 28.0 * s + (presets.len() as f32) * preset_h + 28.0 * s)
+                    .round();
             let mx = (anchor_x as f32).min(win_w - mw - 12.0).max(8.0);
             let my = (anchor_y as f32 + 4.0).min(win_h - mh - 12.0).max(8.0);
             let card = Rect::new(mx, my, mw, mh);
@@ -1320,7 +1403,9 @@ fn paint_toolbar_dropdown(
                 "INSERT TABLE",
             );
             let dim_lbl = format!("{sel_rows} × {sel_cols} Table");
-            let dim_tw = app.fonts.measure_text(FontSlot::SansBold, &dim_lbl, 10.6 * s);
+            let dim_tw = app
+                .fonts
+                .measure_text(FontSlot::SansBold, &dim_lbl, 10.6 * s);
             let pill = Rect::new(
                 card.x + mw - pad_x - dim_tw - 14.0 * s,
                 card.y + 8.0 * s,
@@ -1418,7 +1503,9 @@ fn paint_toolbar_dropdown(
                     preset.label(),
                 );
                 let badge = preset.badge();
-                let bw = app.fonts.measure_text(FontSlot::SansRegular, badge, 10.0 * s);
+                let bw = app
+                    .fonts
+                    .measure_text(FontSlot::SansRegular, badge, 10.0 * s);
                 surface.draw_text(
                     &mut app.fonts,
                     FontSlot::SansRegular,
@@ -1516,7 +1603,9 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
             StudioTheme::word_accent()
         },
     );
-    let ptw = app.fonts.measure_text(FontSlot::MonoRegular, dlp_tag, 9.6 * s);
+    let ptw = app
+        .fonts
+        .measure_text(FontSlot::MonoRegular, dlp_tag, 9.6 * s);
     surface.draw_text(
         &mut app.fonts,
         FontSlot::MonoRegular,
@@ -1593,7 +1682,11 @@ fn paint_status_bar(app: &mut RustPadApp, surface: &mut Surface, s: f32, bar: Re
 
     // 3. Dynamic Version Badge (`RustPad v1.3.0`)
     let ver_lbl = format!("RustPad v{}", env!("CARGO_PKG_VERSION"));
-    let vw = (app.fonts.measure_text(FontSlot::SansBold, &ver_lbl, 10.6 * s) + 16.0 * s).round();
+    let vw = (app
+        .fonts
+        .measure_text(FontSlot::SansBold, &ver_lbl, 10.6 * s)
+        + 16.0 * s)
+        .round();
     if rx + vw <= bar.w - 6.0 {
         let about_r = Rect::new(rx, by, vw, bh);
         surface.fill_rounded_rect(about_r, 4.0, StudioTheme::paper());
@@ -1622,17 +1715,30 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
     };
 
     match modal_snapshot {
-        ActiveModal::CommandPalette { query: q, selected: sel } => {
+        ActiveModal::CommandPalette {
+            query: q,
+            selected: sel,
+        } => {
             let items = filter_commands(&q);
             let mw = (580.0 * s).min(screen.w - 32.0);
             let mh = (390.0 * s).min(screen.h - 48.0);
-            let card = Rect::new((screen.w - mw) * 0.5, (72.0 * s).min(screen.h * 0.12), mw, mh);
+            let card = Rect::new(
+                (screen.w - mw) * 0.5,
+                (72.0 * s).min(screen.h * 0.12),
+                mw,
+                mh,
+            );
 
             surface.draw_paper_shadow(card, 8.0, 18.0, 32);
             surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
             surface.stroke_rounded_rect(card, 8.0, 1.0, StudioTheme::border_strong());
 
-            let input_r = Rect::new(card.x + 14.0 * s, card.y + 14.0 * s, card.w - 28.0 * s, 38.0 * s);
+            let input_r = Rect::new(
+                card.x + 14.0 * s,
+                card.y + 14.0 * s,
+                card.w - 28.0 * s,
+                38.0 * s,
+            );
             surface.fill_rounded_rect(input_r, 5.0, StudioTheme::sidebar());
             surface.stroke_rounded_rect(input_r, 5.0, 1.5, StudioTheme::word_accent());
 
@@ -1702,7 +1808,9 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     cmd.title,
                 );
                 if !cmd.shortcut.is_empty() {
-                    let sw = app.fonts.measure_text(FontSlot::MonoRegular, cmd.shortcut, 10.5 * s);
+                    let sw = app
+                        .fonts
+                        .measure_text(FontSlot::MonoRegular, cmd.shortcut, 10.5 * s);
                     surface.draw_text(
                         &mut app.fonts,
                         FontSlot::MonoRegular,
@@ -1719,12 +1827,20 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             }
         }
 
-        ActiveModal::MathLibrary { query: q, selected: sel } => {
+        ActiveModal::MathLibrary {
+            query: q,
+            selected: sel,
+        } => {
             let items = filter_math_templates(&q);
             let total = items.len();
             let mw = (660.0 * s).min(screen.w - 32.0);
             let mh = (438.0 * s).min(screen.h - 44.0);
-            let card = Rect::new((screen.w - mw) * 0.5, (58.0 * s).min(screen.h * 0.10), mw, mh);
+            let card = Rect::new(
+                (screen.w - mw) * 0.5,
+                (58.0 * s).min(screen.h * 0.10),
+                mw,
+                mh,
+            );
 
             surface.draw_paper_shadow(card, 8.0, 18.0, 32);
             surface.fill_rounded_rect(card, 8.0, StudioTheme::paper());
@@ -1753,7 +1869,12 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 &count_lbl,
             );
 
-            let input_r = Rect::new(card.x + 14.0 * s, card.y + 34.0 * s, card.w - 28.0 * s, 36.0 * s);
+            let input_r = Rect::new(
+                card.x + 14.0 * s,
+                card.y + 34.0 * s,
+                card.w - 28.0 * s,
+                36.0 * s,
+            );
             surface.fill_rounded_rect(input_r, 5.0, StudioTheme::sidebar());
             surface.stroke_rounded_rect(input_r, 5.0, 1.5, StudioTheme::word_accent());
 
@@ -1863,7 +1984,12 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
             let mw = (520.0 * s).min(screen.w - 32.0);
             let mh = 330.0 * s;
             let card = Rect::new((screen.w - mw) * 0.5, (screen.h - mh) * 0.5, mw, mh);
-            let pad = Rect::new(card.x + 20.0 * s, card.y + 64.0 * s, card.w - 40.0 * s, 180.0 * s);
+            let pad = Rect::new(
+                card.x + 20.0 * s,
+                card.y + 64.0 * s,
+                card.w - 40.0 * s,
+                180.0 * s,
+            );
             if let Some(ActiveModal::SignaturePad { pad_rect, .. }) = &mut app.modal {
                 *pad_rect = pad;
             }
@@ -1953,7 +2079,12 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 title,
             );
 
-            let box_r = Rect::new(card.x + 20.0 * s, card.y + 52.0 * s, card.w - 40.0 * s, 36.0 * s);
+            let box_r = Rect::new(
+                card.x + 20.0 * s,
+                card.y + 52.0 * s,
+                card.w - 40.0 * s,
+                36.0 * s,
+            );
             surface.fill_rounded_rect(box_r, 5.0, StudioTheme::sidebar());
             surface.stroke_rounded_rect(box_r, 5.0, 1.5, StudioTheme::word_accent());
             surface.draw_text_clipped(
@@ -2025,8 +2156,18 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 &format!("Find & Replace ({mc} matches)"),
             );
 
-            let f_box = Rect::new(card.x + 20.0 * s, card.y + 52.0 * s, card.w - 40.0 * s, 36.0 * s);
-            let r_box = Rect::new(card.x + 20.0 * s, card.y + 104.0 * s, card.w - 40.0 * s, 36.0 * s);
+            let f_box = Rect::new(
+                card.x + 20.0 * s,
+                card.y + 52.0 * s,
+                card.w - 40.0 * s,
+                36.0 * s,
+            );
+            let r_box = Rect::new(
+                card.x + 20.0 * s,
+                card.y + 104.0 * s,
+                card.w - 40.0 * s,
+                36.0 * s,
+            );
             for (bx, lbl, val, active, focus_flag) in [
                 (f_box, "Find:", &ft, !repl_focus, false),
                 (r_box, "Replace:", &rt, repl_focus, true),
@@ -2051,7 +2192,11 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                     StudioTheme::ink_muted(),
                     lbl,
                 );
-                let disp = if active { format!("{val}|") } else { val.clone() };
+                let disp = if active {
+                    format!("{val}|")
+                } else {
+                    val.clone()
+                };
                 surface.draw_text_clipped(
                     &mut app.fonts,
                     FontSlot::SansRegular,
@@ -2167,7 +2312,11 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 format!("DLP Mode:       {dlp_mode}"),
                 format!(
                     "Audit Chain:    {} ({} SHA-256 linked events)",
-                    if chain_ok { "VERIFIED INTACT" } else { "TAMPER ALERT" },
+                    if chain_ok {
+                        "VERIFIED INTACT"
+                    } else {
+                        "TAMPER ALERT"
+                    },
                     app.audit_trail.events.len()
                 ),
                 "Supply Chain:   0 external crates.io deps · CycloneDX 1.5 SBOM ready".to_string(),
@@ -2246,7 +2395,10 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 &mut app.hit_regions,
                 s,
                 card,
-                Some((toggle_lbl, UiAction::ExecCommand(CommandId::ToggleAirGappedDlp))),
+                Some((
+                    toggle_lbl,
+                    UiAction::ExecCommand(CommandId::ToggleAirGappedDlp),
+                )),
                 ("Done", UiAction::ModalClose),
             );
         }
@@ -2403,7 +2555,8 @@ fn paint_active_modal(app: &mut RustPadApp, surface: &mut Surface, s: f32, scree
                 let sec = inspect_security_and_hidden(&w.doc, compact_bytes.as_deref());
                 let cons = inspect_formatting_consistency(&w.doc);
                 let dups = detect_duplicate_paragraphs(&w.doc, 24);
-                let broken = detect_broken_links(&w.doc, w.path.as_deref().and_then(|p| p.parent()));
+                let broken =
+                    detect_broken_links(&w.doc, w.path.as_deref().and_then(|p| p.parent()));
 
                 let custom_xml_count = w
                     .doc
@@ -2617,7 +2770,12 @@ fn paint_single_input_modal(
         subtitle,
     );
 
-    let box_r = Rect::new(card.x + 20.0 * s, card.y + 72.0 * s, card.w - 40.0 * s, 38.0 * s);
+    let box_r = Rect::new(
+        card.x + 20.0 * s,
+        card.y + 72.0 * s,
+        card.w - 40.0 * s,
+        38.0 * s,
+    );
     surface.fill_rounded_rect(box_r, 5.0, StudioTheme::sidebar());
     surface.stroke_rounded_rect(box_r, 5.0, 1.5, StudioTheme::word_accent());
     surface.draw_text_clipped(
@@ -2699,4 +2857,1254 @@ fn draw_modal_footer_buttons(
         confirm.0,
     );
     hit_regions.push(HitRegion::button(confirm_r, confirm.1));
+}
+
+// ============================================================================
+// First-Run Setup & Real-World Desktop Installation Wizard (`v3.0.16`)
+// ============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn draw_setup_checkbox_row(
+    surface: &mut Surface,
+    fonts: &mut FontBook,
+    hit_regions: &mut Vec<HitRegion>,
+    mouse_x: f32,
+    mouse_y: f32,
+    s: f32,
+    row: Rect,
+    checked: bool,
+    title: &str,
+    subtitle: &str,
+    action: UiAction,
+) {
+    let hov = row.contains(mouse_x, mouse_y);
+    let bg = if checked {
+        if hov {
+            StudioTheme::hover()
+        } else {
+            StudioTheme::word_soft()
+        }
+    } else if hov {
+        StudioTheme::hover()
+    } else {
+        StudioTheme::paper()
+    };
+    let border = if checked {
+        StudioTheme::word_accent()
+    } else {
+        StudioTheme::border_strong()
+    };
+    surface.fill_rounded_rect(row, 6.0, bg);
+    surface.stroke_rounded_rect(row, 6.0, 1.0, border);
+
+    let box_sz = (18.0 * s).round();
+    let bx = row.x + 12.0 * s;
+    let by = row.y + (row.h - box_sz) * 0.5;
+    let cb = Rect::new(bx, by, box_sz, box_sz);
+    if checked {
+        surface.fill_rounded_rect(cb, 4.0, StudioTheme::word_accent());
+        surface.draw_text(
+            fonts,
+            FontSlot::SansBold,
+            12.0 * s,
+            cb.x + 3.6 * s,
+            cb.y + box_sz * 0.74,
+            StudioTheme::paper(),
+            "✓",
+        );
+    } else {
+        surface.fill_rounded_rect(cb, 4.0, StudioTheme::paper());
+        surface.stroke_rounded_rect(cb, 4.0, 1.2, StudioTheme::border_strong());
+    }
+
+    let tx = bx + box_sz + 11.0 * s;
+    let max_tw = (row.w - (tx - row.x) - 12.0 * s).max(40.0);
+    if subtitle.is_empty() {
+        surface.draw_text_clipped(
+            fonts,
+            FontSlot::SansBold,
+            12.0 * s,
+            tx,
+            row.y + row.h * 0.62,
+            max_tw,
+            StudioTheme::ink(),
+            title,
+        );
+    } else {
+        surface.draw_text_clipped(
+            fonts,
+            FontSlot::SansBold,
+            11.8 * s,
+            tx,
+            row.y + 18.0 * s,
+            max_tw,
+            StudioTheme::ink(),
+            title,
+        );
+        surface.draw_text_clipped(
+            fonts,
+            FontSlot::SansRegular,
+            10.6 * s,
+            tx,
+            row.y + 34.0 * s,
+            max_tw,
+            StudioTheme::ink_sub(),
+            subtitle,
+        );
+    }
+
+    hit_regions.push(HitRegion::button(row, action));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_setup_button(
+    surface: &mut Surface,
+    fonts: &mut FontBook,
+    hit_regions: &mut Vec<HitRegion>,
+    mouse_x: f32,
+    mouse_y: f32,
+    s: f32,
+    rect: Rect,
+    label: &str,
+    primary: bool,
+    accent_orange: bool,
+    action: UiAction,
+) {
+    let hov = rect.contains(mouse_x, mouse_y);
+    let fill = if primary {
+        if accent_orange {
+            StudioTheme::rust_orange()
+        } else {
+            StudioTheme::word_accent()
+        }
+    } else if hov {
+        StudioTheme::hover()
+    } else {
+        StudioTheme::paper()
+    };
+    let fg = if primary {
+        Color::rgb(255, 255, 255)
+    } else {
+        StudioTheme::ink()
+    };
+    surface.fill_rounded_rect(rect, 6.0, fill);
+    if !primary {
+        surface.stroke_rounded_rect(rect, 6.0, 1.0, StudioTheme::border_strong());
+    } else if hov {
+        surface.stroke_rounded_rect(rect, 6.0, 1.5, StudioTheme::ink());
+    }
+    let tw = fonts.measure_text(FontSlot::SansBold, label, 11.8 * s);
+    surface.draw_text_clipped(
+        fonts,
+        FontSlot::SansBold,
+        11.8 * s,
+        rect.x + ((rect.w - tw) * 0.5).max(10.0),
+        rect.y + rect.h * 0.64,
+        (rect.w - 16.0).max(20.0),
+        fg,
+        label,
+    );
+    hit_regions.push(HitRegion::button(rect, action));
+}
+
+fn paint_setup_wizard(app: &mut RustPadApp, surface: &mut Surface, s: f32, area: Rect) {
+    surface.fill_rect(area, StudioTheme::desk_bg());
+
+    let Some(wiz) = &app.setup_wizard else {
+        return;
+    };
+    let step = wiz.step;
+    let opts = wiz.options.clone();
+    let focus_field = wiz.focus_field;
+    let permille = wiz
+        .progress_permille
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let current_task = wiz
+        .current_task
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let log_lines: Vec<String> = wiz.logs.lock().map(|g| g.clone()).unwrap_or_default();
+    let install_result = wiz.result.clone();
+    let src_exe_name = wiz
+        .source_exe_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("rustpad.exe")
+        .to_string();
+    let src_exe_mb = wiz.source_exe_bytes as f64 / (1024.0 * 1024.0);
+    let already_configured =
+        wiz.existing_mode != crate::installer::PersistedSetupMode::NotConfigured;
+    let blink_on = app.cursor_blink_on;
+    let mx = app.mouse_x;
+    let my = app.mouse_y;
+
+    let card_w = (960.0 * s).min(area.w - 28.0 * s).max(300.0);
+    let card_h = (600.0 * s).min(area.h - 28.0 * s).max(360.0);
+    let card = Rect::new(
+        area.x + ((area.w - card_w) * 0.5).floor(),
+        area.y + ((area.h - card_h) * 0.5).floor(),
+        card_w,
+        card_h,
+    );
+
+    // Subtle elevation shadow + main Setup Wizard frame
+    surface.fill_rounded_rect(
+        Rect::new(card.x + 3.0, card.y + 5.0, card.w, card.h),
+        10.0,
+        Color::rgba(0, 0, 0, 38),
+    );
+    surface.fill_rounded_rect(card, 10.0, StudioTheme::chrome());
+    surface.stroke_rounded_rect(card, 10.0, 1.0, StudioTheme::border_strong());
+
+    let wide = card.w >= 720.0 * s;
+    let rail_w = if wide { (262.0 * s).round() } else { 0.0 };
+
+    // Left Installer Brand & 4-Step Progress Rail (on wide screens)
+    if wide {
+        let rail = Rect::new(card.x, card.y, rail_w, card.h);
+        surface.fill_rounded_rect(rail, 10.0, StudioTheme::paper());
+        surface.fill_rect(
+            Rect::new(rail.x + rail.w - 1.0, rail.y, 1.0, rail.h),
+            StudioTheme::border_strong(),
+        );
+
+        let lx = (rail.x + 22.0 * s) as i32;
+        let ly = (rail.y + 22.0 * s) as i32;
+        surface.draw_logo_64(lx, ly);
+
+        let mut ry = rail.y + 104.0 * s;
+        let rx = rail.x + 22.0 * s;
+        let rw = rail.w - 36.0 * s;
+        surface.draw_text_clipped(
+            &mut app.fonts,
+            FontSlot::SansBold,
+            16.0 * s,
+            rx,
+            ry,
+            rw,
+            StudioTheme::ink(),
+            "RustPad Studio",
+        );
+        ry += 19.0 * s;
+        surface.draw_text_clipped(
+            &mut app.fonts,
+            FontSlot::MonoRegular,
+            10.5 * s,
+            rx,
+            ry,
+            rw,
+            StudioTheme::rust_orange(),
+            &format!("SETUP WIZARD · v{}", env!("CARGO_PKG_VERSION")),
+        );
+        ry += 18.0 * s;
+        surface.draw_text_clipped(
+            &mut app.fonts,
+            FontSlot::SansRegular,
+            10.8 * s,
+            rx,
+            ry,
+            rw,
+            StudioTheme::ink_muted(),
+            "Nour Yahyaoui — RustPad Studio",
+        );
+        ry += 22.0 * s;
+        surface.fill_rect(Rect::new(rx, ry, rw, 1.0), StudioTheme::border());
+        ry += 20.0 * s;
+
+        let active_idx = step.index();
+        let step_labels = [
+            ("1. Welcome & License", SetupStep::Welcome),
+            ("2. Destination & Shortcuts", SetupStep::Options),
+            ("3. Studio Appearance", SetupStep::Personalize),
+            ("4. Install & Launch", SetupStep::Installing),
+        ];
+        for (idx, (lbl, target_step)) in step_labels.into_iter().enumerate() {
+            let item_r = Rect::new(rx - 6.0 * s, ry, rw + 12.0 * s, (34.0 * s).round());
+            let is_cur = idx == active_idx;
+            let is_done = idx < active_idx || step == SetupStep::Completed;
+            if is_cur {
+                surface.fill_rounded_rect(item_r, 6.0, StudioTheme::word_soft());
+                surface.stroke_rounded_rect(item_r, 6.0, 1.0, StudioTheme::word_accent());
+            }
+            let badge_col = if is_done {
+                StudioTheme::rust_orange()
+            } else if is_cur {
+                StudioTheme::word_accent()
+            } else {
+                StudioTheme::ink_muted()
+            };
+            let prefix = if is_done { "✓ " } else { "" };
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                if is_cur || is_done {
+                    FontSlot::SansBold
+                } else {
+                    FontSlot::SansRegular
+                },
+                11.4 * s,
+                item_r.x + 10.0 * s,
+                item_r.y + item_r.h * 0.64,
+                item_r.w - 16.0 * s,
+                badge_col,
+                &format!("{prefix}{lbl}"),
+            );
+            if idx < 3 && step != SetupStep::Installing && step != SetupStep::Completed {
+                app.hit_regions.push(HitRegion::button(
+                    item_r,
+                    UiAction::SetupGoStep(target_step),
+                ));
+            }
+            ry += item_r.h + 8.0 * s;
+        }
+
+        // Bottom security / zero-admin callout in left rail
+        let foot_y = (rail.y + rail.h - 68.0 * s).max(ry + 12.0 * s);
+        surface.fill_rect(
+            Rect::new(rx, foot_y - 10.0 * s, rw, 1.0),
+            StudioTheme::border(),
+        );
+        surface.draw_text_clipped(
+            &mut app.fonts,
+            FontSlot::MonoRegular,
+            9.8 * s,
+            rx,
+            foot_y + 8.0 * s,
+            rw,
+            StudioTheme::ink_sub(),
+            "100% OFFLINE · 0 TELEMETRY",
+        );
+        surface.draw_text_clipped(
+            &mut app.fonts,
+            FontSlot::SansRegular,
+            10.2 * s,
+            rx,
+            foot_y + 24.0 * s,
+            rw,
+            StudioTheme::ink_muted(),
+            "Per-user setup — no Admin/UAC prompt.",
+        );
+    }
+
+    // Right Main Content Area + Bottom Action Footer
+    let pad = 26.0 * s;
+    let footer_h = (62.0 * s).round();
+    let pane = Rect::new(
+        card.x + rail_w + pad,
+        card.y + 22.0 * s,
+        (card.w - rail_w - pad * 2.0).max(220.0),
+        (card.h - 22.0 * s - footer_h - 10.0 * s).max(200.0),
+    );
+    let footer = Rect::new(
+        card.x + rail_w,
+        card.y + card.h - footer_h,
+        card.w - rail_w,
+        footer_h,
+    );
+    surface.fill_rect(
+        Rect::new(footer.x, footer.y, footer.w, 1.0),
+        StudioTheme::border_strong(),
+    );
+
+    // Optional top-right close button when user opened Setup Wizard from inside an already-configured Studio
+    if already_configured && step != SetupStep::Installing {
+        let close_r = Rect::new(
+            card.x + card.w - 38.0 * s,
+            card.y + 12.0 * s,
+            26.0 * s,
+            26.0 * s,
+        );
+        if close_r.contains(mx, my) {
+            surface.fill_rounded_rect(close_r, 5.0, StudioTheme::hover());
+        }
+        surface.draw_icon(
+            UiIcon::Close,
+            close_r.x + close_r.w * 0.5,
+            close_r.y + close_r.h * 0.5,
+            13.0 * s,
+            StudioTheme::ink_sub(),
+        );
+        app.hit_regions
+            .push(HitRegion::button(close_r, UiAction::SetupFinishAndLaunch));
+    }
+
+    let mut cy = pane.y + 8.0 * s;
+    match step {
+        SetupStep::Welcome => {
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::MonoRegular,
+                10.4 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::rust_orange(),
+                "STEP 1 OF 4 · REAL-WORLD DESKTOP INSTALLER",
+            );
+            cy += 24.0 * s;
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SerifRegular,
+                23.0 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::ink(),
+                "Welcome to RustPad Studio Setup",
+            );
+            cy += 22.0 * s;
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SansRegular,
+                12.0 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::ink_sub(),
+                "Install RustPad natively to your desktop with shortcuts & file associations, or run in Portable Mode.",
+            );
+            cy += 20.0 * s;
+
+            // Detected Environment Summary Card
+            let env_card = Rect::new(pane.x, cy, pane.w, (88.0 * s).round());
+            surface.fill_rounded_rect(env_card, 6.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(env_card, 6.0, 1.0, StudioTheme::border());
+            let ex = env_card.x + 14.0 * s;
+            let ew = env_card.w - 28.0 * s;
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SansBold,
+                11.0 * s,
+                ex,
+                env_card.y + 20.0 * s,
+                ew,
+                StudioTheme::ink(),
+                &format!("Detected Platform:  {}", os_platform_label()),
+            );
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::MonoRegular,
+                10.6 * s,
+                ex,
+                env_card.y + 42.0 * s,
+                ew,
+                StudioTheme::ink_sub(),
+                &format!(
+                    "Package Binary:     {} ({:.2} MB · 100% Pure Rust · 0 deps)",
+                    src_exe_name, src_exe_mb
+                ),
+            );
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::MonoRegular,
+                10.6 * s,
+                ex,
+                env_card.y + 64.0 * s,
+                ew,
+                StudioTheme::ink_sub(),
+                &format!("Default Location:   {}", opts.install_dir),
+            );
+            cy += env_card.h + 14.0 * s;
+
+            // MIT License & Offline Privacy Box
+            let lic_h = (pane.y + pane.h - cy - 54.0 * s).max(86.0 * s);
+            let lic_box = Rect::new(pane.x, cy, pane.w, lic_h);
+            surface.fill_rounded_rect(lic_box, 6.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(lic_box, 6.0, 1.0, StudioTheme::border());
+            let lic_lines = [
+                "MIT OPEN-SOURCE LICENSE & OFFLINE PRIVACY GUARANTEE",
+                "Copyright (c) 2026 Nour Yahyaoui — RustPad Studio",
+                "",
+                "• Permission is granted, free of charge, to use, copy, modify, and distribute RustPad.",
+                "• 100% Offline Execution: RustPad makes zero network requests and collects zero telemetry.",
+                "• Clean Uninstaller: Can be removed anytime from Installed Apps or `rustpad --uninstall`.",
+            ];
+            let mut ly = lic_box.y + 20.0 * s;
+            for (li, line) in lic_lines.iter().enumerate() {
+                if ly + 8.0 * s > lic_box.y + lic_box.h {
+                    break;
+                }
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    if li == 0 {
+                        FontSlot::SansBold
+                    } else {
+                        FontSlot::MonoRegular
+                    },
+                    10.4 * s,
+                    lic_box.x + 14.0 * s,
+                    ly,
+                    lic_box.w - 28.0 * s,
+                    if li == 0 {
+                        StudioTheme::ink()
+                    } else {
+                        StudioTheme::ink_sub()
+                    },
+                    line,
+                );
+                ly += 17.0 * s;
+            }
+            cy += lic_box.h + 10.0 * s;
+
+            let cb_row = Rect::new(pane.x, cy, pane.w, (38.0 * s).round());
+            draw_setup_checkbox_row(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                mx,
+                my,
+                s,
+                cb_row,
+                opts.accepted_license,
+                "I accept the MIT Open-Source License Agreement",
+                "",
+                UiAction::SetupToggleOption(SetupToggleOption::AcceptLicense),
+            );
+
+            // Footer buttons
+            let btn_h = (38.0 * s).round();
+            let by = footer.y + (footer.h - btn_h) * 0.5;
+            let port_r = Rect::new(footer.x + pad, by, (196.0 * s).round(), btn_h);
+            draw_setup_button(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                mx,
+                my,
+                s,
+                port_r,
+                "Run Portable (Skip Install)",
+                false,
+                false,
+                UiAction::SetupRunPortable,
+            );
+            let next_w = (218.0 * s).round();
+            let next_r = Rect::new(footer.x + footer.w - pad - next_w, by, next_w, btn_h);
+            draw_setup_button(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                mx,
+                my,
+                s,
+                next_r,
+                "Next: Choose Components →",
+                true,
+                false,
+                UiAction::SetupGoStep(SetupStep::Options),
+            );
+        }
+
+        SetupStep::Options => {
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::MonoRegular,
+                10.4 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::rust_orange(),
+                "STEP 2 OF 4 · DESTINATION & DESKTOP INTEGRATION",
+            );
+            cy += 23.0 * s;
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SerifRegular,
+                21.0 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::ink(),
+                "Choose Install Location & Shortcuts",
+            );
+            cy += 20.0 * s;
+
+            // Install folder editable input + Browse button
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SansBold,
+                10.8 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::ink_sub(),
+                "INSTALLATION FOLDER",
+            );
+            cy += 7.0 * s;
+            let browse_w = (94.0 * s).round();
+            let inp_h = (36.0 * s).round();
+            let inp_r = Rect::new(pane.x, cy, (pane.w - browse_w - 8.0 * s).max(120.0), inp_h);
+            let focused_dir = focus_field == SetupFocusField::InstallDir;
+            surface.fill_rounded_rect(inp_r, 5.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(
+                inp_r,
+                5.0,
+                if focused_dir { 1.6 } else { 1.0 },
+                if focused_dir {
+                    StudioTheme::word_accent()
+                } else {
+                    StudioTheme::border_strong()
+                },
+            );
+            let dir_display = if focused_dir && blink_on {
+                format!("{}|", opts.install_dir)
+            } else {
+                opts.install_dir.clone()
+            };
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::MonoRegular,
+                11.0 * s,
+                inp_r.x + 10.0 * s,
+                inp_r.y + inp_h * 0.64,
+                inp_r.w - 20.0 * s,
+                StudioTheme::ink(),
+                &dir_display,
+            );
+            app.hit_regions.push(HitRegion::text(
+                inp_r,
+                UiAction::SetupFocusInput(SetupFocusField::InstallDir),
+            ));
+
+            let br_r = Rect::new(inp_r.x + inp_r.w + 8.0 * s, cy, browse_w, inp_h);
+            draw_setup_button(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                mx,
+                my,
+                s,
+                br_r,
+                "Browse…",
+                false,
+                false,
+                UiAction::SetupBrowseInstallDir,
+            );
+            cy += inp_h + 12.0 * s;
+
+            let row_h = (45.0 * s).round();
+            let gap = 6.0 * s;
+            let items = [
+                (
+                    opts.desktop_shortcut,
+                    "Create Desktop Shortcut",
+                    "Places 'RustPad Studio' launcher icon directly on your Desktop",
+                    SetupToggleOption::DesktopShortcut,
+                ),
+                (
+                    opts.start_menu_entry,
+                    "Create Start Menu / App Launcher Entry",
+                    "Adds RustPad Studio + Uninstaller to Windows Start Menu / Linux Applications",
+                    SetupToggleOption::StartMenuEntry,
+                ),
+                (
+                    opts.file_associations,
+                    "Register 'Open with RustPad' for .docx & .pdf Files",
+                    "Adds RustPad to right-click 'Open With' without overriding your current default app",
+                    SetupToggleOption::FileAssociations,
+                ),
+                (
+                    opts.add_to_user_path,
+                    "Add 'rustpad' CLI to User PATH",
+                    "Enables 'rustpad validate', 'convert', 'redline', and 'ocr' in any terminal",
+                    SetupToggleOption::AddToUserPath,
+                ),
+                (
+                    opts.register_uninstaller,
+                    "Register in Installed Apps (Clean Uninstaller)",
+                    "Registers version, icon & publisher in Installed Apps with 1-click '--uninstall'",
+                    SetupToggleOption::RegisterUninstaller,
+                ),
+            ];
+            for (checked, title, sub, opt) in items {
+                let r = Rect::new(pane.x, cy, pane.w, row_h);
+                draw_setup_checkbox_row(
+                    surface,
+                    &mut app.fonts,
+                    &mut app.hit_regions,
+                    mx,
+                    my,
+                    s,
+                    r,
+                    checked,
+                    title,
+                    sub,
+                    UiAction::SetupToggleOption(opt),
+                );
+                cy += row_h + gap;
+            }
+
+            let btn_h = (38.0 * s).round();
+            let by = footer.y + (footer.h - btn_h) * 0.5;
+            let back_r = Rect::new(footer.x + pad, by, (112.0 * s).round(), btn_h);
+            draw_setup_button(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                mx,
+                my,
+                s,
+                back_r,
+                "← Back",
+                false,
+                false,
+                UiAction::SetupGoStep(SetupStep::Welcome),
+            );
+            let next_w = (212.0 * s).round();
+            let next_r = Rect::new(footer.x + footer.w - pad - next_w, by, next_w, btn_h);
+            draw_setup_button(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                mx,
+                my,
+                s,
+                next_r,
+                "Next: Appearance →",
+                true,
+                false,
+                UiAction::SetupGoStep(SetupStep::Personalize),
+            );
+        }
+
+        SetupStep::Personalize => {
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::MonoRegular,
+                10.4 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::rust_orange(),
+                "STEP 3 OF 4 · STUDIO APPEARANCE & PROFILE",
+            );
+            cy += 24.0 * s;
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SerifRegular,
+                22.0 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::ink(),
+                "Personalize Your Workspace",
+            );
+            cy += 22.0 * s;
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SansRegular,
+                12.0 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::ink_sub(),
+                "Click a studio theme below to preview it live right now (switchable anytime with Ctrl+Shift+D).",
+            );
+            cy += 18.0 * s;
+
+            // 3 Live Visual Theme Cards
+            let gap = 12.0 * s;
+            let cw = ((pane.w - gap * 2.0) / 3.0).floor().max(84.0);
+            let ch = (154.0 * s).round();
+            let themes = [
+                (
+                    ThemeMode::Daylight,
+                    "Daylight Paper",
+                    "Warm linen & cotton sheet",
+                    Color::rgb(235, 232, 225),
+                    Color::rgb(253, 252, 249),
+                    Color::rgb(28, 30, 33),
+                ),
+                (
+                    ThemeMode::HybridDarkDesk,
+                    "Hybrid Dark Desk",
+                    "Dark chrome + crisp white page",
+                    Color::rgb(24, 26, 31),
+                    Color::rgb(252, 251, 248),
+                    Color::rgb(28, 30, 33),
+                ),
+                (
+                    ThemeMode::Midnight,
+                    "Midnight Studio",
+                    "Full low-glare obsidian dark",
+                    Color::rgb(16, 18, 23),
+                    Color::rgb(28, 32, 40),
+                    Color::rgb(232, 235, 242),
+                ),
+            ];
+            let cur_theme = active_theme_mode();
+            for (i, (mode, title, desc, desk_c, sheet_c, line_c)) in themes.into_iter().enumerate()
+            {
+                let tc = Rect::new(pane.x + (i as f32) * (cw + gap), cy, cw, ch);
+                let sel = cur_theme == mode;
+                let hov = tc.contains(mx, my);
+                surface.fill_rounded_rect(
+                    tc,
+                    8.0,
+                    if sel {
+                        StudioTheme::word_soft()
+                    } else if hov {
+                        StudioTheme::hover()
+                    } else {
+                        StudioTheme::paper()
+                    },
+                );
+                surface.stroke_rounded_rect(
+                    tc,
+                    8.0,
+                    if sel { 2.0 } else { 1.0 },
+                    if sel {
+                        StudioTheme::rust_orange()
+                    } else {
+                        StudioTheme::border_strong()
+                    },
+                );
+
+                // Miniature studio preview window inside card
+                let prev = Rect::new(tc.x + 10.0 * s, tc.y + 10.0 * s, tc.w - 20.0 * s, 78.0 * s);
+                surface.fill_rounded_rect(prev, 5.0, desk_c);
+                surface.stroke_rounded_rect(prev, 5.0, 1.0, StudioTheme::border());
+                let mini_page = Rect::new(
+                    prev.x + prev.w * 0.18,
+                    prev.y + 12.0 * s,
+                    prev.w * 0.64,
+                    prev.h - 16.0 * s,
+                );
+                surface.fill_rounded_rect(mini_page, 3.0, sheet_c);
+                surface.fill_rect(
+                    Rect::new(
+                        mini_page.x + 8.0 * s,
+                        mini_page.y + 10.0 * s,
+                        mini_page.w * 0.55,
+                        3.0 * s,
+                    ),
+                    StudioTheme::rust_orange(),
+                );
+                surface.fill_rect(
+                    Rect::new(
+                        mini_page.x + 8.0 * s,
+                        mini_page.y + 20.0 * s,
+                        mini_page.w - 16.0 * s,
+                        2.5 * s,
+                    ),
+                    line_c,
+                );
+                surface.fill_rect(
+                    Rect::new(
+                        mini_page.x + 8.0 * s,
+                        mini_page.y + 28.0 * s,
+                        mini_page.w * 0.72,
+                        2.5 * s,
+                    ),
+                    line_c,
+                );
+
+                let theme_card_title = if sel {
+                    format!("✓ {title}")
+                } else {
+                    title.to_string()
+                };
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::SansBold,
+                    11.6 * s,
+                    tc.x + 10.0 * s,
+                    tc.y + 110.0 * s,
+                    tc.w - 20.0 * s,
+                    StudioTheme::ink(),
+                    &theme_card_title,
+                );
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::SansRegular,
+                    10.2 * s,
+                    tc.x + 10.0 * s,
+                    tc.y + 128.0 * s,
+                    tc.w - 20.0 * s,
+                    StudioTheme::ink_sub(),
+                    desc,
+                );
+                app.hit_regions
+                    .push(HitRegion::button(tc, UiAction::SetupSelectTheme(mode)));
+            }
+            cy += ch + 22.0 * s;
+
+            // Default Author Display Name input
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SansBold,
+                10.8 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::ink_sub(),
+                "DEFAULT AUTHOR NAME (FOR .DOCX METADATA & TRACK CHANGES)",
+            );
+            cy += 8.0 * s;
+            let auth_r = Rect::new(pane.x, cy, pane.w, (38.0 * s).round());
+            let focused_auth = focus_field == SetupFocusField::AuthorName;
+            surface.fill_rounded_rect(auth_r, 5.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(
+                auth_r,
+                5.0,
+                if focused_auth { 1.6 } else { 1.0 },
+                if focused_auth {
+                    StudioTheme::word_accent()
+                } else {
+                    StudioTheme::border_strong()
+                },
+            );
+            let auth_txt = if focused_auth && blink_on {
+                format!("{}|", opts.author_name)
+            } else {
+                opts.author_name.clone()
+            };
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SansRegular,
+                12.0 * s,
+                auth_r.x + 12.0 * s,
+                auth_r.y + auth_r.h * 0.64,
+                auth_r.w - 24.0 * s,
+                StudioTheme::ink(),
+                &auth_txt,
+            );
+            app.hit_regions.push(HitRegion::text(
+                auth_r,
+                UiAction::SetupFocusInput(SetupFocusField::AuthorName),
+            ));
+
+            cy += auth_r.h + 14.0 * s;
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::MonoRegular,
+                10.4 * s,
+                pane.x,
+                cy + 10.0 * s,
+                pane.w,
+                StudioTheme::ink_muted(),
+                &format!("Ready to install into: {}", opts.install_dir),
+            );
+
+            let btn_h = (40.0 * s).round();
+            let by = footer.y + (footer.h - btn_h) * 0.5;
+            let back_r = Rect::new(footer.x + pad, by, (112.0 * s).round(), btn_h);
+            draw_setup_button(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                mx,
+                my,
+                s,
+                back_r,
+                "← Back",
+                false,
+                false,
+                UiAction::SetupGoStep(SetupStep::Options),
+            );
+            let inst_w = (224.0 * s).round();
+            let inst_r = Rect::new(footer.x + footer.w - pad - inst_w, by, inst_w, btn_h);
+            draw_setup_button(
+                surface,
+                &mut app.fonts,
+                &mut app.hit_regions,
+                mx,
+                my,
+                s,
+                inst_r,
+                "Install RustPad Now",
+                true,
+                true,
+                UiAction::SetupStartInstall,
+            );
+        }
+
+        SetupStep::Installing => {
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::MonoRegular,
+                10.4 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::rust_orange(),
+                "STEP 4 OF 4 · INSTALLING TO YOUR COMPUTER",
+            );
+            cy += 24.0 * s;
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SerifRegular,
+                22.0 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::ink(),
+                "Installing RustPad Studio…",
+            );
+            cy += 24.0 * s;
+            surface.draw_text_clipped(
+                &mut app.fonts,
+                FontSlot::SansRegular,
+                12.0 * s,
+                pane.x,
+                cy,
+                pane.w,
+                StudioTheme::ink_sub(),
+                &current_task,
+            );
+            cy += 16.0 * s;
+
+            // Progress bar
+            let bar_r = Rect::new(pane.x, cy, pane.w, (16.0 * s).round());
+            surface.fill_rounded_rect(bar_r, 8.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(bar_r, 8.0, 1.0, StudioTheme::border_strong());
+            let frac = (permille as f32 / 1000.0).clamp(0.04, 1.0);
+            let fill_r = Rect::new(bar_r.x, bar_r.y, (bar_r.w * frac).round(), bar_r.h);
+            surface.fill_rounded_rect(fill_r, 8.0, StudioTheme::rust_orange());
+            cy += bar_r.h + 18.0 * s;
+
+            let log_box = Rect::new(
+                pane.x,
+                cy,
+                pane.w,
+                (pane.y + pane.h - cy - 8.0 * s).max(110.0 * s),
+            );
+            surface.fill_rounded_rect(log_box, 6.0, StudioTheme::paper());
+            surface.stroke_rounded_rect(log_box, 6.0, 1.0, StudioTheme::border());
+            let mut ly = log_box.y + 20.0 * s;
+            for line in log_lines
+                .iter()
+                .rev()
+                .take(10)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+            {
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::MonoRegular,
+                    10.5 * s,
+                    log_box.x + 12.0 * s,
+                    ly,
+                    log_box.w - 24.0 * s,
+                    StudioTheme::ink_sub(),
+                    &format!("› {line}"),
+                );
+                ly += 18.0 * s;
+            }
+        }
+
+        SetupStep::Completed => match install_result {
+            Some(Ok(summary)) => {
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::MonoRegular,
+                    10.4 * s,
+                    pane.x,
+                    cy,
+                    pane.w,
+                    StudioTheme::rust_orange(),
+                    "INSTALLATION COMPLETE · READY FOR REAL-WORLD WORK",
+                );
+                cy += 24.0 * s;
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::SerifRegular,
+                    23.0 * s,
+                    pane.x,
+                    cy,
+                    pane.w,
+                    StudioTheme::ink(),
+                    "✓ RustPad Studio Is Installed!",
+                );
+                cy += 22.0 * s;
+                surface.draw_text_clipped(
+                        &mut app.fonts,
+                        FontSlot::SansRegular,
+                        12.0 * s,
+                        pane.x,
+                        cy,
+                        pane.w,
+                        StudioTheme::ink_sub(),
+                        "You can now launch RustPad anytime from your Desktop, Start Menu, or right-clicking .docx / .pdf files.",
+                    );
+                cy += 18.0 * s;
+
+                let sum_card = Rect::new(pane.x, cy, pane.w, (192.0 * s).round());
+                surface.fill_rounded_rect(sum_card, 6.0, StudioTheme::paper());
+                surface.stroke_rounded_rect(sum_card, 6.0, 1.0, StudioTheme::border_strong());
+                let rows = [
+                    (
+                        "Installed Binary:",
+                        summary.installed_exe.display().to_string(),
+                    ),
+                    (
+                        "Desktop Shortcut:",
+                        summary
+                            .desktop_shortcut_path
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "Skipped".into()),
+                    ),
+                    (
+                        "Start Menu / Apps:",
+                        summary
+                            .start_menu_path
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "Skipped".into()),
+                    ),
+                    (
+                        "File Associations:",
+                        if summary.file_associations_registered {
+                            "Registered for .docx and .pdf ('Open with RustPad')".into()
+                        } else {
+                            "Skipped".into()
+                        },
+                    ),
+                    (
+                        "CLI & Uninstaller:",
+                        format!(
+                            "PATH={} · Uninstaller={} ('rustpad --uninstall')",
+                            if summary.cli_path_configured {
+                                "Added"
+                            } else {
+                                "Skipped"
+                            },
+                            if summary.uninstaller_registered {
+                                "Registered"
+                            } else {
+                                "Skipped"
+                            }
+                        ),
+                    ),
+                ];
+                let mut sy = sum_card.y + 24.0 * s;
+                for (k, v) in rows {
+                    surface.draw_text(
+                        &mut app.fonts,
+                        FontSlot::SansBold,
+                        10.8 * s,
+                        sum_card.x + 14.0 * s,
+                        sy,
+                        StudioTheme::ink(),
+                        k,
+                    );
+                    surface.draw_text_clipped(
+                        &mut app.fonts,
+                        FontSlot::MonoRegular,
+                        10.4 * s,
+                        sum_card.x + 144.0 * s,
+                        sy,
+                        (sum_card.w - 158.0 * s).max(60.0),
+                        StudioTheme::ink_sub(),
+                        &v,
+                    );
+                    sy += 34.0 * s;
+                }
+                cy += sum_card.h + 14.0 * s;
+
+                let launch_cb = Rect::new(pane.x, cy, pane.w, (40.0 * s).round());
+                draw_setup_checkbox_row(
+                    surface,
+                    &mut app.fonts,
+                    &mut app.hit_regions,
+                    mx,
+                    my,
+                    s,
+                    launch_cb,
+                    opts.launch_home_on_finish,
+                    "Open RustPad Home Launchpad when Setup closes",
+                    "",
+                    UiAction::SetupToggleOption(SetupToggleOption::LaunchHomeOnFinish),
+                );
+
+                let btn_h = (40.0 * s).round();
+                let by = footer.y + (footer.h - btn_h) * 0.5;
+                let fin_w = (238.0 * s).round();
+                let fin_r = Rect::new(footer.x + footer.w - pad - fin_w, by, fin_w, btn_h);
+                draw_setup_button(
+                    surface,
+                    &mut app.fonts,
+                    &mut app.hit_regions,
+                    mx,
+                    my,
+                    s,
+                    fin_r,
+                    "Finish & Launch RustPad →",
+                    true,
+                    true,
+                    UiAction::SetupFinishAndLaunch,
+                );
+            }
+            Some(Err(err_msg)) => {
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::SerifRegular,
+                    22.0 * s,
+                    pane.x,
+                    cy + 20.0 * s,
+                    pane.w,
+                    StudioTheme::rust_orange(),
+                    "Installation Encountered an Issue",
+                );
+                let err_box = Rect::new(pane.x, cy + 44.0 * s, pane.w, (110.0 * s).round());
+                surface.fill_rounded_rect(err_box, 6.0, StudioTheme::paper());
+                surface.stroke_rounded_rect(err_box, 6.0, 1.2, StudioTheme::rust_orange());
+                surface.draw_text_clipped(
+                    &mut app.fonts,
+                    FontSlot::MonoRegular,
+                    11.0 * s,
+                    err_box.x + 14.0 * s,
+                    err_box.y + 32.0 * s,
+                    err_box.w - 28.0 * s,
+                    StudioTheme::ink(),
+                    &err_msg,
+                );
+                surface.draw_text_clipped(
+                        &mut app.fonts,
+                        FontSlot::SansRegular,
+                        11.2 * s,
+                        err_box.x + 14.0 * s,
+                        err_box.y + 68.0 * s,
+                        err_box.w - 28.0 * s,
+                        StudioTheme::ink_sub(),
+                        "Tip: Choose another writable folder in Step 2, or click 'Run Portable' to start immediately.",
+                    );
+
+                let btn_h = (38.0 * s).round();
+                let by = footer.y + (footer.h - btn_h) * 0.5;
+                let back_r = Rect::new(footer.x + pad, by, (176.0 * s).round(), btn_h);
+                draw_setup_button(
+                    surface,
+                    &mut app.fonts,
+                    &mut app.hit_regions,
+                    mx,
+                    my,
+                    s,
+                    back_r,
+                    "← Change Folder",
+                    false,
+                    false,
+                    UiAction::SetupGoStep(SetupStep::Options),
+                );
+                let port_w = (196.0 * s).round();
+                let port_r = Rect::new(footer.x + footer.w - pad - port_w, by, port_w, btn_h);
+                draw_setup_button(
+                    surface,
+                    &mut app.fonts,
+                    &mut app.hit_regions,
+                    mx,
+                    my,
+                    s,
+                    port_r,
+                    "Run Portable Instead →",
+                    true,
+                    false,
+                    UiAction::SetupRunPortable,
+                );
+            }
+            None => {}
+        },
+    }
 }
