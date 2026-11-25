@@ -50,7 +50,7 @@ export interface TourStep {
   body: string;
 }
 
-export const RELEASE_VERSION = 'v3.0.15';
+export const RELEASE_VERSION = 'v3.0.16';
 export const REPO_URL = 'https://github.com/Nour-yahyaoui/rustpad';
 export const RELEASE_TAG_URL = `${REPO_URL}/releases/tag/${RELEASE_VERSION}`;
 
